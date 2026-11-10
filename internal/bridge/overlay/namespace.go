@@ -28,6 +28,18 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	if src == dst {
 		return "", errors.New("rename source equals destination")
 	}
+	// A complete listing may introduce the destination mapping. Serialize its
+	// classification with namespace preparation so a new virtual target cannot
+	// slip between the readonly check and an atomic replacement reservation.
+	f.listMu.Lock()
+	defer f.listMu.Unlock()
+	if target, err := f.store.EntryByRemote(ctx, dst); err == nil {
+		if err = f.requireWritable(ctx, target); err != nil {
+			return "", err
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
 	source, err := f.store.EntryByRemote(ctx, src)
 	if errors.Is(err, store.ErrNotFound) {
 		if _, err = f.directory(ctx, parentPath(src)); err != nil {
@@ -36,6 +48,9 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 		source, err = f.store.EnsureEntry(ctx, src, newKind(src))
 	}
 	if err != nil {
+		return "", err
+	}
+	if err = f.requireWritable(ctx, source); err != nil {
 		return "", err
 	}
 	if source.Token != "" && source.Kind == model.KindDocx && !strings.EqualFold(path.Ext(dst), ".md") {
@@ -47,6 +62,9 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	kind := "rename"
 	target, err := f.store.EntryByRemote(ctx, dst)
 	if err == nil {
+		if err = f.requireWritable(ctx, target); err != nil {
+			return "", err
+		}
 		if target.Kind == model.KindFolder || source.Kind == model.KindFolder {
 			return "", model.ErrUnsupportedContent
 		}
@@ -67,7 +85,33 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	return op.ID, nil
 }
 func (f *Fs) RenameManaged(ctx context.Context, id string) (fs.Object, error) {
-	_, err := f.store.SealNamespace(ctx, id)
+	// Recheck before commit even if the reservation came from a different local
+	// caller. A committed result remains committed and is handled by recovery.
+	ops, err := f.store.PendingNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, op := range ops {
+		if op.ID != id || op.State == "committed" {
+			continue
+		}
+		for _, remote := range []string{op.Src, op.Dst} {
+			if remote == "" {
+				continue
+			}
+			e, err := f.store.EntryByRemote(ctx, remote)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if err = f.requireWritable(ctx, e); err != nil {
+				return nil, err
+			}
+		}
+	}
+	_, err = f.store.SealNamespace(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +204,9 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 		return nil
 	}
 	if e, err := f.store.EntryByRemote(ctx, dir); err == nil {
+		if err = f.requireWritable(ctx, e); err != nil {
+			return err
+		}
 		if e.Kind == model.KindFolder {
 			return nil
 		}
@@ -192,6 +239,9 @@ func (f *Fs) remove(ctx context.Context, remote string, folder bool) error {
 	e, err := f.store.EntryByRemote(ctx, remote)
 	if err != nil {
 		return mapNotFound(err)
+	}
+	if err = f.requireWritable(ctx, e); err != nil {
+		return err
 	}
 	if folder != (e.Kind == model.KindFolder) {
 		if folder {

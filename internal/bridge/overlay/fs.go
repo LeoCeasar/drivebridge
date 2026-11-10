@@ -5,7 +5,6 @@ package overlay
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"path"
 	"sort"
@@ -146,7 +145,7 @@ func (f *Fs) ShouldSync(ctx context.Context, id model.EntryID) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return !m.Tombstone && !f.LocalOnly(e.Remote) && e.FrozenBy == "", nil
+	return m.VirtualType == "" && !m.Tombstone && !f.LocalOnly(e.Remote) && e.FrozenBy == "", nil
 }
 func kindForItem(t string) (model.Kind, error) {
 	switch t {
@@ -157,7 +156,10 @@ func kindForItem(t string) (model.Kind, error) {
 	case "folder":
 		return model.KindFolder, nil
 	}
-	return "", fmt.Errorf("%w: remote kind %q", model.ErrUnsupportedContent, t)
+	if t == "" {
+		return "", errors.New("missing remote resource type")
+	}
+	return model.KindFile, nil
 }
 func modified(s string) (time.Time, error) {
 	if s == "" {
@@ -207,11 +209,12 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 		}
 	}
 	type observed struct {
-		item   larkcli.DriveItem
-		kind   model.Kind
-		mtime  time.Time
-		remote string
-		skip   bool
+		item        larkcli.DriveItem
+		kind        model.Kind
+		mtime       time.Time
+		remote      string
+		skip        bool
+		virtualType string
 	}
 	var rows []observed
 	tokens := map[string]bool{}
@@ -234,6 +237,10 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 			return nil, err
 		}
 		r := observed{item: item, kind: k, mtime: mt}
+		if item.Type != "file" && item.Type != "docx" && item.Type != "folder" {
+			r.virtualType = item.Type
+			r.item.URL = safeSourceURL(item.URL)
+		}
 		prior, err := f.store.EntryByToken(ctx, item.Token)
 		if err == nil {
 			m, err := f.store.Metadata(ctx, prior.ID)
@@ -243,7 +250,7 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 			if m.Tombstone || parentPath(prior.Remote) != dir {
 				r.skip = true
 			} else {
-				if prior.Kind != k {
+				if prior.Kind != k || m.VirtualType != r.virtualType {
 					return nil, model.ErrIdentityChanged
 				}
 				r.remote = prior.Remote
@@ -254,6 +261,12 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 			name := encodeName(item.Name)
 			if k == model.KindDocx {
 				name += ".md"
+			} else if r.virtualType != "" {
+				if r.item.URL != "" {
+					name += ".url"
+				} else {
+					name += ".unsupported.txt"
+				}
 			}
 			name, err = chooseName(name, item.Token, used)
 			if err != nil {
@@ -268,7 +281,7 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 		if r.skip {
 			continue
 		}
-		if _, err = f.store.ObserveEntry(ctx, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime}); err != nil {
+		if _, err = f.store.ObserveEntry(ctx, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime, VirtualType: r.virtualType}); err != nil {
 			return nil, err
 		}
 	}
@@ -376,6 +389,13 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // Publish is local only and must be called inside the VFS external-update reservation.
 func (f *Fs) Publish(ctx context.Context, c model.PublishCandidate) (fs.Object, error) {
+	current, err := f.store.Entry(ctx, c.EntryID)
+	if err != nil {
+		return nil, err
+	}
+	if err = f.requireWritable(ctx, current); err != nil {
+		return nil, err
+	}
 	e, err := f.store.CommitPublication(ctx, c)
 	if err != nil {
 		return nil, err

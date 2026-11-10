@@ -38,7 +38,7 @@ func (f *Fs) ActiveEntries() []model.EntryID {
 			continue
 		}
 		m, err := f.store.Metadata(context.Background(), id)
-		if err == nil && !m.Tombstone {
+		if err == nil && !m.Tombstone && m.VirtualType == "" {
 			result = append(result, id)
 		}
 	}

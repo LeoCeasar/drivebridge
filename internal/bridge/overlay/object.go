@@ -3,6 +3,8 @@ package overlay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,11 +20,12 @@ import (
 )
 
 type Object struct {
-	mu   sync.RWMutex
-	f    *Fs
-	e    model.Entry
-	m    store.Metadata
-	size int64
+	mu      sync.RWMutex
+	f       *Fs
+	e       model.Entry
+	m       store.Metadata
+	size    int64
+	virtual []byte
 }
 
 func (f *Fs) object(ctx context.Context, e model.Entry) (*Object, error) {
@@ -32,6 +35,10 @@ func (f *Fs) object(ctx context.Context, e model.Entry) (*Object, error) {
 	}
 	if m.Tombstone {
 		return nil, fs.ErrorObjectNotFound
+	}
+	if m.VirtualType != "" {
+		content := virtualContent(m)
+		return &Object{f: f, e: e, m: m, size: int64(len(content)), virtual: content}, nil
 	}
 	size := int64(-1)
 	if e.Visible != "" {
@@ -66,7 +73,7 @@ func (o *Object) ModTime(context.Context) time.Time {
 	return o.m.ModTime
 }
 func (o *Object) Size() int64    { o.mu.RLock(); defer o.mu.RUnlock(); o.f.touch(o.e); return o.size }
-func (o *Object) Storable() bool { return true }
+func (o *Object) Storable() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.m.VirtualType == "" }
 func (o *Object) ID() string     { o.mu.RLock(); defer o.mu.RUnlock(); return string(o.e.ID) }
 func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -77,6 +84,10 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	}
 	o.mu.RLock()
 	defer o.mu.RUnlock()
+	if o.virtual != nil {
+		sum := sha256.Sum256(o.virtual)
+		return hex.EncodeToString(sum[:]), nil
+	}
 	return string(o.e.Visible), nil
 }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
@@ -88,6 +99,9 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	}
 	if e.Remote != o.e.Remote {
 		return fs.ErrorObjectNotFound
+	}
+	if err = o.f.requireWritable(ctx, e); err != nil {
+		return err
 	}
 	_, err = o.f.store.ObserveEntry(ctx, store.Observation{Remote: e.Remote, Kind: e.Kind, ModTime: t})
 	if err == nil {
@@ -128,8 +142,11 @@ func (o *Object) Open(ctx context.Context, opts ...fs.OpenOption) (io.ReadCloser
 		return nil, err
 	}
 	o.mu.RLock()
-	e, size := o.e, o.size
+	e, size, generated := o.e, o.size, o.virtual
 	o.mu.RUnlock()
+	if generated != nil {
+		return rangeReader(ctx, io.NopCloser(bytes.NewReader(generated)), size, opts)
+	}
 	if e.Visible == "" {
 		resolved, err := o.f.MaterializeManaged(ctx, e.Remote)
 		if err != nil {
@@ -155,6 +172,11 @@ func (o *Object) Open(ctx context.Context, opts ...fs.OpenOption) (io.ReadCloser
 	if err != nil {
 		return nil, err
 	}
+	return rangeReader(ctx, r, size, opts)
+}
+
+func rangeReader(ctx context.Context, r io.ReadCloser, size int64, opts []fs.OpenOption) (io.ReadCloser, error) {
+	var err error
 	offset, limit := int64(0), int64(-1)
 	ranges := 0
 	for _, opt := range opts {
@@ -207,6 +229,9 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	if current.Remote != o.e.Remote {
 		return fs.ErrorObjectNotFound
+	}
+	if err = o.f.requireWritable(ctx, current); err != nil {
+		return err
 	}
 	expectedGeneration := current.Generation
 	if current.Kind == model.KindDocx {
@@ -271,7 +296,11 @@ func (f *Fs) MaterializeManaged(ctx context.Context, remote string) (fs.Object, 
 	if e.Kind == model.KindFolder {
 		return nil, fs.ErrorIsDir
 	}
-	if e.Visible != "" {
+	metadata, err := f.store.Metadata(ctx, e.ID)
+	if err != nil {
+		return nil, err
+	}
+	if metadata.VirtualType != "" || e.Visible != "" {
 		return f.object(ctx, e)
 	}
 	if e.FrozenBy != "" {

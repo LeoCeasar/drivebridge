@@ -50,12 +50,14 @@ type Metadata struct {
 	FirstObserved time.Time `json:"first_observed"`
 	ModTime       time.Time `json:"mod_time"`
 	SourceURL     string    `json:"source_url,omitempty"`
+	VirtualType   string    `json:"virtual_type,omitempty"`
 	Tombstone     bool      `json:"tombstone,omitempty"`
 }
 type Observation struct {
 	Remote                      string
 	Kind                        model.Kind
 	Token, CloudName, SourceURL string
+	VirtualType                 string
 	ModTime                     time.Time
 }
 
@@ -389,6 +391,11 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 	if !validKind(o.Kind) || (o.Remote == "" && o.Kind != model.KindFolder) {
 		return e, errors.New("invalid entry kind")
 	}
+	// Virtual classifications only arrive with an observed provider token. They are
+	// additive metadata, never a new writable kind or a local creation request.
+	if o.VirtualType != "" && (o.Token == "" || o.Kind != model.KindFile || o.VirtualType == "file" || o.VirtualType == "docx" || o.VirtualType == "folder") {
+		return e, model.ErrIdentityChanged
+	}
 	err = s.update(ctx, func(tx *bolt.Tx) error {
 		var er error
 		e, er = byPath(tx, o.Remote)
@@ -409,7 +416,11 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 			if err := get(tx, "metadata", string(e.ID), &m); err != nil {
 				return err
 			}
+			if o.Token != "" && m.VirtualType != o.VirtualType {
+				return model.ErrIdentityChanged
+			}
 		} else {
+			m.VirtualType = o.VirtualType
 			if namespaceReserved(tx, o.Remote) {
 				return ErrFrozen
 			}
@@ -425,7 +436,7 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 		if o.CloudName != "" {
 			e.CloudName = o.CloudName
 		}
-		if o.SourceURL != "" {
+		if o.SourceURL != "" || (o.Token != "" && m.VirtualType != "") {
 			m.SourceURL = o.SourceURL
 		}
 		if !o.ModTime.IsZero() {
