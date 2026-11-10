@@ -1,0 +1,62 @@
+{
+  "kind": "gate",
+  "work_id": "feishu-desktop-client",
+  "stage": "design",
+  "checks": [
+    {
+      "id": "1",
+      "score": 10,
+      "evidence": "用户明确要求后台自动运行、状态栏同步状态和管理入口"
+    },
+    {
+      "id": "2",
+      "score": 10,
+      "evidence": "已读取现有命令、UI Host、Manager adapter、自启动和 detached process 实现"
+    },
+    {
+      "id": "3",
+      "score": 5,
+      "evidence": "共同托盘行为明确，管理界面浏览器或独立窗口待选择"
+    },
+    {
+      "id": "4",
+      "score": 10,
+      "evidence": "复用同步内核、保留 CLI、不依赖开发机配置，草案明确"
+    },
+    {
+      "id": "5",
+      "score": 10,
+      "evidence": "桌面进程/worker/Manager/UI Host 的职责及数据库归属明确"
+    },
+    {
+      "id": "6",
+      "score": 5,
+      "evidence": "启动停止和异常目标明确，独立窗口生命周期依选择固化"
+    },
+    {
+      "id": "7",
+      "score": 5,
+      "evidence": "核对官方 systray/Wails 文档；具体版本与本机/平台兼容未验证"
+    },
+    {
+      "id": "8",
+      "score": 10,
+      "evidence": "每用户凭据、私有 IPC、未知上传保留及升级冻结要求沿用"
+    },
+    {
+      "id": "9",
+      "score": 5,
+      "evidence": "CLI 保留；现有 per-mount 自启动迁移和具体桌面包未验证"
+    },
+    {
+      "id": "10",
+      "score": 5,
+      "evidence": "验证场景已列出，依桌面壳固化具体验收"
+    }
+  ],
+  "critical_unknowns": [
+    "用户选择管理界面形式：浏览器或独立 App 窗口",
+    "桌面壳具体版本及与当前 Go 工具链、平台依赖的兼容性；需在选型后核验"
+  ],
+  "status": "research-only"
+}
