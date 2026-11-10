@@ -118,6 +118,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	addMount.Flags().String("mountpoint", "", "Local mount path or Windows drive letter")
 	addMount.Flags().String("cache-mode", "full", "Managed mounts require full cache")
 	addMount.Flags().String("cache-size", "5G", "Soft clean-cache budget")
+	addMount.Flags().String("macos-backend", "", "macOS mount backend: kernel or fskit (empty keeps the default)")
 	addMount.Flags().String("write-back", defaults.WriteBack, "Local write-back delay")
 	addMount.Flags().Bool("notify", true, "Notify about conflicts when a desktop is available")
 	addMount.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
@@ -130,6 +131,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		v.RemoteID = r.ID
 		v.Mountpoint = flagString(addMount, "mountpoint")
 		v.CacheMode = flagString(addMount, "cache-mode")
+		v.MacOSBackend = flagString(addMount, "macos-backend")
 		var size fs.SizeSuffix
 		if err = size.Set(flagString(addMount, "cache-size")); err != nil {
 			return nil, manager.ErrConfig

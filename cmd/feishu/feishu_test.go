@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +142,32 @@ func TestLogsFollowWaitsForCancellationWithoutTrailingJSON(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Fatal("follow emitted an unrelated trailing JSON result", stdout.String())
+	}
+}
+
+func TestMountAddPersistsMacOSBackend(t *testing.T) {
+	for _, backend := range []string{"", "kernel", "fskit", "unknown"} {
+		t.Run(backend, func(t *testing.T) {
+			file := configFixture(t)
+			root := NewCommand(CommandOptions{})
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs([]string{"--bridge-config", file, "mount", "add", "selected-backend", "--remote", "team", "--mountpoint", filepath.Join(filepath.Dir(filepath.Dir(file)), "selected-mount"), "--macos-backend", backend})
+			err := root.Execute()
+			valid := backend == "" || runtime.GOOS == "darwin" && (backend == "kernel" || backend == "fskit")
+			c, loadErr := config.Load(file)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if !valid {
+				if err == nil || len(c.Mounts) != 1 {
+					t.Fatalf("invalid backend persisted: %q %v", backend, err)
+				}
+				return
+			}
+			if err != nil || len(c.Mounts) != 2 || c.Mounts[1].MacOSBackend != backend {
+				t.Fatalf("backend not persisted: %+v %v", c.Mounts, err)
+			}
+		})
 	}
 }

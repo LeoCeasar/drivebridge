@@ -455,3 +455,35 @@ func TestDefaultCacheSharesBrandParentWithState(t *testing.T) {
 		t.Fatalf("other brand component changed: %q %v", data, err)
 	}
 }
+
+func TestMountMacOSBackendValidationAndPersistence(t *testing.T) {
+	for _, backend := range []string{"", "kernel", "fskit", "auto", "unknown"} {
+		t.Run(backend, func(t *testing.T) {
+			p := testPaths(t)
+			c := testConfig(p)
+			c.Mounts[0].MacOSBackend = backend
+			valid := backend == "" || runtime.GOOS == "darwin" && (backend == "kernel" || backend == "fskit")
+			err := SaveWithPaths(p, c)
+			if !valid {
+				if err == nil {
+					t.Fatalf("accepted backend %q on %s", backend, runtime.GOOS)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, err := LoadWithPaths(p)
+			if err != nil || saved.Mounts[0].MacOSBackend != backend {
+				t.Fatalf("backend not preserved: %+v %v", saved.Mounts, err)
+			}
+			raw, err := os.ReadFile(p.ConfigFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if backend == "" && bytes.Contains(raw, []byte("macos_backend")) {
+				t.Fatal("default config gained a backend override")
+			}
+		})
+	}
+}

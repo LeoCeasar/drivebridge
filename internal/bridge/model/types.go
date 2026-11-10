@@ -82,6 +82,7 @@ type Mount struct {
 	Notify        bool     `json:"notify"`
 	Autostart     bool     `json:"autostart"`
 	MountEngine   string   `json:"mount_engine"`
+	MacOSBackend  string   `json:"macos_backend,omitempty"`
 }
 
 // VerifiedIdentity contains identity metadata, never CLI credentials.

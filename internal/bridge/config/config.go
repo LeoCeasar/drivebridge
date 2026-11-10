@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -270,6 +271,15 @@ func Validate(c Config, p Paths) error {
 		}
 		if mount.MountEngine != "auto" {
 			return fmt.Errorf("invalid mount engine")
+		}
+		switch mount.MacOSBackend {
+		case "": // Preserve the platform's existing default.
+		case "kernel", "fskit":
+			if runtime.GOOS != "darwin" {
+				return fmt.Errorf("macos backend requires macOS")
+			}
+		default:
+			return fmt.Errorf("invalid macos backend")
 		}
 		for _, value := range []string{mount.WriteBack, mount.PollDocs, mount.RefreshDirs} {
 			duration, err := time.ParseDuration(value)

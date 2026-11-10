@@ -35,6 +35,21 @@ func selectMount() (string, mountlib.MountFn, error) {
 	return name, fn, nil
 }
 
+// Backend selection is per mount. Kernel leaves macFUSE's current default in
+// place; FSKit is opt-in and only supported by the macOS cmount adapter.
+func nativeMountOptions(backend, goos, engine string, base mountlib.Options) (mountlib.Options, error) {
+	if backend == "" {
+		return base, nil
+	}
+	if goos != "darwin" || engine != "cmount" || backend != "kernel" && backend != "fskit" {
+		return base, ErrConfig
+	}
+	if backend == "fskit" {
+		base.ExtraOptions = append(append([]string(nil), base.ExtraOptions...), "backend=fskit")
+	}
+	return base, nil
+}
+
 type nativeRuntime struct {
 	mu              sync.Mutex
 	closed          bool
@@ -78,7 +93,11 @@ func (n *nativeRuntime) Close() error {
 	return nil
 }
 func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServices, error) {
-	_, mount, err := selectMount()
+	engineName, mount, err := selectMount()
+	if err != nil {
+		return nil, err
+	}
+	mountOptions, err := nativeMountOptions(spec.Mount.MacOSBackend, runtime.GOOS, engineName, mountlib.Opt)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +194,6 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			}
 		}
 	}()
-	mountOptions := mountlib.Opt
 	mountOptions.Daemon = false
 	point := mountlib.NewMountPoint(mount, spec.Mount.Mountpoint, f, &mountOptions, &options)
 	point.VFS = v
