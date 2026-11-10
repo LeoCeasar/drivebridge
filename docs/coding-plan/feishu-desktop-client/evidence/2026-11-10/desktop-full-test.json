@@ -1,0 +1,17 @@
+{
+  "head": "317cac7bcb22fc7d857009b27d89365507c7c1bf",
+  "command": [
+    "go",
+    "test",
+    "-p",
+    "4",
+    "-parallel",
+    "4",
+    "./...",
+    "-count=1",
+    "-timeout=15m"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 221.87,
+  "scope": "Full default project test, UTC, private rclone prerequisite, isolated no-remote config; native/live opt-ins disabled. Missing drivers/services and skipped native acceptance are not passed."
+}

@@ -1,0 +1,28 @@
+FAIL	github.com/rclone/rclone/backend/ftp	5.331s
+FAIL	github.com/rclone/rclone/backend/hdfs	3.039s
+FAIL	github.com/rclone/rclone/backend/seafile	4.366s
+FAIL	github.com/rclone/rclone/backend/sftp	7.121s
+FAIL	github.com/rclone/rclone/backend/sia	3.286s
+FAIL	github.com/rclone/rclone/backend/smb	5.802s
+FAIL	github.com/rclone/rclone/backend/swift	3.209s
+FAIL	github.com/rclone/rclone/backend/webdav	5.833s
+?   	github.com/rclone/rclone/cmd/desktop	[no test files]
+ok  	github.com/rclone/rclone/cmd/feishu	1.054s
+FAIL	github.com/rclone/rclone/cmd/nfsmount	1.954s
+ok  	github.com/rclone/rclone/internal/bridge/auth	1.956s
+ok  	github.com/rclone/rclone/internal/bridge/cloud	8.557s
+ok  	github.com/rclone/rclone/internal/bridge/config	1.135s
+ok  	github.com/rclone/rclone/internal/bridge/desktop	1.155s
+ok  	github.com/rclone/rclone/internal/bridge/desktopstartup	0.820s
+ok  	github.com/rclone/rclone/internal/bridge/integration	23.082s
+ok  	github.com/rclone/rclone/internal/bridge/manager	10.621s
+ok  	github.com/rclone/rclone/internal/bridge/markdown	0.625s
+ok  	github.com/rclone/rclone/internal/bridge/migrate	4.727s
+ok  	github.com/rclone/rclone/internal/bridge/model	0.518s
+ok  	github.com/rclone/rclone/internal/bridge/overlay	6.745s
+ok  	github.com/rclone/rclone/internal/bridge/platform	0.511s
+ok  	github.com/rclone/rclone/internal/bridge/store	11.082s
+ok  	github.com/rclone/rclone/internal/bridge/sync	11.421s
+ok  	github.com/rclone/rclone/internal/bridge/tray	0.780s
+ok  	github.com/rclone/rclone/internal/bridge/ui	0.975s
+?   	github.com/rclone/rclone/internal/bridge/ui/preview	[no test files]

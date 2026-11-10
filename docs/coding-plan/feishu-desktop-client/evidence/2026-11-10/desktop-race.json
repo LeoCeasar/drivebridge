@@ -1,0 +1,23 @@
+{
+  "head": "556edd0051b41ebba31f9fcd2d40c093b4731cd3",
+  "command": [
+    "go",
+    "test",
+    "-race",
+    "-p",
+    "4",
+    "./internal/bridge/desktop",
+    "./internal/bridge/desktopstartup",
+    "./internal/bridge/manager",
+    "./internal/bridge/tray",
+    "./internal/bridge/ui",
+    "./internal/bridge/auth",
+    "./cmd/desktop",
+    "./cmd/feishu",
+    "-count=1",
+    "-timeout=90s"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 17.2,
+  "scope": "Desktop integration race; no native driver/mount/install/login acceptance"
+}

@@ -58,5 +58,6 @@
     "用户选择管理界面形式：浏览器或独立 App 窗口",
     "桌面壳具体版本及与当前 Go 工具链、平台依赖的兼容性；需在选型后核验"
   ],
-  "status": "research-only"
+  "status": "historical-research-snapshot",
+  "implementation_decision": "用户随后要求开始实现 macOS/Windows/Linux；按已声明的推荐方案使用托盘+浏览器，版本固定 systray v1.2.2；不以此历史评分证明原生交付完成。"
 }

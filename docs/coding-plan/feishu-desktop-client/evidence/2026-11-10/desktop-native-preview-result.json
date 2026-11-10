@@ -1,0 +1,8 @@
+{
+  "native_macos_process_running_confirmed": true,
+  "browser_management_opened_confirmed": true,
+  "menu_visual_verified": false,
+  "blocker": "Cua app/menu lookup timed out; ScreenCaptureKit -3811; concurrent user browser interaction prevented further UI actions. No other UI automation used.",
+  "authenticated_cleanup": true,
+  "accounts_or_mounts": false
+}

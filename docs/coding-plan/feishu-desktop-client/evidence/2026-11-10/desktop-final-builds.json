@@ -1,0 +1,98 @@
+[
+  {
+    "head": "a4917d6e8d762ef9282685605a6eece46e0b0a64",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "command": [
+      "go",
+      "build",
+      "-p",
+      "4",
+      "-trimpath",
+      "-tags",
+      "desktop",
+      "-ldflags",
+      "-s -w",
+      "-o",
+      ".superpowers/sdd/development/bin/drivebridge-desktop",
+      "."
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 7.7,
+    "desktop_native": true,
+    "mount_engine_compiled": false,
+    "scope": "Build only; Linux targets CLI. No native runtime/mount/login/install proof."
+  },
+  {
+    "head": "a4917d6e8d762ef9282685605a6eece46e0b0a64",
+    "platform": "windows",
+    "architecture": "amd64",
+    "command": [
+      "go",
+      "build",
+      "-p",
+      "4",
+      "-trimpath",
+      "-tags",
+      "desktop,cmount",
+      "-ldflags",
+      "-s -w -H=windowsgui",
+      "-o",
+      ".superpowers/sdd/development/bin/drivebridge-windows-amd64.exe",
+      "."
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 6.05,
+    "desktop_native": true,
+    "mount_engine_compiled": true,
+    "scope": "Build only; Linux targets CLI. No native runtime/mount/login/install proof."
+  },
+  {
+    "head": "a4917d6e8d762ef9282685605a6eece46e0b0a64",
+    "platform": "linux",
+    "architecture": "amd64",
+    "command": [
+      "go",
+      "build",
+      "-p",
+      "4",
+      "-trimpath",
+      "-tags",
+      "",
+      "-ldflags",
+      "-s -w",
+      "-o",
+      ".superpowers/sdd/development/bin/drivebridge-linux-amd64",
+      "."
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 5.98,
+    "desktop_native": false,
+    "mount_engine_compiled": true,
+    "scope": "Build only; Linux targets CLI. No native runtime/mount/login/install proof."
+  },
+  {
+    "head": "a4917d6e8d762ef9282685605a6eece46e0b0a64",
+    "platform": "linux",
+    "architecture": "arm64",
+    "command": [
+      "go",
+      "build",
+      "-p",
+      "4",
+      "-trimpath",
+      "-tags",
+      "",
+      "-ldflags",
+      "-s -w",
+      "-o",
+      ".superpowers/sdd/development/bin/drivebridge-linux-arm64",
+      "."
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 5.92,
+    "desktop_native": false,
+    "mount_engine_compiled": true,
+    "scope": "Build only; Linux targets CLI. No native runtime/mount/login/install proof."
+  }
+]

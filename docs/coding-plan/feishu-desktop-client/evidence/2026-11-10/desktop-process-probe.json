@@ -1,0 +1,12 @@
+{
+  "environment": "isolated synthetic home/config/cache/state; no accounts or mounts",
+  "head": "556edd0051b41ebba31f9fcd2d40c093b4731cd3",
+  "capabilities": {
+    "architecture": "arm64",
+    "native_tray_compiled": true,
+    "platform": "darwin",
+    "schema_version": 1
+  },
+  "rc_listener_suppressed": true,
+  "detached_start_authenticated_stop_cycles": 5
+}
