@@ -1,0 +1,208 @@
+{
+  "scope": "New synthetic document from paragraph probe, common Markdown XML subset only",
+  "results": [
+    {
+      "label": "heading",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    },
+    {
+      "label": "inline",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    },
+    {
+      "label": "code",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    },
+    {
+      "label": "list-item",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    },
+    {
+      "label": "quote",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    },
+    {
+      "label": "table",
+      "status": "success",
+      "beta_raw_preserved": true,
+      "old_target_id_absent": true
+    }
+  ],
+  "inserted_tags": [
+    "title",
+    "p",
+    "h1",
+    "h2",
+    "h6",
+    "p",
+    "pre",
+    "ul",
+    "ol",
+    "blockquote",
+    "hr",
+    "table",
+    "p"
+  ],
+  "skipped_h6_preserved": true,
+  "beta_preserved": true,
+  "status": "passed-scoped",
+  "operations": [
+    {
+      "label": "fetch-before",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "insert-subset",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-subset-inserted",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-heading",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-heading",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-inline",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-inline",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-code",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-code",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-list-item",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-list-item",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-quote",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-quote",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "replace-table",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success",
+      "warnings_count": 0,
+      "warning_codes": []
+    },
+    {
+      "label": "fetch-after-table",
+      "exit_code": 0,
+      "ok": true,
+      "result": null,
+      "warnings_count": 0,
+      "warning_codes": []
+    }
+  ],
+  "limitations": [
+    "No response-loss injection",
+    "Only the listed synthetic payloads; success does not establish arbitrary rich-text preservation",
+    "No CAS or server-idempotency claim",
+    "Exact semantic checks cover only fields listed; no arbitrary layout/unsupported attribute roundtrip proof."
+  ],
+  "semantic_checks": {
+    "heading_revised": true,
+    "skipped_h6_preserved": true,
+    "strong": true,
+    "emphasis": true,
+    "literal_angle_inline_code": true,
+    "link_query_preserved": true,
+    "multiline_code_exact": true,
+    "code_language_go": true,
+    "unordered_items": true,
+    "ordered_item_text": true,
+    "ordered_item_sequence": [
+      "1",
+      "3"
+    ],
+    "quote_text": true,
+    "simple_table_header": true,
+    "simple_table_cells": true,
+    "thematic_break_addressable": true
+  },
+  "code_actual_repr": "'changed1\\nchanged2\\n'"
+}

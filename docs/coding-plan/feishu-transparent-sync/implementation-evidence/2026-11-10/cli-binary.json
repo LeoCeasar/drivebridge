@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-10",
+  "platform": "darwin-arm64",
+  "version_output": "lark-cli version 1.0.99",
+  "sha256": "a8f652c2a62577a152467a983ec60548570fb0a08715e95fa3f579438c81885b",
+  "source_inspected_commit": "1bfdcc2c1a0ed0296ddb6349d251bdd75145bc5a",
+  "build_correspondence": "Same declared version; reproducible source-to-binary equivalence not established. Evidence binds actual tested binary hash.",
+  "scope": "Parent probes of isolated previously authorized validation folder. No account credentials included."
+}

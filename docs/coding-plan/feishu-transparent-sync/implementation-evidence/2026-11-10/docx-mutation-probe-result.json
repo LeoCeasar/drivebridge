@@ -1,0 +1,113 @@
+{
+  "scope": "New synthetic Docx in previously authorized isolated validation folder",
+  "mutations": [
+    {
+      "kind": "block_replace",
+      "non_target_raw_unchanged": true,
+      "target_id_changed": true
+    },
+    {
+      "kind": "block_insert_after",
+      "non_target_raw_unchanged": true,
+      "single_insert_observed": true,
+      "paragraph_order": [
+        "alpha-local-1",
+        "inserted-between",
+        "beta"
+      ]
+    },
+    {
+      "kind": "block_delete",
+      "non_target_raw_unchanged": true,
+      "insert_absent": true,
+      "edited_paragraph_preserved": true
+    }
+  ],
+  "status": "passed-scoped",
+  "operations": [
+    {
+      "label": "create-synthetic",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document"
+      ],
+      "result": null
+    },
+    {
+      "label": "fetch-full",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document"
+      ],
+      "result": null
+    },
+    {
+      "label": "block-replace",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document",
+        "result",
+        "warnings"
+      ],
+      "result": "success"
+    },
+    {
+      "label": "fetch-full",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document"
+      ],
+      "result": null
+    },
+    {
+      "label": "block-insert-after",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document",
+        "result",
+        "warnings"
+      ],
+      "result": "success"
+    },
+    {
+      "label": "fetch-full",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document"
+      ],
+      "result": null
+    },
+    {
+      "label": "block-delete",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document",
+        "result",
+        "warnings"
+      ],
+      "result": "success"
+    },
+    {
+      "label": "fetch-full",
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "document"
+      ],
+      "result": null
+    }
+  ],
+  "limitations": [
+    "Synthetic paragraph targets only",
+    "No response-loss injection or arbitrary rich-text preservation proof",
+    "No server CAS or idempotency token claim",
+    "Synthetic document retained for traceability"
+  ]
+}
