@@ -1,0 +1,128 @@
+name: DriveBridge verification and native release gates
+on:
+  pull_request:
+    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'packaging/drivebridge/**', 'cmd/feishu/**', '.github/workflows/drivebridge-release.yml']
+  workflow_dispatch:
+    inputs:
+      native:
+        description: Run all five native driver/installer runners (missing runner blocks verification)
+        type: boolean
+        default: false
+      release:
+        description: Require signing and notarization; no unsigned release fallback
+        type: boolean
+        default: false
+      version:
+        description: Numeric installer version X.Y.Z
+        type: string
+        default: '0.1.0'
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s packaging/drivebridge/tests
+      - run: bash -n packaging/drivebridge/*.sh
+      - run: go test ./lib/larkcli ./backend/feishu ./internal/bridge/... ./vfs/... -count=1
+      - run: go test -race ./lib/larkcli ./internal/bridge/... ./vfs/... -count=1
+      - name: Reject a release request without native gates
+        if: inputs.release && !inputs.native
+        run: echo 'NOT VERIFIED - release requires all native runners'; exit 1
+  native:
+    needs: unit
+    # Never expose release keys or native machines to PR code. Configure protected release tags/environments.
+    if: github.event_name == 'workflow_dispatch' && inputs.native && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/drivebridge-v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: darwin, arch: amd64, os: macOS, cpu: X64}
+          - {platform: darwin, arch: arm64, os: macOS, cpu: ARM64}
+          - {platform: windows, arch: amd64, os: Windows, cpu: X64}
+          - {platform: linux, arch: amd64, os: Linux, cpu: X64}
+          - {platform: linux, arch: arm64, os: Linux, cpu: ARM64}
+    runs-on: [self-hosted, drivebridge-native, '${{ matrix.os }}', '${{ matrix.cpu }}']
+    environment: drivebridge-release-${{ matrix.platform }}
+    timeout-minutes: 60
+    env:
+      DB_PLATFORM: ${{ matrix.platform }}
+      DB_ARCH: ${{ matrix.arch }}
+      DB_VERSION: ${{ inputs.version }}
+      DB_RELEASE: ${{ inputs.release }}
+      DRIVEBRIDGE_CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+      DRIVEBRIDGE_INSTALLER_IDENTITY: ${{ secrets.INSTALLER_IDENTITY }}
+      DRIVEBRIDGE_NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
+      DRIVEBRIDGE_SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
+      DRIVEBRIDGE_TIMESTAMP_URL: ${{ vars.TIMESTAMP_URL }}
+      DRIVEBRIDGE_GPG_KEY: ${{ secrets.GPG_KEY_ID }}
+      # Runner-owned executable must install, upgrade with pending fixtures, test user startup,
+      # stop/uninstall retaining data, and leave a disposable mount for smoke. Never supplied by PR.
+      DRIVEBRIDGE_NATIVE_HARNESS: ${{ vars.NATIVE_HARNESS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build native Unix installers
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/drivebridge/fetch-runtime.py --platform "$DB_PLATFORM" --arch "$DB_ARCH" --output "$RUNNER_TEMP/db-runtime"
+          mode=(); if [ "$DB_RELEASE" != true ]; then mode=(--unsigned); fi
+          script=build-linux.sh; if [ "$DB_PLATFORM" = darwin ]; then script=build-macos.sh; fi
+          bash "packaging/drivebridge/$script" --arch "$DB_ARCH" --version "$DB_VERSION" --lark-package "$RUNNER_TEMP/db-runtime/lark-package" --lark-native-archive "$RUNNER_TEMP/db-runtime/cli-native.tar.gz" --output "$RUNNER_TEMP/db-artifacts" ${mode[@]+"${mode[@]}"}
+      - name: Build native Windows installers
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python packaging/drivebridge/fetch-runtime.py --platform windows --arch amd64 --output "$env:RUNNER_TEMP/db-runtime"
+          if ($LASTEXITCODE) { throw 'Runtime fetch failed' }
+          $mode = @{}; if ($env:DB_RELEASE -ne 'true') { $mode.Unsigned = $true }
+          & packaging/drivebridge/build-windows.ps1 -Arch amd64 -Version $env:DB_VERSION -LarkPackage "$env:RUNNER_TEMP/db-runtime/lark-package" -LarkNativeArchive "$env:RUNNER_TEMP/db-runtime/cli-native.zip" -NodeArchive "$env:RUNNER_TEMP/db-runtime/node.zip" -OutputDir "$env:RUNNER_TEMP/db-artifacts" @mode
+      - name: Native installation, upgrade and real mount evidence
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess, sys
+          harness = os.environ.get('DRIVEBRIDGE_NATIVE_HARNESS', '')
+          if not harness or not pathlib.Path(harness).is_file():
+              sys.exit('NOT VERIFIED: provisioned native harness is missing; platform release blocked')
+          tmp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          subprocess.run([harness, '--artifacts', str(tmp/'db-artifacts'), '--result', str(tmp/'db-native-result.json')], check=True)
+          result = json.loads((tmp/'db-native-result.json').read_text())
+          if os.environ['DB_PLATFORM'] == 'windows':
+              args = ['pwsh','-File','packaging/drivebridge/smoke.ps1','-Payload',result['payload'],'-MountPoint',result['mountpoint'],'-Evidence',result['evidence'],'-Artifacts',str(tmp/'db-artifacts')]
+              if os.environ['DB_RELEASE']=='true': args += ['-Release']
+          else:
+              args = ['bash','packaging/drivebridge/smoke.sh','--payload',result['payload'],'--mountpoint',result['mountpoint'],'--evidence',result['evidence'],'--artifacts',str(tmp/'db-artifacts')]
+              if os.environ['DB_RELEASE']=='true': args += ['--release']
+          subprocess.run(args,check=True)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drivebridge-${{ matrix.platform }}-${{ matrix.arch }}-${{ inputs.release && 'signed-verified' || 'unsigned-test' }}
+          path: ${{ runner.temp }}/db-artifacts
+          if-no-files-found: error
+  release-gate:
+    needs: [unit, native]
+    if: always() && inputs.release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed if any platform did not verify
+        env:
+          NATIVE_RESULT: ${{ needs.native.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+        run: |
+          test "$NATIVE_RESULT" = success && test "$UNIT_RESULT" = success || { echo 'NOT VERIFIED - platform release blocked'; exit 1; }
+          echo 'All native gates passed. Artifacts are ready for a separately authorized publish step.'

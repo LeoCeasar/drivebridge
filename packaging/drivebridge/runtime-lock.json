@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "package": "@larksuite/cli",
+    "version": "1.0.99",
+    "source": "https://registry.npmjs.org/@larksuite/cli/-/cli-1.0.99.tgz",
+    "upstream": "https://github.com/larksuite/cli",
+    "integrity": "sha512-eUiGhjSEmeDu9w3741e1bF72LyYVtT5o+Dnb4SouTb52r6aRu2Us7QyZpcVdb5rfDvnPV4rPYWbGvvP1xFbp8w==",
+    "package_files": {
+      "LICENSE": "c969fc7e3af68e6bf40b0d8dd9c3dcc377eb685a2139535b203b39fdcad739ee",
+      "scripts/install-wizard.js": "0feff3f3b5822742d31dec378016071ff564359d0563759a6494975a6a181383",
+      "scripts/install.js": "81cbf959882164f54f7d22b20dcfcac6b3796ac3205a99d3005833bd68e99886",
+      "scripts/run.js": "b6b575a31d62ea45f55155f1090a49d31e79a1b0e5c70af15f9431ab850ca577",
+      "package.json": "58caa5ad88f9b2231d55a0d822246af57d56d7a7f6fe97271a3f107637a7ead0",
+      "CHANGELOG.md": "286831cfdb5c9ee77bdbf5a33b9330da3ca93749269088a7abd8f7dd0e9dd6af",
+      "README.md": "4a7c806173a1070edea732281137ecd9a22647acdbf99fe6045926101a5cb3ef",
+      "README.zh.md": "b087dfcece4dd7e7defac04167bcdfef34582d7ceb2bc1990c54ae3b55c6049d",
+      "checksums.txt": "5df474bda4cb601b8b542eea372ec786ee24b572fb46b649a4d41d6e06a5789d"
+    },
+    "assets": {
+      "lark-cli-1.0.99-darwin-amd64.tar.gz": {
+        "sha256": "31f900409082728761346a94b7b81038c78b302883b69c36b849b23d843d7de1",
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-amd64.tar.gz"
+      },
+      "lark-cli-1.0.99-darwin-arm64.tar.gz": {
+        "sha256": "f24f4106d1b0b1a4ee9a24ec0953dee6e518476bbe3d9758f78a732477525b21",
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-arm64.tar.gz"
+      },
+      "lark-cli-1.0.99-linux-amd64.tar.gz": {
+        "sha256": "fd29f51030dde6919b6ca9173bc87852d3846f253d198022ea2d9ee63527b945",
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-amd64.tar.gz"
+      },
+      "lark-cli-1.0.99-linux-arm64.tar.gz": {
+        "sha256": "2837145e72922d558538494d0da30ac6c509681fc0791f8818f4ddb87f5125b4",
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-arm64.tar.gz"
+      },
+      "lark-cli-1.0.99-windows-amd64.zip": {
+        "sha256": "1b43cb63ff533ee067db45d93a862074d147df5a0d05f95c2d2a7c70c3f97375",
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-windows-amd64.zip"
+      }
+    }
+  },
+  "node": {
+    "version": "24.22.2",
+    "source": "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip",
+    "sha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+    "binary_sha256": "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    "checksums_source": "https://nodejs.org/dist/v24.22.2/SHASUMS256.txt"
+  }
+}

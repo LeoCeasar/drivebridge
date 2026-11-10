@@ -1,0 +1,7 @@
+#!/bin/sh
+# Installer scripts do not start workers or remove user state. Refuse unsafe upgrade.
+if /usr/bin/pgrep -x drivebridge >/dev/null 2>&1; then
+  echo 'Stop DriveBridge mounts as each desktop user before upgrade/uninstall. Pending data is preserved.' >&2
+  exit 1
+fi
+exit 0

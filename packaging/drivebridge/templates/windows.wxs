@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="DriveBridge" Manufacturer="DriveBridge" Version="@VERSION@"
+           UpgradeCode="F819E0A4-CFD1-4BDF-928A-2524844F1717" Scope="perUser" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer DriveBridge is installed. Preserve user state and use its migration workflow."/>
+    <MediaTemplate EmbedCab="yes"/>
+    <StandardDirectory Id="LocalAppDataFolder"><Directory Id="ProgramsFolder" Name="Programs"><Directory Id="INSTALLFOLDER" Name="DriveBridge"/></Directory></StandardDirectory>
+    <Feature Id="Product" Title="DriveBridge" Level="1"><ComponentGroupRef Id="Payload"/></Feature>
+    <ComponentGroup Id="Payload"/>
+    <!-- Immediate, impersonated user action. No worker is run and no state is changed. -->
+    <CustomAction Id="GuardRunning" Directory="SystemFolder" Execute="immediate" Impersonate="yes" Return="check"
+      ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;if(Get-Process -Name drivebridge -ErrorAction SilentlyContinue){Write-Error 'Stop DriveBridge mounts before replacement or removal';exit 1}&quot;"/>
+    <InstallExecuteSequence><Custom Action="GuardRunning" Before="InstallValidate" Condition="1"/></InstallExecuteSequence>
+  </Package>
+</Wix>
