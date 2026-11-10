@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/config"
 	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/spf13/cobra"
 )
 
 func configFixture(t *testing.T) string {
@@ -107,6 +109,19 @@ func TestCompletionAndHelpDoNotRequireCLIOrAccount(t *testing.T) {
 		if err := root.Execute(); err != nil || stdout.Len() == 0 {
 			t.Fatal(args, err)
 		}
+	}
+}
+func TestCompletionUsesExecutableRoot(t *testing.T) {
+	root := &cobra.Command{Use: "drivebridge"}
+	root.AddCommand(NewCommand(CommandOptions{}))
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"feishu", "completion", "bash"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "__start_drivebridge") {
+		t.Fatal("completion targets subcommand instead of executable")
 	}
 }
 func TestLogsFollowWaitsForCancellationWithoutTrailingJSON(t *testing.T) {

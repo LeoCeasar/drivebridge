@@ -82,7 +82,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	remote := &cobra.Command{Use: "remote", Short: "Configure shared-folder mappings"}
 	addRemote := &cobra.Command{Use: "add NAME", Args: exactArgs(1)}
 	addRemote.Flags().String("profile", "", "Configured profile")
-	addRemote.Flags().String("folder-token", "", "Shared folder token or URL")
+	addRemote.Flags().String("folder-token", "", "Shared folder token")
 	addRemote.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
 		p, err := m.ResolveProfile(ctx, flagString(addRemote, "profile"))
 		if err != nil {
@@ -354,15 +354,16 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	})
 	root.AddCommand(logs)
 	completion := &cobra.Command{Use: "completion SHELL", Args: exactArgs(1), RunE: func(c *cobra.Command, args []string) error {
+		executable := c.Root()
 		switch strings.ToLower(args[0]) {
 		case "bash":
-			return root.GenBashCompletionV2(c.OutOrStdout(), true)
+			return executable.GenBashCompletionV2(c.OutOrStdout(), true)
 		case "zsh":
-			return root.GenZshCompletion(c.OutOrStdout())
+			return executable.GenZshCompletion(c.OutOrStdout())
 		case "fish":
-			return root.GenFishCompletion(c.OutOrStdout(), true)
+			return executable.GenFishCompletion(c.OutOrStdout(), true)
 		case "powershell":
-			return root.GenPowerShellCompletionWithDesc(c.OutOrStdout())
+			return executable.GenPowerShellCompletionWithDesc(c.OutOrStdout())
 		default:
 			return manager.ErrConfig
 		}
