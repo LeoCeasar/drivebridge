@@ -64,7 +64,7 @@ func (f *FileHandle) Read(ctx context.Context, dest []byte, off int64) (res fuse
 	if err == io.EOF {
 		err = nil
 	}
-	return fuse.ReadResultData(dest[:n]), translateError(err)
+	return fuse.ReadResultData(dest[:n]), f.fsys.translateError(err)
 }
 
 var _ fusefs.FileReader = (*FileHandle)(nil)
@@ -76,7 +76,7 @@ func (f *FileHandle) Write(ctx context.Context, data []byte, off int64) (written
 	var err error
 	defer log.Trace(f, "off=%d", off)("n=%d, off=%d, errno=%v", &n, &off, &errno)
 	n, err = f.h.WriteAt(data, off)
-	return uint32(n), translateError(err)
+	return uint32(n), f.fsys.translateError(err)
 }
 
 var _ fusefs.FileWriter = (*FileHandle)(nil)
@@ -85,7 +85,7 @@ var _ fusefs.FileWriter = (*FileHandle)(nil)
 // of a descriptor that was duplicated using dup(2), it may be called
 // more than once for the same FileHandle.
 func (f *FileHandle) Flush(ctx context.Context) syscall.Errno {
-	return translateError(f.h.Flush())
+	return f.fsys.translateError(f.h.Flush())
 }
 
 var _ fusefs.FileFlusher = (*FileHandle)(nil)
@@ -95,7 +95,7 @@ var _ fusefs.FileFlusher = (*FileHandle)(nil)
 // so any cleanup that requires specific synchronization or
 // could fail with I/O errors should happen in Flush instead.
 func (f *FileHandle) Release(ctx context.Context) syscall.Errno {
-	return translateError(f.h.Release())
+	return f.fsys.translateError(f.h.Release())
 }
 
 var _ fusefs.FileReleaser = (*FileHandle)(nil)
@@ -103,7 +103,7 @@ var _ fusefs.FileReleaser = (*FileHandle)(nil)
 // Fsync is a signal to ensure writes to the Inode are flushed
 // to stable storage.
 func (f *FileHandle) Fsync(ctx context.Context, flags uint32) (errno syscall.Errno) {
-	return translateError(f.h.Sync())
+	return f.fsys.translateError(f.h.Sync())
 }
 
 var _ fusefs.FileFsyncer = (*FileHandle)(nil)
@@ -117,6 +117,9 @@ var _ fusefs.FileFsyncer = (*FileHandle)(nil)
 // is assumed, and the 'blocks' field is set accordingly.
 func (f *FileHandle) Getattr(ctx context.Context, out *fuse.AttrOut) (errno syscall.Errno) {
 	defer log.Trace(f, "")("attr=%v, errno=%v", &out, &errno)
+	if err := vfs.MaterializeNode(ctx, f.h.Node()); err != nil {
+		return f.fsys.translateError(err)
+	}
 	f.fsys.setAttrOut(f.h.Node(), out)
 	return 0
 }
@@ -127,12 +130,15 @@ var _ fusefs.FileGetattrer = (*FileHandle)(nil)
 func (f *FileHandle) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.AttrOut) (errno syscall.Errno) {
 	defer log.Trace(f, "in=%v", in)("attr=%v, errno=%v", &out, &errno)
 	var err error
+	if err := vfs.MaterializeNode(ctx, f.h.Node()); err != nil {
+		return f.fsys.translateError(err)
+	}
 	f.fsys.setAttrOut(f.h.Node(), out)
 	size, ok := in.GetSize()
 	if ok {
 		err = f.h.Truncate(int64(size))
 		if err != nil {
-			return translateError(err)
+			return f.fsys.translateError(err)
 		}
 		out.Attr.Size = size
 	}
@@ -140,7 +146,7 @@ func (f *FileHandle) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.
 	if ok {
 		err = f.h.Node().SetModTime(mtime)
 		if err != nil {
-			return translateError(err)
+			return f.fsys.translateError(err)
 		}
 		out.Attr.Mtime = uint64(mtime.Unix())
 		out.Attr.Mtimensec = uint32(mtime.Nanosecond())

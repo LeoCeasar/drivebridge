@@ -54,6 +54,7 @@ import (
 //
 // The Info field is written to the backing store to store status
 type Item struct {
+	snapshotMu sync.Mutex
 	// read only
 	c               *Cache                   // cache this is part of
 	mu              sync.Mutex               // protect the variables
@@ -74,6 +75,9 @@ type Item struct {
 
 // Info is persisted to backing store
 type Info struct {
+	MutationSeq uint64        `json:",omitempty"`
+	DurableSeq  uint64        `json:",omitempty"`
+	StagedSeq   uint64        `json:",omitempty"`
 	ModTime     time.Time     // last time file was modified
 	ATime       time.Time     // last time file was accessed
 	Size        int64         // size of the file
@@ -210,6 +214,9 @@ func (item *Item) load() (exists bool, err error) {
 //
 // call with the lock held
 func (item *Item) _save() (err error) {
+	if item.c.managed.Load() {
+		return item.saveManaged()
+	}
 	osPathMeta := item.c.toOSPathMeta(item.name) // No locking in Cache
 	out, err := os.Create(osPathMeta)
 	if err != nil {
@@ -326,6 +333,8 @@ func (item *Item) _truncateToCurrentSize() (err error) {
 func (item *Item) Truncate(size int64) (err error) {
 	item.preAccess()
 	defer item.postAccess()
+	releaseMutation := item.lockMutation()
+	defer releaseMutation()
 	item.mu.Lock()
 	defer item.mu.Unlock()
 
@@ -430,6 +439,9 @@ func (item *Item) Exists() bool {
 //
 // call with lock held
 func (item *Item) _dirty() {
+	if item.c.managed.Load() {
+		item.info.MutationSeq++
+	}
 	item.info.ModTime = time.Now()
 	item.info.ATime = item.info.ModTime
 	if !item.modified {
@@ -451,6 +463,8 @@ func (item *Item) _dirty() {
 func (item *Item) Dirty() {
 	item.preAccess()
 	defer item.postAccess()
+	releaseMutation := item.lockMutation()
+	defer releaseMutation()
 	item.mu.Lock()
 	item._dirty()
 	item.mu.Unlock()
@@ -499,7 +513,9 @@ func (item *Item) _createFile(osPath string) (err error) {
 func (item *Item) Open(o fs.Object) (err error) {
 	for range fs.GetConfig(item.c.ctx).LowLevelRetries {
 		item.preAccess()
+		releaseMutation := item.lockMutation()
 		err = item.open(o)
+		releaseMutation()
 		item.postAccess()
 		if err == nil {
 			break
@@ -675,6 +691,10 @@ func (item *Item) _store(ctx context.Context, storeFn StoreFn) (err error) {
 // Store stores the local cache file to the remote object, returning
 // the new remote object. objOld is the old object if known.
 func (item *Item) store(ctx context.Context, storeFn StoreFn) (err error) {
+	if item.c.managed.Load() {
+		_, e := item.FlushForManagedRename(ctx, storeFn)
+		return e
+	}
 	item.mu.Lock()
 	defer item.mu.Unlock()
 	return item._store(ctx, storeFn)
@@ -682,6 +702,14 @@ func (item *Item) store(ctx context.Context, storeFn StoreFn) (err error) {
 
 // Close the cache file
 func (item *Item) Close(storeFn StoreFn) (err error) {
+	if item.c.managed.Load() {
+		_, e := item.FlushManaged(item.c.ctx, storeFn)
+		return errors.Join(e, item.closeCache(storeFn))
+	}
+	return item.closeCache(storeFn)
+}
+
+func (item *Item) closeCache(storeFn StoreFn) (err error) {
 	// defer log.Trace(item.o, "Item.Close")("err=%v", &err)
 	item.preAccess()
 	defer item.postAccess()
@@ -807,7 +835,7 @@ func (item *Item) _actualClose(storeFn StoreFn, syncWriteBack bool) (err error) 
 	}
 
 	// upload the file to backing store if changed
-	if item.info.Dirty {
+	if item.info.Dirty && !item.c.managed.Load() {
 		fs.Infof(item.name, "vfs cache: queuing for upload in %v", item.c.opt.WriteBack)
 		if syncWriteBack {
 			// do synchronous writeback
@@ -1395,6 +1423,8 @@ func (item *Item) readAt(b []byte, off int64) (n int, err error) {
 func (item *Item) WriteAt(b []byte, off int64) (n int, err error) {
 	item.preAccess()
 	defer item.postAccess()
+	releaseMutation := item.lockMutation()
+	defer releaseMutation()
 	item.mu.Lock()
 	if item.fd == nil {
 		item.mu.Unlock()
@@ -1435,6 +1465,8 @@ func (item *Item) WriteAt(b []byte, off int64) (n int, err error) {
 // It returns n the total bytes processed and skipped the number of
 // bytes which were processed but not actually written to the file.
 func (item *Item) WriteAtNoOverwrite(b []byte, off int64) (n int, skipped int, err error) {
+	releaseMutation := item.lockMutation()
+	defer releaseMutation()
 	item.mu.Lock()
 
 	var (
@@ -1485,6 +1517,10 @@ func (item *Item) WriteAtNoOverwrite(b []byte, off int64) (n int, skipped int, e
 // this means flushing the file system's in-memory copy of recently written
 // data to disk.
 func (item *Item) Sync() (err error) {
+	if item.c.managed.Load() {
+		_, e := item.FlushManaged(item.c.ctx, nil)
+		return e
+	}
 	item.preAccess()
 	defer item.postAccess()
 	item.mu.Lock()

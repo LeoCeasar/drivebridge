@@ -44,7 +44,8 @@ type File struct {
 	size  atomic.Int64    // size of file
 	ctx   context.Context // context for VFS operations - read only
 
-	muRW sync.Mutex // synchronize RWFileHandle.openPending(), RWFileHandle.close() and File.Remove
+	materializeMu sync.Mutex
+	muRW          sync.Mutex // synchronize RWFileHandle.openPending(), RWFileHandle.close() and File.Remove
 
 	mu               sync.RWMutex                    // protects the following
 	d                *Dir                            // parent directory
@@ -206,9 +207,9 @@ func (f *File) Node() Node {
 
 // renameDir - call when parent directory has been renamed
 func (f *File) renameDir(dPath string) {
-	f.mu.RLock()
+	f.mu.Lock()
 	f.dPath = dPath
-	f.mu.RUnlock()
+	f.mu.Unlock()
 }
 
 // applyPendingRename runs a previously set rename operation if there are no
@@ -231,6 +232,12 @@ func (f *File) applyPendingRename() {
 // Otherwise it will queue the rename operation on the remote until no writers
 // remain.
 func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
+	f.mu.RLock()
+	managedDir, managedName := f.d, f.leaf
+	f.mu.RUnlock()
+	if managedDir.vfs.ManagedSyncEnabled() {
+		return managedDir.managedRename(managedName, newName, destDir)
+	}
 	f.mu.RLock()
 	d := f.d
 	oldPendingRenameFun := f.pendingRenameFun
@@ -674,6 +681,9 @@ func (f *File) Remove() (err error) {
 	if d.vfs.Opt.ReadOnly {
 		return EROFS
 	}
+	if d.vfs.ManagedSyncEnabled() {
+		return f.removeManaged()
+	}
 
 	// Remove the object from the cache
 	wasWriting := false
@@ -848,6 +858,27 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 		return target.Open(flags)
 	}
 	flags &^= o_SYMLINK
+	f.mu.RLock()
+	managedVFS := f.d.vfs
+	f.mu.RUnlock()
+	if m := managedVFS.managed.Load(); m != nil {
+		a, e := m.admit(f.Path(), rdwrMode != os.O_RDONLY || flags&(os.O_TRUNC|os.O_CREATE) != 0)
+		if e != nil {
+			return nil, e
+		}
+		defer func() {
+			if err != nil || fd == nil {
+				a.release()
+			} else {
+				fd = &managedHandle{Handle: fd, token: a}
+			}
+		}()
+		if e = f.materializeManaged(f.ctx); e != nil {
+			return nil, e
+		}
+	} else {
+		managedVFS.nativeAccess.Store(true)
+	}
 
 	// http://pubs.opengroup.org/onlinepubs/7908799/xsh/open.html
 	// The result of using O_TRUNC with O_RDONLY is undefined.

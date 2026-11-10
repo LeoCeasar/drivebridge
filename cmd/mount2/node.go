@@ -55,7 +55,7 @@ func (n *Node) lookupVfsNodeInDir(leaf string) (vfsNode vfs.Node, errno syscall.
 		return nil, syscall.ENOTDIR
 	}
 	vfsNode, err := dir.Stat(leaf)
-	return vfsNode, translateError(err)
+	return vfsNode, n.fsys.translateError(err)
 }
 
 // // lookup a Dir given a path
@@ -110,6 +110,9 @@ var _ = (fusefs.NodeStatfser)((*Node)(nil))
 // with the Options.NullPermissions setting. If blksize is unset, 4096
 // is assumed, and the 'blocks' field is set accordingly.
 func (n *Node) Getattr(ctx context.Context, f fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	if err := vfs.MaterializeNode(ctx, n.node); err != nil {
+		return n.fsys.translateError(err)
+	}
 	n.fsys.setAttrOut(n.node, out)
 	return 0
 }
@@ -120,12 +123,15 @@ var _ = (fusefs.NodeGetattrer)((*Node)(nil))
 func (n *Node) Setattr(ctx context.Context, f fusefs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) (errno syscall.Errno) {
 	defer log.Trace(n, "in=%v", in)("out=%#v, errno=%v", &out, &errno)
 	var err error
+	if err := vfs.MaterializeNode(ctx, n.node); err != nil {
+		return n.fsys.translateError(err)
+	}
 	n.fsys.setAttrOut(n.node, out)
 	size, ok := in.GetSize()
 	if ok {
 		err = n.node.Truncate(int64(size))
 		if err != nil {
-			return translateError(err)
+			return n.fsys.translateError(err)
 		}
 		out.Attr.Size = size
 	}
@@ -133,7 +139,7 @@ func (n *Node) Setattr(ctx context.Context, f fusefs.FileHandle, in *fuse.SetAtt
 	if ok {
 		err = n.node.SetModTime(mtime)
 		if err != nil {
-			return translateError(err)
+			return n.fsys.translateError(err)
 		}
 		out.Attr.Mtime = uint64(mtime.Unix())
 		out.Attr.Mtimensec = uint32(mtime.Nanosecond())
@@ -151,7 +157,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fh fusefs.FileHandle, fu
 	// should be compatible
 	handle, err := n.node.Open(int(flags))
 	if err != nil {
-		return nil, 0, translateError(err)
+		return nil, 0, n.fsys.translateError(err)
 	}
 	// If size unknown then use direct io to read
 	if entry := n.node.DirEntry(); entry != nil && entry.Size() < 0 {
@@ -310,7 +316,7 @@ func (n *Node) Readdir(ctx context.Context) (ds fusefs.DirStream, errno syscall.
 	}
 	fh, err := n.node.Open(os.O_RDONLY)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, n.fsys.translateError(err)
 	}
 	defer func() {
 		closeErr := fh.Close()
@@ -320,7 +326,7 @@ func (n *Node) Readdir(ctx context.Context) (ds fusefs.DirStream, errno syscall.
 	}()
 	items, err := fh.Readdir(-1)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, n.fsys.translateError(err)
 	}
 	return &dirStream{
 		nodes: items,
@@ -339,7 +345,7 @@ func (n *Node) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.En
 	}
 	newDir, err := dir.Mkdir(name)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, n.fsys.translateError(err)
 	}
 	newNode := newNode(n.fsys, newDir)
 	n.fsys.setEntryOut(newNode.node, out)
@@ -363,11 +369,11 @@ func (n *Node) Create(ctx context.Context, name string, flags uint32, mode uint3
 	osFlags := int(flags) | os.O_CREATE
 	file, err := dir.Create(name, osFlags)
 	if err != nil {
-		return nil, nil, 0, translateError(err)
+		return nil, nil, 0, n.fsys.translateError(err)
 	}
 	handle, err := file.Open(osFlags)
 	if err != nil {
-		return nil, nil, 0, translateError(err)
+		return nil, nil, 0, n.fsys.translateError(err)
 	}
 	fh = newFileHandle(handle, n.fsys)
 	// FIXME

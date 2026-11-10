@@ -3,6 +3,8 @@
 package cmount
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/rclone/rclone/cmd/mountlib"
@@ -64,7 +67,7 @@ found:
 
 // get the handle for fh, call with the lock held
 func (fsys *FS) _getHandle(fh uint64) (i int, handle vfs.Handle, errc int) {
-	if fh > uint64(len(fsys.handles)) {
+	if fh >= uint64(len(fsys.handles)) {
 		fs.Debugf(nil, "Bad file handle: too big: 0x%X", fh)
 		return i, nil, -fuse.EBADF
 	}
@@ -99,7 +102,7 @@ func (fsys *FS) closeHandle(fh uint64) (errc int) {
 // lookup a Node given a path
 func (fsys *FS) lookupNode(path string) (node vfs.Node, errc int) {
 	node, err := fsys.VFS.Stat(path)
-	return node, translateError(err)
+	return node, fsys.translateError(err)
 }
 
 // lookup a Dir given a path
@@ -180,6 +183,9 @@ func (fsys *FS) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%v", &errc)
 	node, _, errc := fsys.getNode(path, fh)
 	if errc == 0 {
+		if err := vfs.MaterializeNode(context.Background(), node); err != nil {
+			return fsys.translateError(err)
+		}
 		errc = fsys.stat(node, stat)
 	}
 	return
@@ -190,7 +196,7 @@ func (fsys *FS) Opendir(path string) (errc int, fh uint64) {
 	defer log.Trace(path, "")("errc=%d, fh=0x%X", &errc, &fh)
 	handle, err := fsys.VFS.OpenFile(path, os.O_RDONLY, 0777)
 	if err != nil {
-		return translateError(err), fhUnset
+		return fsys.translateError(err), fhUnset
 	}
 	return 0, fsys.openHandle(handle)
 }
@@ -222,7 +228,7 @@ func (fsys *FS) Readdir(dirPath string,
 
 	nodes, err := dir.ReadDirAll()
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 
 	// Optionally, create a struct stat that describes the file as
@@ -246,6 +252,12 @@ func (fsys *FS) Readdir(dirPath string,
 			fs.Errorf(dirPath, "Name too long (%d bytes) for FUSE, skipping: %s", len(name), name)
 			continue
 		}
+		if fsys.VFS.ManagedSyncEnabled() {
+			if entry := node.DirEntry(); entry != nil && entry.Size() < 0 {
+				fill(name, nil, 0)
+				continue
+			}
+		}
 		// We have called host.SetCapReaddirPlus() so supply the stat information
 		// It is very cheap at this point so supply it regardless of OS capabilities
 		var stat fuse.Stat_t
@@ -259,6 +271,14 @@ func (fsys *FS) Readdir(dirPath string,
 // Releasedir finished reading the directory
 func (fsys *FS) Releasedir(path string, fh uint64) (errc int) {
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%d", &errc)
+	if fsys.VFS.ManagedSyncEnabled() {
+		handle, e := fsys.getHandle(fh)
+		if e != 0 {
+			return e
+		}
+		_ = fsys.closeHandle(fh)
+		return fsys.translateError(handle.Release())
+	}
 	return fsys.closeHandle(fh)
 }
 
@@ -290,7 +310,7 @@ func (fsys *FS) OpenEx(path string, fi *fuse.FileInfo_t) (errc int) {
 	flags := translateOpenFlags(fi.Flags)
 	handle, err := fsys.VFS.OpenFile(path, flags, 0777)
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 
 	// If size unknown then use direct io to read
@@ -324,13 +344,13 @@ func (fsys *FS) CreateEx(filePath string, mode uint32, fi *fuse.FileInfo_t) (err
 	}
 	file, err := parentDir.Create(leaf, fi.Flags)
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 	// translate the fuse flags to os flags
 	flags := translateOpenFlags(fi.Flags) | os.O_CREATE
 	handle, err := file.Open(flags)
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 	fi.Fh = fsys.openHandle(handle)
 	return 0
@@ -359,7 +379,7 @@ func (fsys *FS) Truncate(path string, size int64, fh uint64) (errc int) {
 		err = node.Truncate(size)
 	}
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 	return 0
 }
@@ -374,7 +394,7 @@ func (fsys *FS) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	n, err := handle.ReadAt(buff, ofst)
 	if err == io.EOF {
 	} else if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 	return n
 }
@@ -388,7 +408,7 @@ func (fsys *FS) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 	}
 	n, err := handle.WriteAt(buff, ofst)
 	if err != nil {
-		return translateError(err)
+		return fsys.translateError(err)
 	}
 	return n
 }
@@ -400,7 +420,7 @@ func (fsys *FS) Flush(path string, fh uint64) (errc int) {
 	if errc != 0 {
 		return errc
 	}
-	return translateError(handle.Flush())
+	return fsys.translateError(handle.Flush())
 }
 
 // Release closes the file if still open
@@ -411,7 +431,7 @@ func (fsys *FS) Release(path string, fh uint64) (errc int) {
 		return errc
 	}
 	_ = fsys.closeHandle(fh)
-	return translateError(handle.Release())
+	return fsys.translateError(handle.Release())
 }
 
 // Unlink removes a file.
@@ -421,7 +441,7 @@ func (fsys *FS) Unlink(filePath string) (errc int) {
 	if errc != 0 {
 		return errc
 	}
-	return translateError(parentDir.RemoveName(leaf))
+	return fsys.translateError(parentDir.RemoveName(leaf))
 }
 
 // Mkdir creates a directory.
@@ -432,7 +452,7 @@ func (fsys *FS) Mkdir(dirPath string, mode uint32) (errc int) {
 		return errc
 	}
 	_, err := parentDir.Mkdir(leaf)
-	return translateError(err)
+	return fsys.translateError(err)
 }
 
 // Rmdir removes a directory
@@ -442,13 +462,13 @@ func (fsys *FS) Rmdir(dirPath string) (errc int) {
 	if errc != 0 {
 		return errc
 	}
-	return translateError(parentDir.RemoveName(leaf))
+	return fsys.translateError(parentDir.RemoveName(leaf))
 }
 
 // Rename renames a file.
 func (fsys *FS) Rename(oldPath string, newPath string) (errc int) {
 	defer log.Trace(oldPath, "newPath=%q", newPath)("errc=%d", &errc)
-	return translateError(fsys.VFS.Rename(oldPath, newPath))
+	return fsys.translateError(fsys.VFS.Rename(oldPath, newPath))
 }
 
 // Windows sometimes seems to send times that are the epoch which is
@@ -473,7 +493,7 @@ func (fsys *FS) Utimens(path string, tmsp []fuse.Timespec) (errc int) {
 		return 0
 	}
 	fs.Debugf(path, "Utimens: SetModTime: %v", t)
-	return translateError(node.SetModTime(t))
+	return fsys.translateError(node.SetModTime(t))
 }
 
 // Mknod creates a file node.
@@ -485,7 +505,14 @@ func (fsys *FS) Mknod(path string, mode uint32, dev uint64) (errc int) {
 // Fsync synchronizes file contents.
 func (fsys *FS) Fsync(path string, datasync bool, fh uint64) (errc int) {
 	defer log.Trace(path, "datasync=%v, fh=0x%X", datasync, fh)("errc=%d", &errc)
-	// This is a no-op for rclone
+	if fsys.VFS.ManagedSyncEnabled() {
+		handle, e := fsys.getHandle(fh)
+		if e != 0 {
+			return e
+		}
+		return fsys.translateError(handle.Sync())
+	}
+	// Native behavior remains a no-op.
 	return 0
 }
 
@@ -498,14 +525,14 @@ func (fsys *FS) Link(oldpath string, newpath string) (errc int) {
 // Symlink creates a symbolic link.
 func (fsys *FS) Symlink(target string, newpath string) (errc int) {
 	defer log.Trace(target, "newpath=%q, target=%q", newpath, target)("errc=%d", &errc)
-	return translateError(fsys.VFS.Symlink(target, newpath))
+	return fsys.translateError(fsys.VFS.Symlink(target, newpath))
 }
 
 // Readlink reads the target of a symbolic link.
 func (fsys *FS) Readlink(path string) (errc int, linkPath string) {
 	defer log.Trace(path, "")("errc=%v, linkPath=%q", &errc, linkPath)
 	linkPath, err := fsys.VFS.Readlink(path)
-	return translateError(err), linkPath
+	return fsys.translateError(err), linkPath
 }
 
 // Chmod changes the permission bits of a file.
@@ -662,3 +689,21 @@ var (
 	//_ fuse.FileSystemSetcrtime  = (*FS)(nil)
 	//_ fuse.FileSystemSetchgtime = (*FS)(nil)
 )
+
+func (fsys *FS) translateError(err error) int {
+	if fsys != nil && fsys.VFS != nil && fsys.VFS.ManagedSyncEnabled() {
+		if errors.Is(err, vfs.ErrExternalUpdateBusy) {
+			return -fuse.EBUSY
+		}
+		if errors.Is(err, syscall.ENOSPC) {
+			return -fuse.ENOSPC
+		}
+		if errors.Is(err, syscall.EDQUOT) {
+			return -fuse.EDQUOT
+		}
+		if errors.Is(err, syscall.EIO) {
+			return -fuse.EIO
+		}
+	}
+	return translateError(err)
+}

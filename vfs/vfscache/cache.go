@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rclone/rclone/fs"
@@ -40,6 +41,8 @@ import (
 
 // Cache opened files
 type Cache struct {
+	managed   atomic.Bool
+	managedIO managedIOOps
 	// read only - no locking needed to read these
 	ctx        context.Context      // context for cache lifetime
 	fremote    fs.Fs                // fs for the remote we are caching
@@ -78,6 +81,14 @@ type AddVirtualFn func(remote string, size int64, isDir bool) error
 // This starts background goroutines which can be cancelled with the
 // context passed in.
 func New(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn AddVirtualFn) (*Cache, error) {
+	return newCache(ctx, fremote, opt, avFn, false, nil)
+}
+
+func NewManaged(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn AddVirtualFn, replay func(context.Context, func(string, string) error) error) (*Cache, error) {
+	return newCache(ctx, fremote, opt, avFn, true, replay)
+}
+
+func newCache(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn AddVirtualFn, managed bool, replay func(context.Context, func(string, string) error) error) (*Cache, error) {
 	// Get cache root path.
 	// We need it in two variants: OS path as an absolute path with UNC prefix,
 	// OS-specific path separators, and encoded with OS-specific encoder. Standard path
@@ -130,6 +141,17 @@ func New(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn AddVir
 		hashOption: hashOption,
 		writeback:  writeback.New(ctx, opt),
 		avFn:       avFn,
+	}
+
+	c.managedIO = managedIOOps{syncFile: func(f *os.File) error { return f.Sync() }, rename: os.Rename}
+	if managed {
+		c.opt.HandleCaching = 0
+	}
+	c.managed.Store(managed)
+	if replay != nil {
+		if err := replay(ctx, c.discardCommittedNamespace); err != nil {
+			return nil, err
+		}
 	}
 
 	// load in the cache and metadata off disk
@@ -543,6 +565,9 @@ func (c *Cache) walk(dir string, fn func(osPath string, fi os.FileInfo, name str
 func (c *Cache) reload(ctx context.Context) error {
 	for _, dir := range []string{c.root, c.metaRoot} {
 		err := c.walk(dir, func(osPath string, fi os.FileInfo, name string) error {
+			if c.managed.Load() && dir == c.metaRoot && strings.HasPrefix(fi.Name(), managedTempPrefix) {
+				return nil
+			}
 			if fi.IsDir() {
 				return nil
 			}

@@ -176,18 +176,22 @@ var (
 
 // VFS represents the top level filing system
 type VFS struct {
-	f           fs.Fs
-	ctx         context.Context
-	root        *Dir
-	Opt         vfscommon.Options
-	cache       *vfscache.Cache
-	cancel      context.CancelFunc
-	cancelCache context.CancelFunc
-	usageMu     sync.Mutex
-	usageTime   time.Time
-	usage       *fs.Usage
-	pollChan    chan time.Duration
-	inUse       atomic.Int32 // count of number of opens
+	managed        atomic.Pointer[managedState]
+	shared         atomic.Bool
+	nativeAccess   atomic.Bool
+	managedInitErr error
+	f              fs.Fs
+	ctx            context.Context
+	root           *Dir
+	Opt            vfscommon.Options
+	cache          *vfscache.Cache
+	cancel         context.CancelFunc
+	cancelCache    context.CancelFunc
+	usageMu        sync.Mutex
+	usageTime      time.Time
+	usage          *fs.Usage
+	pollChan       chan time.Duration
+	inUse          atomic.Int32 // count of number of opens
 }
 
 // Keep track of active VFS keyed on fs.ConfigString(f)
@@ -203,6 +207,21 @@ var (
 // the config in the context (if any) and filter config in the context
 // (if any).
 func New(ctx context.Context, f fs.Fs, opt *vfscommon.Options) *VFS {
+	return newVFS(ctx, f, opt, false)
+}
+
+// NewManaged initializes admission and durable cache recovery before cache reload.
+// The supplied filesystem must already have restored its durable frozen state.
+func NewManaged(ctx context.Context, f fs.Fs, opt *vfscommon.Options) (*VFS, error) {
+	v := newVFS(ctx, f, opt, true)
+	if v.managedInitErr != nil {
+		v.Shutdown()
+		return nil, v.managedInitErr
+	}
+	return v, nil
+}
+
+func newVFS(ctx context.Context, f fs.Fs, opt *vfscommon.Options, managed bool) *VFS {
 	fsDir := fs.NewDir("", time.Now())
 	// Strip the ctx of any cancellation but copy the config across
 	newCtx := context.Background()
@@ -215,12 +234,20 @@ func New(ctx context.Context, f fs.Fs, opt *vfscommon.Options) *VFS {
 		cancel: cancel,
 	}
 	vfs.inUse.Store(1)
+	if managed {
+		vfs.managed.Store(newManagedState())
+	}
 
 	// Make a copy of the options
 	if opt != nil {
 		vfs.Opt = *opt
 	} else {
 		vfs.Opt = vfscommon.Opt
+	}
+
+	if managed {
+		vfs.Opt.CacheMode = vfscommon.CacheModeFull
+		vfs.Opt.HandleCaching = 0
 	}
 
 	// Fill out anything else
@@ -230,8 +257,13 @@ func New(ctx context.Context, f fs.Fs, opt *vfscommon.Options) *VFS {
 	activeMu.Lock()
 	defer activeMu.Unlock()
 	configName := fs.ConfigString(f)
+	if managed && len(active[configName]) != 0 {
+		vfs.managedInitErr = fmt.Errorf("managed VFS requires an exclusive filesystem/cache identity")
+		return vfs
+	}
 	for _, activeVFS := range active[configName] {
-		if vfs.Opt == activeVFS.Opt {
+		if !managed && !activeVFS.ManagedSyncEnabled() && vfs.Opt == activeVFS.Opt {
+			activeVFS.shared.Store(true)
 			fs.Debugf(f, "Reusing VFS from active cache")
 			activeVFS.inUse.Add(1)
 			cancel()
@@ -360,12 +392,28 @@ func (vfs *VFS) Fs() fs.Fs {
 
 // SetCacheMode change the cache mode
 func (vfs *VFS) SetCacheMode(cacheMode vfscommon.CacheMode) {
+	if vfs.ManagedSyncEnabled() && cacheMode != vfscommon.CacheModeFull {
+		return
+	}
 	vfs.shutdownCache()
 	vfs.cache = nil
 	if cacheMode > vfscommon.CacheModeOff {
 		ctx, cancel := context.WithCancel(vfs.ctx)
-		cache, err := vfscache.New(ctx, vfs.f, &vfs.Opt, vfs.AddVirtual)
+		var cache *vfscache.Cache
+		var err error
+		if vfs.ManagedSyncEnabled() {
+			var replay func(context.Context, func(string, string) error) error
+			if r, ok := vfs.f.(ManagedNamespaceReplayer); ok {
+				replay = r.ReplayManagedNamespace
+			}
+			cache, err = vfscache.NewManaged(ctx, vfs.f, &vfs.Opt, vfs.AddVirtual, replay)
+		} else {
+			cache, err = vfscache.New(ctx, vfs.f, &vfs.Opt, vfs.AddVirtual)
+		}
 		if err != nil {
+			if vfs.ManagedSyncEnabled() {
+				vfs.managedInitErr = err
+			}
 			fs.Errorf(nil, "Failed to create vfs cache - disabling: %v", err)
 			vfs.Opt.CacheMode = vfscommon.CacheModeOff
 			cancel()

@@ -79,6 +79,9 @@ func (f *FS) ReadDir(p string) (dir []os.FileInfo, err error) {
 
 // Create implements creating new files
 func (f *FS) Create(filename string) (node billy.File, err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return nil, vfs.EROFS
+	}
 	filename = f.fullPath(filename)
 	defer log.Trace(filename, "")("%v, err=%v", &node, &err)
 	return f.vfs.Create(filename)
@@ -86,6 +89,13 @@ func (f *FS) Create(filename string) (node billy.File, err error) {
 
 // Open opens a file
 func (f *FS) Open(filename string) (node billy.File, err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		defer func() {
+			if err == nil {
+				node = managedReadOnlyFile{node}
+			}
+		}()
+	}
 	filename = f.fullPath(filename)
 	defer log.Trace(filename, "")("%v, err=%v", &node, &err)
 	return f.vfs.Open(filename)
@@ -93,6 +103,16 @@ func (f *FS) Open(filename string) (node billy.File, err error) {
 
 // OpenFile opens a file
 func (f *FS) OpenFile(filename string, flag int, perm os.FileMode) (node billy.File, err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		if flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC|os.O_APPEND) != 0 {
+			return nil, vfs.EROFS
+		}
+		defer func() {
+			if err == nil {
+				node = managedReadOnlyFile{node}
+			}
+		}()
+	}
 	filename = f.fullPath(filename)
 	defer log.Trace(filename, "flag=0x%X, perm=%v", flag, perm)("%v, err=%v", &node, &err)
 	return f.vfs.OpenFile(filename, flag, perm)
@@ -112,6 +132,9 @@ func (f *FS) Stat(filename string) (fi os.FileInfo, err error) {
 
 // Rename renames a file
 func (f *FS) Rename(oldpath, newpath string) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	oldpath = f.fullPath(oldpath)
 	newpath = f.fullPath(newpath)
 	defer log.Trace(oldpath, "newpath=%q", newpath)("err=%v", &err)
@@ -120,6 +143,9 @@ func (f *FS) Rename(oldpath, newpath string) (err error) {
 
 // Remove deletes a file
 func (f *FS) Remove(filename string) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	filename = f.fullPath(filename)
 	defer log.Trace(filename, "")("err=%v", &err)
 	return f.vfs.Remove(filename)
@@ -132,6 +158,9 @@ func (f *FS) Join(elem ...string) string {
 
 // TempFile is not implemented
 func (f *FS) TempFile(dir, prefix string) (node billy.File, err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return nil, vfs.EROFS
+	}
 	defer log.Trace(dir, "prefix=%q", prefix)("node=%v, err=%v", &node, &err)
 	return nil, os.ErrInvalid
 }
@@ -140,6 +169,9 @@ func (f *FS) TempFile(dir, prefix string) (node billy.File, err error) {
 // it does not redirect to VFS.MkDirAll because that one doesn't
 // honor the permissions
 func (f *FS) MkdirAll(filename string, perm os.FileMode) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	filename = f.fullPath(filename)
 	defer log.Trace(filename, "perm=%v", perm)("err=%v", &err)
 	parts := strings.Split(filename, "/")
@@ -170,6 +202,9 @@ func (f *FS) Lstat(filename string) (fi os.FileInfo, err error) {
 
 // Symlink creates a link pointing to target
 func (f *FS) Symlink(target, link string) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	link = f.fullPath(link)
 	defer log.Trace(target, "link=%q", link)("err=%v", &err)
 	return f.vfs.Symlink(target, link)
@@ -184,6 +219,9 @@ func (f *FS) Readlink(link string) (result string, err error) {
 
 // Chmod changes the file modes
 func (f *FS) Chmod(name string, mode os.FileMode) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	name = f.fullPath(name)
 	defer log.Trace(name, "mode=%v", mode)("err=%v", &err)
 	file, err := f.vfs.Open(name)
@@ -211,6 +249,9 @@ func (f *FS) Lchown(name string, uid, gid int) (err error) {
 
 // Chown changes owner of the file
 func (f *FS) Chown(name string, uid, gid int) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	name = f.fullPath(name)
 	defer log.Trace(name, "uid=%d, gid=%d", uid, gid)("err=%v", &err)
 	file, err := f.vfs.Open(name)
@@ -227,6 +268,9 @@ func (f *FS) Chown(name string, uid, gid int) (err error) {
 
 // Chtimes changes the access time and modified time
 func (f *FS) Chtimes(name string, atime time.Time, mtime time.Time) (err error) {
+	if f.vfs.ManagedSyncEnabled() {
+		return vfs.EROFS
+	}
 	name = f.fullPath(name)
 	defer log.Trace(name, "atime=%v, mtime=%v", atime, mtime)("err=%v", &err)
 	return f.vfs.Chtimes(name, atime, mtime)
@@ -250,7 +294,7 @@ func (f *FS) Root() (root string) {
 // Capabilities exports the filesystem capabilities
 func (f *FS) Capabilities() (caps billy.Capability) {
 	defer log.Trace(nil, "")("caps=%v", &caps)
-	if f.vfs.Opt.CacheMode == vfscommon.CacheModeOff {
+	if f.vfs.ManagedSyncEnabled() || f.vfs.Opt.CacheMode == vfscommon.CacheModeOff {
 		return billy.ReadCapability | billy.SeekCapability
 	}
 	return billy.WriteCapability | billy.ReadCapability |
@@ -262,3 +306,11 @@ var (
 	_ billy.Filesystem = (*FS)(nil)
 	_ billy.Change     = (*FS)(nil)
 )
+
+// The compatibility NFS path has no verified stable-write/COMMIT error channel.
+// Its capability mask and returned handles both enforce read-only managed access.
+type managedReadOnlyFile struct{ billy.File }
+
+func (managedReadOnlyFile) Write([]byte) (int, error)          { return 0, vfs.EROFS }
+func (managedReadOnlyFile) WriteAt([]byte, int64) (int, error) { return 0, vfs.EROFS }
+func (managedReadOnlyFile) Truncate(int64) error               { return vfs.EROFS }

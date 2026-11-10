@@ -995,6 +995,9 @@ func (d *Dir) Stat(name string) (node Node, err error) {
 		}
 		return nil, err
 	}
+	if err = MaterializeNode(d.vfs.ctx, node); err != nil {
+		return nil, err
+	}
 	// fs.Debugf(path, "Dir.Stat OK")
 	return node, nil
 }
@@ -1028,11 +1031,26 @@ func (d *Dir) Open(flags int) (fd Handle, err error) {
 		fs.Errorf(d, "Can only open directories read only")
 		return nil, EPERM
 	}
+	if m := d.vfs.managed.Load(); m != nil {
+		a, e := m.admit(d.Path(), false)
+		if e != nil {
+			return nil, e
+		}
+		return &managedHandle{Handle: newDirHandle(d), token: a}, nil
+	}
+	d.vfs.nativeAccess.Store(true)
 	return newDirHandle(d), nil
 }
 
 // Create makes a new file node
 func (d *Dir) Create(name string, flags int) (*File, error) {
+	if m := d.vfs.managed.Load(); m != nil {
+		r, e := m.reserve([]string{path.Join(d.Path(), name)}, true)
+		if e != nil {
+			return nil, e
+		}
+		defer r.release()
+	}
 	// fs.Debugf(path, "Dir.Create")
 	// Return existing node if one exists
 	node, err := d.stat(name)
@@ -1064,6 +1082,13 @@ func (d *Dir) Create(name string, flags int) (*File, error) {
 
 // Mkdir creates a new directory
 func (d *Dir) Mkdir(name string) (*Dir, error) {
+	if m := d.vfs.managed.Load(); m != nil {
+		r, e := m.reserve([]string{path.Join(d.Path(), name)}, true)
+		if e != nil {
+			return nil, e
+		}
+		defer r.release()
+	}
 	if d.vfs.Opt.ReadOnly {
 		return nil, EROFS
 	}
@@ -1102,6 +1127,16 @@ func (d *Dir) Mkdir(name string) (*Dir, error) {
 
 // Remove the directory
 func (d *Dir) Remove() error {
+	if m := d.vfs.managed.Load(); m != nil {
+		if d.parent == nil {
+			return EPERM
+		}
+		r, e := m.reserve([]string{d.Path()}, true)
+		if e != nil {
+			return e
+		}
+		defer r.release()
+	}
 	if d.vfs.Opt.ReadOnly {
 		return EROFS
 	}
@@ -1130,6 +1165,20 @@ func (d *Dir) Remove() error {
 
 // RemoveAll removes the directory and any contents recursively
 func (d *Dir) RemoveAll() error {
+	if d.vfs.ManagedSyncEnabled() {
+		if d.vfs.Opt.ReadOnly {
+			return EROFS
+		}
+		if d.parent == nil {
+			return EPERM
+		}
+		r, e := d.vfs.managed.Load().reserve([]string{d.Path()}, true)
+		if e != nil {
+			return e
+		}
+		defer r.release()
+		return d.removeAllManagedReserved()
+	}
 	if d.vfs.Opt.ReadOnly {
 		return EROFS
 	}
@@ -1167,6 +1216,9 @@ func (d *Dir) RemoveName(name string) error {
 		fs.Errorf(d, "Dir.Remove error: %v", err)
 		return err
 	}
+	if d.vfs.ManagedSyncEnabled() {
+		return node.Remove()
+	}
 	if err = d.SetModTime(time.Now()); err != nil {
 		fs.Errorf(d, "Dir.Remove failed to set modtime on parent dir: %v", err)
 		return err
@@ -1176,6 +1228,9 @@ func (d *Dir) RemoveName(name string) error {
 
 // Rename the file
 func (d *Dir) Rename(oldName, newName string, destDir *Dir) error {
+	if d.vfs.ManagedSyncEnabled() {
+		return d.managedRename(oldName, newName, destDir)
+	}
 	// fs.Debugf(d, "BEFORE\n%s", d.dump())
 	if d.vfs.Opt.ReadOnly {
 		return EROFS

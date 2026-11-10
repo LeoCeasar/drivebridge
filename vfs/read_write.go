@@ -193,6 +193,20 @@ func (fh *RWFileHandle) Flush() error {
 	fh.mu.Lock()
 	fs.Debugf(fh.logPrefix(), "RWFileHandle.Flush")
 	fh.updateSize()
+	if fh.d.vfs.ManagedSyncEnabled() {
+		defer fh.mu.Unlock()
+		if fh.closed {
+			return ECLOSED
+		}
+		if !fh.readOnly() {
+			if err := fh.openPending(); err != nil {
+				return err
+			}
+			_, err := fh.item.FlushManaged(fh.file.ctx, fh.file.setObject)
+			return err
+		}
+		return nil
+	}
 	fh.mu.Unlock()
 	return nil
 }
@@ -424,6 +438,10 @@ func (fh *RWFileHandle) Sync() error {
 	}
 	if fh.readOnly() {
 		return nil
+	}
+	if fh.d.vfs.ManagedSyncEnabled() {
+		_, err := fh.item.FlushManaged(fh.file.ctx, fh.file.setObject)
+		return err
 	}
 	return fh.item.Sync()
 }

@@ -5,6 +5,7 @@
 package mount2
 
 import (
+	"errors"
 	"os"
 	"syscall"
 	"time"
@@ -139,4 +140,21 @@ func translateError(err error) syscall.Errno {
 	}
 	fs.Errorf(nil, "IO error: %v", err)
 	return syscall.EIO
+}
+
+func translateManagedError(err error) syscall.Errno {
+	if errors.Is(err, vfs.ErrExternalUpdateBusy) {
+		return syscall.EBUSY
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno
+	}
+	return translateError(err)
+}
+func (fsys *FS) translateError(err error) syscall.Errno {
+	if fsys != nil && fsys.VFS != nil && fsys.VFS.ManagedSyncEnabled() {
+		return translateManagedError(err)
+	}
+	return translateError(err)
 }

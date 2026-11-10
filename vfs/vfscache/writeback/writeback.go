@@ -540,3 +540,14 @@ func (wb *WriteBack) SetExpiry(id Handle, expiry time.Time, relative time.Durati
 	wb._resetTimer()
 	return nil
 }
+
+// WithIdle executes fn while no queued/running writeback exists for id. The
+// caller must follow Cache -> writeback -> Item and must never enqueue in fn.
+func (wb *WriteBack) WithIdle(id Handle, fn func() error) (bool, error) {
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	if _, ok := wb.lookup[id]; ok {
+		return false, nil
+	}
+	return true, fn()
+}
