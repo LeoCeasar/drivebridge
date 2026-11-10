@@ -266,7 +266,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		if current.Generation != expectedGeneration {
 			return model.ErrGenerationChanged
 		}
-		current, _, err = o.f.store.Stage(ctx, current.ID, &expectedGeneration, r)
+		if o.f.LocalOnly(current.Remote) {
+			current, _, err = o.f.store.StageLocalOnly(ctx, current.ID, &expectedGeneration, r)
+		} else {
+			current, _, err = o.f.store.Stage(ctx, current.ID, &expectedGeneration, r)
+		}
 		if err != nil {
 			return err
 		}

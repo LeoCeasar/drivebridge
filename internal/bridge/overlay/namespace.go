@@ -82,6 +82,29 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 			return "", err
 		}
 	}
+	work, err := f.store.NamespaceJournal(ctx, op.ID)
+	if err != nil {
+		_ = f.store.AbortNamespace(ctx, op.ID)
+		return "", err
+	}
+	locality := map[model.EntryID]bool{}
+	promotion := map[model.EntryID]bool{}
+	for _, before := range work.Before {
+		destination := before.Remote
+		kind := before.Kind
+		if before.Remote == src || strings.HasPrefix(before.Remote, src+"/") {
+			destination = dst + strings.TrimPrefix(before.Remote, src)
+			if before.ID == source.ID && kind != model.KindFolder && source.Token == "" {
+				kind = newKind(dst)
+			}
+		}
+		locality[before.ID] = f.localOnlyPath(destination, kind)
+		promotion[before.ID] = f.localOnlyPath(before.Remote, before.Kind) && !locality[before.ID]
+	}
+	if err = f.store.ConfigureNamespaceLocality(ctx, op.ID, locality, promotion); err != nil {
+		_ = f.store.AbortNamespace(ctx, op.ID)
+		return "", err
+	}
 	return op.ID, nil
 }
 func (f *Fs) RenameManaged(ctx context.Context, id string) (fs.Object, error) {
@@ -220,6 +243,12 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	op, err := f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: "mkdir", Dst: dir})
 	if err != nil {
 		return err
+	}
+	if f.localOnlyPath(dir, model.KindFolder) {
+		if err := f.store.ConfigureLocalOnlyMkdir(ctx, op.ID); err != nil {
+			_ = f.store.AbortNamespace(ctx, op.ID)
+			return err
+		}
 	}
 	return f.finishLocalNamespace(ctx, op.ID)
 }

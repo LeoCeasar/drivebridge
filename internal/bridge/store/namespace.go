@@ -14,17 +14,21 @@ import (
 )
 
 type namespaceRecord struct {
-	Ordinal        uint64                   `json:"ordinal,omitempty"`
-	TemporaryName  string                   `json:"temporary_name,omitempty"`
-	CloudStep      string                   `json:"cloud_step,omitempty"`
-	Dispatched     bool                     `json:"dispatched,omitempty"`
-	CompletedSteps map[string]bool          `json:"completed_steps,omitempty"`
-	Op             model.NamespaceOp        `json:"op"`
-	Before         []model.Entry            `json:"before"`
-	Sealed         map[model.EntryID]uint64 `json:"sealed,omitempty"`
-	LocalCancel    bool                     `json:"local_cancel,omitempty"`
-	ActionPending  bool                     `json:"action_pending,omitempty"`
-	ResultKind     model.Kind               `json:"result_kind,omitempty"`
+	LocalReceipt     bool                     `json:"local_receipt,omitempty"`
+	ResultLocalOnly  map[model.EntryID]bool   `json:"result_local_only,omitempty"`
+	PromoteLocalOnly map[model.EntryID]bool   `json:"promote_local_only,omitempty"`
+	WaitFor          string                   `json:"wait_for,omitempty"`
+	Ordinal          uint64                   `json:"ordinal,omitempty"`
+	TemporaryName    string                   `json:"temporary_name,omitempty"`
+	CloudStep        string                   `json:"cloud_step,omitempty"`
+	Dispatched       bool                     `json:"dispatched,omitempty"`
+	CompletedSteps   map[string]bool          `json:"completed_steps,omitempty"`
+	Op               model.NamespaceOp        `json:"op"`
+	Before           []model.Entry            `json:"before"`
+	Sealed           map[model.EntryID]uint64 `json:"sealed,omitempty"`
+	LocalCancel      bool                     `json:"local_cancel,omitempty"`
+	ActionPending    bool                     `json:"action_pending,omitempty"`
+	ResultKind       model.Kind               `json:"result_kind,omitempty"`
 }
 
 func under(p, root string) bool { return p == root || (root != "" && strings.HasPrefix(p, root+"/")) }
@@ -209,7 +213,9 @@ func supersedeQueued(tx *bolt.Tx, id model.EntryID) error {
 	return each[jobRecord](tx, "jobs", func(j jobRecord) error {
 		if j.Job.EntryID == id && !active(j.Job.State) && pending(j.Job.State) {
 			j.Superseded = true
-			j.Job.State = model.StatusBlocked
+			if !j.LocalReceipt {
+				j.Job.State = model.StatusBlocked
+			}
 			return saveJob(tx, j)
 		}
 		return nil
@@ -289,6 +295,15 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 			if er = saveJob(tx, jobRecord{Job: j, StagedAt: time.Now().UTC()}); er != nil {
 				return er
 			}
+			if r.ResultLocalOnly[dst.ID] {
+				if safe, err := eligibleLocalReceipt(tx, dst, r.Op.ID); err != nil {
+					return err
+				} else if safe {
+					if err := recordLocalReceipt(tx, j.ID); err != nil {
+						return err
+					}
+				}
+			}
 			if er = saveEntry(tx, dst); er != nil {
 				return er
 			}
@@ -322,6 +337,19 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 						e.Kind = r.ResultKind
 					}
 				}
+				if localOnly, configured := r.ResultLocalOnly[e.ID]; configured && e.Kind != model.KindFolder {
+					if localOnly {
+						if safe, err := eligibleLocalReceipt(tx, e, r.Op.ID); err != nil {
+							return err
+						} else if safe {
+							if err := receiptLatestLocalJob(tx, e); err != nil {
+								return err
+							}
+						}
+					} else if err := promoteLocalReceipt(tx, &e); err != nil {
+						return err
+					}
+				}
 				if er = tx.Bucket([]byte("paths")).Put([]byte(e.Remote), []byte(e.ID)); er != nil {
 					return er
 				}
@@ -332,6 +360,9 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 					out = e
 					r.Op.ResultID = e.ID
 				}
+			}
+			if err := queuePromotedFolders(tx, r); err != nil {
+				return err
 			}
 		case "delete":
 			for _, old := range r.Before {
@@ -396,7 +427,7 @@ func (s *Store) FinishNamespace(ctx context.Context, id string) error {
 			return er
 		}
 		r.Op.State = "finished"
-		r.ActionPending = true
+		r.ActionPending = !r.LocalReceipt
 		return put(tx, "namespace", id, r)
 	})
 }
@@ -446,6 +477,15 @@ func (s *Store) NamespaceActions(ctx context.Context) (out []model.NamespaceOp, 
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		return each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
 			if r.ActionPending {
+				if r.WaitFor != "" {
+					var parent namespaceRecord
+					if err := get(tx, "namespace", r.WaitFor, &parent); err != nil {
+						return err
+					}
+					if parent.Op.State != "finished" {
+						return nil
+					}
+				}
 				records = append(records, r)
 			}
 			return nil

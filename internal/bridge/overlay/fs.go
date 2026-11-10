@@ -134,22 +134,22 @@ func (f *Fs) Precision() time.Duration { return time.Nanosecond }
 func (f *Fs) Hashes() hash.Set         { return hash.NewHashSet(hash.SHA256) }
 func (f *Fs) Features() *fs.Features   { return f.features }
 func (f *Fs) LocalOnly(remote string) bool {
+	kind := model.KindFile
+	if entry, err := f.store.EntryByRemote(context.Background(), remote); err == nil {
+		kind = entry.Kind
+	}
+	return f.localOnlyPath(remote, kind)
+}
+func (f *Fs) localOnlyPath(remote string, kind model.Kind) bool {
 	parts := strings.Split(remote, "/")
 	for i, component := range parts {
-		if !safeSaveDirectory.MatchString(component) {
-			continue
-		}
-		if i < len(parts)-1 {
-			return true
-		}
-		entry, err := f.store.EntryByRemote(context.Background(), remote)
-		if err == nil && entry.Kind == model.KindFolder {
+		if safeSaveDirectory.MatchString(component) && (i < len(parts)-1 || kind == model.KindFolder) {
 			return true
 		}
 	}
 	base := path.Base(remote)
-	for _, p := range f.patterns {
-		if ok, _ := path.Match(p, base); ok {
+	for _, pattern := range f.patterns {
+		if ok, _ := path.Match(pattern, base); ok {
 			return true
 		}
 	}

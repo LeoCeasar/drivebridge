@@ -15,6 +15,7 @@ import (
 )
 
 type jobRecord struct {
+	LocalReceipt       bool                    `json:"local_receipt,omitempty"`
 	StagedAt           time.Time               `json:"staged_at,omitempty"`
 	PreparationRestart bool                    `json:"preparation_restart,omitempty"`
 	HumanResolution    bool                    `json:"human_resolution,omitempty"`
@@ -112,7 +113,7 @@ func unsentJob(r jobRecord) bool {
 // liveJobEntry is checked in the same write transaction that claims dispatch.
 // A previously read job cannot be revived after local cancellation.
 func liveJobEntry(tx *bolt.Tx, r jobRecord) (model.Entry, error) {
-	if r.Superseded {
+	if r.Superseded || r.LocalReceipt {
 		return model.Entry{}, ErrNotFound
 	}
 	e, err := entryTx(tx, r.Job.EntryID)
@@ -160,7 +161,17 @@ func (s *Store) SupersedeUnsentPredecessors(ctx context.Context, id model.EntryI
 	})
 }
 
-func (s *Store) Stage(ctx context.Context, id model.EntryID, expected *uint64, src io.Reader) (e model.Entry, j model.Job, err error) {
+func (s *Store) Stage(ctx context.Context, id model.EntryID, expected *uint64, src io.Reader) (model.Entry, model.Job, error) {
+	return s.stage(ctx, id, expected, src, false)
+}
+
+// StageLocalOnly accepts durable local bytes without claiming cloud delivery.
+// Ambiguous history falls back to the ordinary outbox and remains visible.
+func (s *Store) StageLocalOnly(ctx context.Context, id model.EntryID, expected *uint64, src io.Reader) (model.Entry, model.Job, error) {
+	return s.stage(ctx, id, expected, src, true)
+}
+
+func (s *Store) stage(ctx context.Context, id model.EntryID, expected *uint64, src io.Reader, localOnly bool) (e model.Entry, j model.Job, err error) {
 	current, err := s.Entry(ctx, id)
 	if err != nil {
 		return e, j, err
@@ -181,7 +192,27 @@ func (s *Store) Stage(ctx context.Context, id model.EntryID, expected *uint64, s
 			return e, j, model.ErrUnsupportedContent
 		}
 	}
-	err = s.update(ctx, func(tx *bolt.Tx) error { e, j, err = s.stageBlob(tx, id, expected, b); return err })
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		receipt := false
+		if localOnly {
+			before, er := entryTx(tx, id)
+			if er != nil {
+				return er
+			}
+			receipt, er = eligibleLocalReceipt(tx, before, "")
+			if er != nil {
+				return er
+			}
+		}
+		e, j, err = s.stageBlob(tx, id, expected, b)
+		if err != nil {
+			return err
+		}
+		if receipt {
+			return recordLocalReceipt(tx, j.ID)
+		}
+		return nil
+	})
 	return
 }
 func (s *Store) Prepare(ctx context.Context, id model.JobID) (model.Job, model.Entry, error) {
@@ -363,6 +394,7 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
+	LocalReceipt       bool
 	StagedAt           time.Time
 	PreparationRestart bool
 	HumanResolution    bool
@@ -377,7 +409,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
+		j = JobJournal{LocalReceipt: r.LocalReceipt, StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return

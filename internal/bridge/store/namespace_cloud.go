@@ -8,6 +8,7 @@ import (
 )
 
 type NamespaceWork struct {
+	LocalReceipt  bool
 	LocalCancel   bool
 	TemporaryName string
 
@@ -24,7 +25,7 @@ func (s *Store) NamespaceJournal(ctx context.Context, id string) (out NamespaceW
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		out = NamespaceWork{LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
+		out = NamespaceWork{LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
 		return nil
 	})
 	return
@@ -39,6 +40,15 @@ func (s *Store) BeginNamespaceDispatch(ctx context.Context, id, step string) err
 		var r namespaceRecord
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
+		}
+		if r.WaitFor != "" {
+			var parent namespaceRecord
+			if err := get(tx, "namespace", r.WaitFor, &parent); err != nil {
+				return err
+			}
+			if parent.Op.State != "finished" {
+				return ErrFrozen
+			}
 		}
 		if !r.ActionPending || r.Op.State != "finished" || r.CompletedSteps[step] {
 			return ErrInvalidState
