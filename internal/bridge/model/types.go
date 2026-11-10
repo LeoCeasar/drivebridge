@@ -232,6 +232,14 @@ type DocView struct {
 	Blocks       []Block         `json:"blocks"`
 }
 
+// DocSidecar retains projection context alongside separate immutable XML and
+// Markdown blobs. References describe source content, never permission to replay it.
+type DocSidecar struct {
+	Blocks       []Block         `json:"blocks"`
+	SourceURL    string          `json:"source_url,omitempty"`
+	ReferenceMap json.RawMessage `json:"reference_map,omitempty"`
+}
+
 type Hunk struct {
 	BaseStart int      `json:"base_start"`
 	BaseEnd   int      `json:"base_end"`
