@@ -33,3 +33,7 @@ func SyncDir(path string) error {
 func ValidMountpoint(path string) bool {
 	return filepath.IsAbs(path) && !strings.ContainsRune(path, 0) && filepath.Clean(path) != "/"
 }
+
+func privatePathAlias(_ string, info os.FileInfo) (bool, error) {
+	return info.Mode()&os.ModeSymlink != 0, nil
+}

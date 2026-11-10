@@ -392,3 +392,66 @@ func TestSaveChecksSchemaUnderWriterLock(t *testing.T) {
 		t.Fatalf("future config changed: %s %v", got, err)
 	}
 }
+
+func isolatedDefaultPaths(t *testing.T) Paths {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, dir := range map[string]string{"HOME": "home", "XDG_CONFIG_HOME": "config-home", "XDG_CACHE_HOME": "cache-home", "XDG_STATE_HOME": "state-home", "APPDATA": "roaming", "LOCALAPPDATA": "local"} {
+		t.Setenv(key, filepath.Join(root, dir))
+	}
+	p, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Known Folder APIs intentionally ignore LOCALAPPDATA overrides on Windows.
+	// Use an injected config/state pair so this filesystem test touches only TempDir.
+	p.ConfigFile = filepath.Join(root, "config", "config.json")
+	cacheBase, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.StateDir = filepath.Join(cacheBase, "DriveBridge", "State")
+	return p
+}
+
+func TestDefaultCacheDedicatedRoot(t *testing.T) {
+	p := isolatedDefaultPaths(t)
+	cacheBase, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(cacheBase, "DriveBridge", "Cache")
+	if p.CacheDir != want {
+		t.Fatalf("default cache root = %q, want dedicated evictable root %q", p.CacheDir, want)
+	}
+}
+
+func TestDefaultCacheSharesBrandParentWithState(t *testing.T) {
+	p := isolatedDefaultPaths(t)
+	// This reproduces the Windows State/cache-base relationship on every host.
+	brandRoot := filepath.Dir(p.StateDir)
+	tools := filepath.Join(brandRoot, "validation-tools")
+	if err := os.MkdirAll(tools, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(tools, "component.txt")
+	if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWithPaths(p, Default()); err != nil {
+		t.Fatalf("default cache cannot coexist with sibling State/component directories: %v", err)
+	}
+	if _, err := LoadWithPaths(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(brandRoot, ".drivebridge-owner")); !os.IsNotExist(err) {
+		t.Fatalf("brand parent was claimed: %v", err)
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != "preserve" {
+		t.Fatalf("other brand component changed: %q %v", data, err)
+	}
+}

@@ -37,7 +37,9 @@ func EnsurePrivateDir(path string) error {
 	return SecurePrivate(path, true)
 }
 
-// CheckNoSymlinks rejects existing symlinks in a path, including its leaf.
+// CheckNoSymlinks rejects existing symlinks in a private path, including its leaf.
+// Windows additionally rejects every reparse point, including junction ancestors;
+// this conservatively excludes cloud placeholders and other reparse-backed storage.
 // It is a preflight check; callers must not treat it as an adversarial TOCTOU barrier.
 func CheckNoSymlinks(path string) error {
 	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
@@ -45,8 +47,14 @@ func CheckNoSymlinks(path string) error {
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		if err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink in private path: %s", p)
+		if err == nil {
+			alias, err := privatePathAlias(p, info)
+			if err != nil {
+				return err
+			}
+			if alias {
+				return fmt.Errorf("symlink or reparse point in private path: %s", p)
+			}
 		}
 		if filepath.Dir(p) == p {
 			return nil

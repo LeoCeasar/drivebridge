@@ -27,7 +27,7 @@ func DefaultPaths() (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	p := Paths{filepath.Join(conf, "DriveBridge", "config.json"), state, filepath.Join(cache, "DriveBridge")}
+	p := Paths{filepath.Join(conf, "DriveBridge", "config.json"), state, filepath.Join(cache, "DriveBridge", "Cache")}
 	return p, p.validate()
 }
 func validUUID(id string) bool {

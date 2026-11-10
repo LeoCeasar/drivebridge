@@ -252,8 +252,12 @@ func Validate(c Config, p Paths) error {
 		if filepath.Separator == '\\' && len(path) == 2 && path[1] == ':' {
 			path += string(filepath.Separator)
 		}
-		if err := platform.CheckNoSymlinks(path); err != nil {
-			return err
+		// Windows mount paths can be active reparse-backed drives/directories.
+		// Their runtime targets are not private-storage ancestors to probe here.
+		if filepath.Separator != '\\' {
+			if err := platform.CheckNoSymlinks(path); err != nil {
+				return err
+			}
 		}
 		for _, other := range append(privatePaths, mounts...) {
 			if overlaps(path, other) {

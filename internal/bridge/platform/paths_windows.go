@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -60,4 +61,18 @@ func ValidMountpoint(path string) bool {
 		return true
 	}
 	return filepath.IsAbs(path) && filepath.Clean(path) != filepath.VolumeName(path)+string(filepath.Separator)
+}
+
+// All reparse points are excluded from private storage; ModeSymlink alone misses
+// junctions, which Go exposes as ModeIrregular. Inspect the Windows attribute.
+func privatePathAlias(path string, _ os.FileInfo) (bool, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false, err
+	}
+	attrs, err := windows.GetFileAttributes(name)
+	if err != nil {
+		return false, &os.PathError{Op: "GetFileAttributes", Path: path, Err: err}
+	}
+	return attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0, nil
 }
