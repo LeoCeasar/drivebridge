@@ -68,13 +68,20 @@ func Merge(baseLocal, local []byte, remote model.DocView) (model.MergeResult, er
 	if len(b) > 10000 || len(l) > 10000 || len(r) > 10000 {
 		return fail("merge_complexity")
 	}
+	alignmentReason := "ambiguous_mapping"
+	for _, v := range b {
+		if v.Opaque {
+			alignmentReason = "unsupported_content"
+			break
+		}
+	}
 	al, e := align(b, l)
 	if e != nil {
-		return fail("ambiguous_mapping")
+		return fail(alignmentReason)
 	}
 	ar, e := align(b, r)
 	if e != nil {
-		return fail("ambiguous_mapping")
+		return fail(alignmentReason)
 	}
 	type chosen struct {
 		a             atom

@@ -438,3 +438,13 @@ func TestDocumentStartSentinelDoesNotTargetTitle(t *testing.T) {
 		t.Fatal(m)
 	}
 }
+
+func TestOpaqueAmbiguityReportsUnsupported(t *testing.T) {
+	d := mustDecode(t, `<p id="p">ordinary</p><callout id="c">unknown</callout>`)
+	local := string(d.Markdown[d.Blocks[1].Start:d.Blocks[1].End]) + "\nordinary\n"
+	m := merged(t, string(d.Markdown), local, d)
+	conflict(t, m)
+	if m.ConflictReason != "unsupported_content" {
+		t.Fatalf("opaque relocation reason %s", m.ConflictReason)
+	}
+}
