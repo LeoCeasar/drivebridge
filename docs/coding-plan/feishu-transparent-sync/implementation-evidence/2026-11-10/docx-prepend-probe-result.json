@@ -1,0 +1,44 @@
+{
+  "scope": "document-start sentinel0 on same isolated synthetic Docx",
+  "sentinel": "0",
+  "first_body_is_inserted": true,
+  "title_preserved": true,
+  "original_full_xml_restored": true,
+  "status": "passed-scoped",
+  "operations": [
+    {
+      "label": "fetch-before",
+      "exit_code": 0,
+      "ok": true,
+      "result": null
+    },
+    {
+      "label": "insert-at0",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success"
+    },
+    {
+      "label": "fetch-after-insert",
+      "exit_code": 0,
+      "ok": true,
+      "result": null
+    },
+    {
+      "label": "remove-own-insert",
+      "exit_code": 0,
+      "ok": true,
+      "result": "success"
+    },
+    {
+      "label": "fetch-restored",
+      "exit_code": 0,
+      "ok": true,
+      "result": null
+    }
+  ],
+  "limitations": [
+    "One concrete sentinel use, not atomicity/replay proof",
+    "No response-loss injection or arbitrary structural insertion proof"
+  ]
+}
