@@ -5,7 +5,7 @@
   "version": "0.1.0 开发版",
   "source_head": "4e2845c11",
   "overall": "partial",
-  "summary": "macOS 安装和产品账号授权已通过。真实挂载失败：默认内核后端不可用，FSKit 只读诊断也确认系统扩展未启用。已打开系统设置并等待用户启用；test 文件同步尚未执行。",
+  "summary": "安装与产品账号授权已通过。已定位 macOS 按应用页面的扩展开关失效，并打开按类别的正确入口；等待系统启用后继续挂载和 test 同步。",
   "steps": [
     {
       "id": "install",
@@ -87,14 +87,21 @@
       "title": "挂载共享文件夹",
       "status": "blocked",
       "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
-      "observed": "测试目录映射与本机挂载配置保存成功。首次真实挂载失败，worker 日志为 macFUSE file system unavailable。独立本地合成文件的只读 FSKit 诊断返回 File system extension not enabled；Computer Use 看到系统设置中的 macFUSE 与 macFUSE (local) 两项均关闭。已请用户启用，尚未收到确认。每挂载 FSKit 配置选项已实现并测试，完整桌面候选包已构建，尚未替换当前安装；尚未通过真实挂载。",
+      "observed": "默认内核挂载不可用；只读 FSKit 诊断显示系统扩展未启用。用户反馈开关点击无效后，确认两项模块已注册，系统日志出现 LoginItems Failed to enabled FSExtension、NSPOSIXErrorDomain Code=1（EPERM）和 retrieving team ID，吻合 macFUSE 维护者说明的 macOS 按应用视图缺陷。Computer Use 已切换到 按类别 → 文件系统扩展，正确页面列出两项关闭的 macFUSE 开关，等待用户在此启用。尚未通过真实挂载或文件同步。",
       "screenshot": "assets/13-fskit-extensions-off.png",
       "caption": "本轮实拍：系统设置中的两项 FSKit 扩展均关闭，驱动安装完成仍不足以通过真实挂载。",
       "checks": [
         "共享目录映射和挂载配置已保存",
         "产品默认挂载实际失败",
         "FSKit 只读本地诊断实际失败：系统扩展未启用",
-        "等待用户完成系统运行授权；未写入挂载目录"
+        "等待用户完成系统运行授权；未写入挂载目录",
+        "官方问题 #1194 维护者建议使用 By Category；本机日志已确认同样的 EPERM 拒绝"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/14-fskit-by-category.png",
+          "caption": "本轮实拍：切换到“按类别 → 文件系统扩展”的正确入口，两项 macFUSE 开关已列出，尚待启用。"
+        }
       ]
     },
     {
