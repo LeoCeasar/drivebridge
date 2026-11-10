@@ -1,0 +1,113 @@
+{
+  "npm_package_source": "https://registry.npmjs.org/@larksuite/cli/-/cli-1.0.99.tgz",
+  "npm_package_integrity": "sha512-eUiGhjSEmeDu9w3741e1bF72LyYVtT5o+Dnb4SouTb52r6aRu2Us7QyZpcVdb5rfDvnPV4rPYWbGvvP1xFbp8w==",
+  "archive_checksums_source": "checksum file from SHA512-verified official npm package1.0.99",
+  "qualification": "API semantics validated by parent only on macOS arm64; other platforms share pinned official release source, not native mount/API execution proof",
+  "records": [
+    {
+      "platform": "darwin",
+      "architecture": "amd64",
+      "version": "1.0.99",
+      "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-amd64.tar.gz",
+      "archive_sha256": "31f900409082728761346a94b7b81038c78b302883b69c36b849b23d843d7de1",
+      "native_sha256": "cda6b35bd4d5fa2ae869627e748e1d27b3208847c40d19215ccdcccb7b48a1b4",
+      "size": 50913113,
+      "source_build_info": [
+        "path\tgithub.com/larksuite/cli",
+        "mod\tgithub.com/larksuite/cli\tv1.0.99",
+        "build\tGOARCH=amd64",
+        "build\tGOOS=darwin",
+        "build\tvcs=git",
+        "build\tvcs.revision=8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+        "build\tvcs.time=2026-11-04T14:26:11Z",
+        "build\tvcs.modified=false"
+      ],
+      "executed": false,
+      "native_mount_verified": false
+    },
+    {
+      "platform": "darwin",
+      "architecture": "arm64",
+      "version": "1.0.99",
+      "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-arm64.tar.gz",
+      "archive_sha256": "f24f4106d1b0b1a4ee9a24ec0953dee6e518476bbe3d9758f78a732477525b21",
+      "native_sha256": "a8f652c2a62577a152467a983ec60548570fb0a08715e95fa3f579438c81885b",
+      "size": 47832347,
+      "source_build_info": [
+        "path\tgithub.com/larksuite/cli",
+        "mod\tgithub.com/larksuite/cli\tv1.0.99",
+        "build\tGOARCH=arm64",
+        "build\tGOOS=darwin",
+        "build\tvcs=git",
+        "build\tvcs.revision=8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+        "build\tvcs.time=2026-11-04T14:26:11Z",
+        "build\tvcs.modified=false"
+      ],
+      "executed": false,
+      "native_mount_verified": false
+    },
+    {
+      "platform": "linux",
+      "architecture": "amd64",
+      "version": "1.0.99",
+      "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-amd64.tar.gz",
+      "archive_sha256": "fd29f51030dde6919b6ca9173bc87852d3846f253d198022ea2d9ee63527b945",
+      "native_sha256": "a2f55a5b7cb618f2635e1034f4e8196146c9c055c3995035322ba14382be66ba",
+      "size": 49152162,
+      "source_build_info": [
+        "path\tgithub.com/larksuite/cli",
+        "mod\tgithub.com/larksuite/cli\tv1.0.99",
+        "build\tGOARCH=amd64",
+        "build\tGOOS=linux",
+        "build\tvcs=git",
+        "build\tvcs.revision=8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+        "build\tvcs.time=2026-11-04T14:26:11Z",
+        "build\tvcs.modified=false"
+      ],
+      "executed": false,
+      "native_mount_verified": false
+    },
+    {
+      "platform": "linux",
+      "architecture": "arm64",
+      "version": "1.0.99",
+      "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-arm64.tar.gz",
+      "archive_sha256": "2837145e72922d558538494d0da30ac6c509681fc0791f8818f4ddb87f5125b4",
+      "native_sha256": "0e30f6b4e1d0b887f4b6bf3391c747b5e14c11defc255930a59a7dfa23fabf92",
+      "size": 45744290,
+      "source_build_info": [
+        "path\tgithub.com/larksuite/cli",
+        "mod\tgithub.com/larksuite/cli\tv1.0.99",
+        "build\tGOARCH=arm64",
+        "build\tGOOS=linux",
+        "build\tvcs=git",
+        "build\tvcs.revision=8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+        "build\tvcs.time=2026-11-04T14:26:11Z",
+        "build\tvcs.modified=false"
+      ],
+      "executed": false,
+      "native_mount_verified": false
+    },
+    {
+      "platform": "windows",
+      "architecture": "amd64",
+      "version": "1.0.99",
+      "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-windows-amd64.zip",
+      "archive_sha256": "1b43cb63ff533ee067db45d93a862074d147df5a0d05f95c2d2a7c70c3f97375",
+      "native_sha256": "1b9babbff017bb5d4c9974f9ad547707aed61005196134b41e1e15764b213d74",
+      "size": 50361344,
+      "source_build_info": [
+        "path\tgithub.com/larksuite/cli",
+        "mod\tgithub.com/larksuite/cli\tv1.0.99",
+        "build\tGOARCH=amd64",
+        "build\tGOOS=windows",
+        "build\tvcs=git",
+        "build\tvcs.revision=8d8357d39dd15ac5e9aa815d4ab2639d56bd3239",
+        "build\tvcs.time=2026-11-04T14:26:11Z",
+        "build\tvcs.modified=false"
+      ],
+      "executed": false,
+      "native_mount_verified": false
+    }
+  ]
+}
