@@ -59,7 +59,23 @@ func (s *Store) Conflicts(ctx context.Context) (out []model.Conflict, err error)
 	})
 	return
 }
-func (s *Store) Resolve(ctx context.Context, r model.ResolveRequest) (e model.Entry, j model.Job, err error) {
+func (s *Store) Resolve(ctx context.Context, r model.ResolveRequest) (model.Entry, model.Job, error) {
+	return s.resolve(ctx, r, nil)
+}
+
+// ResolveAgainst adopts the freshly checked remote as the explicit human merge
+// baseline in the same transaction as staging the resolution generation.
+func (s *Store) ResolveAgainst(ctx context.Context, r model.ResolveRequest, remote model.Snapshot) (model.Entry, model.Job, error) {
+	saved, err := s.Snapshot(ctx, remote.ID)
+	if err != nil {
+		return model.Entry{}, model.Job{}, err
+	}
+	if saved.Token != remote.Token || saved.Revision != remote.Revision || saved.Markdown != remote.Markdown {
+		return model.Entry{}, model.Job{}, model.ErrVersionChanged
+	}
+	return s.resolve(ctx, r, &saved)
+}
+func (s *Store) resolve(ctx context.Context, r model.ResolveRequest, remote *model.Snapshot) (e model.Entry, j model.Job, err error) {
 	b, err := s.PutBlob(ctx, bytes.NewReader(r.Content))
 	if err != nil {
 		return
@@ -84,6 +100,19 @@ func (s *Store) Resolve(ctx context.Context, r model.ResolveRequest) (e model.En
 		}
 		if current.FrozenBy != "" {
 			return ErrFrozen
+		}
+		if inflight(tx, current.ID, "") {
+			return model.ErrUnknownResult
+		}
+		if remote != nil {
+			if current.Kind != model.KindDocx || remote.Token != current.Token || remote.Revision != r.ExpectedRemoteRevision || remote.Markdown == "" {
+				return model.ErrVersionChanged
+			}
+			current.LocalCheckpoint = remote.Markdown
+			current.RemoteCheckpoint = remote.ID
+			if er = saveEntry(tx, current); er != nil {
+				return er
+			}
 		}
 		if current.Kind == model.KindDocx && int64(len(r.Content)) > LargeSnapshotBytes {
 			return model.ErrUnsupportedContent

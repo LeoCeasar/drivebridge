@@ -384,3 +384,29 @@ func TestTransientReadBackoffAndExplicitRetry(t *testing.T) {
 		t.Fatal(err, c.writes)
 	}
 }
+
+func TestManualResolutionRebasesAgainstCapturedRemote(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindDocx)
+	entry = stageContent(t, s, entry, "alpha local\n\nbeta two\n")
+	c.xml = strings.Replace(c.xml, "alpha one", "alpha remote", 1)
+	c.revision++
+	if err := e.SyncEntry(bg, entry.ID); err == nil {
+		t.Fatal("overlap accepted")
+	}
+	conflicts, err := s.Conflicts(bg)
+	if err != nil || len(conflicts) != 1 {
+		t.Fatal(conflicts, err)
+	}
+	conflict := conflicts[0]
+	_, _, err = e.Resolve(bg, model.ResolveRequest{ConflictID: conflict.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: conflict.RemoteRevision, Content: []byte("alpha merged\n\nbeta two\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusSynced || !strings.Contains(c.xml, "alpha merged") {
+		t.Fatal(current, c.xml)
+	}
+}
