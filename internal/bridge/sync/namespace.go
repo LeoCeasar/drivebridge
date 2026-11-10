@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"github.com/rclone/rclone/internal/bridge/cloud"
 	"path"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -102,6 +103,9 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 			return err
 		}
 		moveErr := e.source.Move(ctx, en.Token, en.Kind, parent)
+		if errors.Is(moveErr, cloud.ErrNotDispatched) {
+			return errors.Join(moveErr, e.store.RejectNamespaceDispatch(ctx, op.ID, "move"))
+		}
 		items, err = e.source.List(ctx, parent)
 		if err != nil {
 			return errors.Join(moveErr, err)
@@ -134,6 +138,9 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 			return err
 		}
 		renameErr := e.source.Rename(ctx, en.Token, en.Kind, desired)
+		if errors.Is(renameErr, cloud.ErrNotDispatched) {
+			return errors.Join(renameErr, e.store.RejectNamespaceDispatch(ctx, op.ID, "rename"))
+		}
 		items, err = e.source.List(ctx, parent)
 		if err != nil {
 			return errors.Join(renameErr, err)
@@ -180,6 +187,9 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 			return err
 		}
 		if err := e.source.Delete(ctx, en.Token, en.Kind); err != nil {
+			if errors.Is(err, cloud.ErrNotDispatched) {
+				return errors.Join(err, e.store.RejectNamespaceDispatch(ctx, work.Op.ID, step))
+			}
 			return errors.Join(model.ErrUnknownResult, err)
 		}
 		// A successful explicit delete result plus a complete parent scan observes
@@ -240,6 +250,9 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 				return err
 			}
 			token, createErr := e.source.CreateFolder(ctx, parent, temp)
+			if errors.Is(createErr, cloud.ErrNotDispatched) {
+				return errors.Join(createErr, e.store.RejectNamespaceDispatch(ctx, work.Op.ID, "create_folder"))
+			}
 			if createErr != nil || token == "" {
 				return errors.Join(model.ErrUnknownResult, createErr)
 			}
@@ -284,6 +297,9 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 			return err
 		}
 		renameErr := e.source.Rename(ctx, en.Token, model.KindFolder, path.Base(en.Remote))
+		if errors.Is(renameErr, cloud.ErrNotDispatched) {
+			return errors.Join(renameErr, e.store.RejectNamespaceDispatch(ctx, work.Op.ID, "rename"))
+		}
 		items, err = e.source.List(ctx, parent)
 		if err != nil {
 			return errors.Join(renameErr, err)

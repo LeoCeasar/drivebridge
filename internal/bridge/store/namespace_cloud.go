@@ -131,3 +131,32 @@ func (s *Store) MarkCreateRenaming(ctx context.Context, id string) error {
 		return put(tx, "createops", id, op)
 	})
 }
+
+// RejectNamespaceDispatch requires a trusted pre-dispatch guard rejection, never
+// a timeout or CLI failure after the request may have reached the service.
+func (s *Store) RejectNamespaceDispatch(ctx context.Context, id, step string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if err := get(tx, "namespace", id, &r); err != nil {
+			return err
+		}
+		if !r.ActionPending || !r.Dispatched || r.CloudStep != step {
+			return ErrInvalidState
+		}
+		r.Dispatched = false
+		return put(tx, "namespace", id, r)
+	})
+}
+func (s *Store) RejectCreateRename(ctx context.Context, id string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var op model.CreateOp
+		if err := get(tx, "createops", id, &op); err != nil {
+			return err
+		}
+		if op.State != "renaming" || op.Token == "" {
+			return ErrInvalidState
+		}
+		op.State = "bound"
+		return put(tx, "createops", id, op)
+	})
+}

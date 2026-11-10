@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/rclone/rclone/internal/bridge/cloud"
 	"path"
 	"strings"
 
@@ -49,9 +50,18 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 	if op == nil && en.Token != "" {
 		return en, nil
 	}
-	input, err := e.read(ctx, j.Local)
-	if err != nil {
-		return en, err
+	var input []byte
+	if en.Kind == model.KindDocx {
+		input, err = e.read(ctx, j.Local)
+		if err != nil {
+			return en, err
+		}
+	}
+	if op == nil && en.Kind == model.KindFile && isEmpty(j.Local) && !e.opt.EmptyFileUploadVerified {
+		if err = e.store.PauseJob(ctx, j.ID, model.StatusBlocked, "empty_file_unsupported"); err != nil {
+			return en, err
+		}
+		return en, model.ErrUnsupportedContent
 	}
 	var body []byte
 	if en.Kind == model.KindDocx {
@@ -65,8 +75,16 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 		if err != nil {
 			return en, e.pause(ctx, j, err)
 		}
-		if err = e.store.RecordPlan(ctx, j.ID, nil, j.Local); err != nil {
+		journal, err := e.store.Journal(ctx, j.ID)
+		if err != nil {
 			return en, err
+		}
+		if journal.Job.Plan == "" {
+			if err = e.store.RecordPlan(ctx, j.ID, nil, j.Local); err != nil {
+				return en, err
+			}
+		} else if journal.Desired != j.Local || len(journal.Operations) != 0 {
+			return en, model.ErrUnknownResult
 		}
 		created, err := e.store.PrepareCreate(ctx, j.ID, parent, cloudName(en))
 		if err != nil {
@@ -87,6 +105,12 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 			result, uploadErr := e.source.UploadFile(ctx, op.ParentToken, "", op.TemporaryName, r)
 			err = errors.Join(uploadErr, r.Close())
 			token = result.FileToken
+		}
+		if errors.Is(err, cloud.ErrNotDispatched) {
+			if resetErr := e.store.RejectUndispatchedCreate(ctx, op.ID); resetErr != nil {
+				return en, errors.Join(err, resetErr)
+			}
+			return en, e.pause(ctx, j, err)
 		}
 		if err != nil || token == "" {
 			_ = e.store.MarkCreateUnknown(context.WithoutCancel(ctx), op.ID)
@@ -153,6 +177,9 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 			return en, err
 		}
 		renameErr := e.source.Rename(ctx, op.Token, en.Kind, op.FinalName)
+		if errors.Is(renameErr, cloud.ErrNotDispatched) {
+			return en, errors.Join(renameErr, e.store.RejectCreateRename(ctx, op.ID))
+		}
 		list, err = e.source.List(ctx, op.ParentToken)
 		if err != nil {
 			return en, errors.Join(renameErr, err)

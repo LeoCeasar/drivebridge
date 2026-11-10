@@ -109,3 +109,35 @@ func TestNamespaceDispatchIsDurableAndNeverBlindlyReplayed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNamespaceActionsKeepLocalOrder(t *testing.T) {
+	s, _, _ := openTest(t)
+	e := entry(t, s, "a")
+	var ids []string
+	for _, next := range []string{"b", "c", "d"} {
+		op, err := s.PrepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: e.Remote, Dst: next})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.SealNamespace(ctx, op.ID); err != nil {
+			t.Fatal(err)
+		}
+		e, err = s.CommitNamespace(ctx, op.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.FinishNamespace(ctx, op.ID); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, op.ID)
+	}
+	actions, err := s.NamespaceActions(ctx)
+	if err != nil || len(actions) != len(ids) {
+		t.Fatal(actions, err)
+	}
+	for i := range ids {
+		if actions[i].ID != ids[i] {
+			t.Fatal("namespace order lost")
+		}
+	}
+}

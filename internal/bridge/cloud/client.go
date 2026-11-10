@@ -28,20 +28,22 @@ type CapabilityGrant struct {
 	Verified          bool
 }
 type Options struct {
-	TempDir      string
-	Capabilities []CapabilityGrant
+	CheckIdentity func(context.Context) error
+	TempDir       string
+	Capabilities  []CapabilityGrant
 }
 type Client struct {
-	drive        *larkcli.Drive
-	docs         *larkcli.Docx
-	capabilities []CapabilityGrant
+	checkIdentity func(context.Context) error
+	drive         *larkcli.Drive
+	docs          *larkcli.Docx
+	capabilities  []CapabilityGrant
 }
 
 func New(r *larkcli.Runner, o Options) (*Client, error) {
 	if _, ok := r.ManagedIdentity(); !ok {
 		return nil, model.ErrIdentityChanged
 	}
-	return &Client{drive: larkcli.NewDrive(r, o.TempDir), docs: larkcli.NewDocx(r), capabilities: append([]CapabilityGrant(nil), o.Capabilities...)}, nil
+	return &Client{checkIdentity: o.CheckIdentity, drive: larkcli.NewDrive(r, o.TempDir), docs: larkcli.NewDocx(r), capabilities: append([]CapabilityGrant(nil), o.Capabilities...)}, nil
 }
 
 type FileMeta struct {
@@ -97,6 +99,9 @@ func canonicalError(err error) error {
 }
 
 func (c *Client) ObserveFile(ctx context.Context, token string) (*FileObservation, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
 	o, err := c.drive.ObserveFile(ctx, token)
 	if err != nil {
 		return nil, canonicalError(err)
@@ -109,6 +114,9 @@ func (c *Client) ObserveFile(ctx context.Context, token string) (*FileObservatio
 	return &FileObservation{Token: o.Token, Identity: identity, Size: o.Size, lease: o}, nil
 }
 func (c *Client) FileMeta(ctx context.Context, token string) (FileMeta, error) {
+	if err := c.check(ctx); err != nil {
+		return FileMeta{}, err
+	}
 	m, err := c.drive.FileMeta(ctx, token)
 	return FileMeta{m.Token, m.Version, m.Size, m.ModTime}, canonicalError(err)
 }
@@ -116,10 +124,16 @@ func convertDoc(d larkcli.Document) Document {
 	return Document{Result: d.Result, Data: d.Data, Token: d.Token, Revision: d.Revision, SourceURL: d.SourceURL, XML: d.XML, ReferenceMap: d.ReferenceMap, Warnings: d.Warnings}
 }
 func (c *Client) FetchDoc(ctx context.Context, token, revision string) (Document, error) {
+	if err := c.check(ctx); err != nil {
+		return Document{}, err
+	}
 	d, err := c.docs.Fetch(ctx, token, revision)
 	return convertDoc(d), canonicalError(err)
 }
 func (c *Client) CreateDoc(ctx context.Context, parent, title string, xml []byte) (Document, error) {
+	if err := c.check(ctx); err != nil {
+		return Document{}, err
+	}
 	d, err := c.docs.Create(ctx, parent, title, xml)
 	return convertDoc(d), canonicalError(err)
 }
@@ -159,6 +173,9 @@ func (c *Client) ApplyDoc(ctx context.Context, token, revision string, ops []mod
 	if op.Kind == model.OperationBlockInsertAfter {
 		block = op.AfterBlockID
 	}
+	if err := c.check(ctx); err != nil {
+		return ApplyResult{}, err
+	}
 	r, err := c.docs.Apply(ctx, token, revision, larkcli.DocMutation{Kind: op.Kind, BlockID: block, XML: payload.XML})
 	result := ApplyResult{Revision: r.Revision, Result: r.Result, SourceURL: r.SourceURL, Warnings: r.Warnings, Capabilities: c.Capabilities(), Data: r.Data}
 	if err == nil {
@@ -170,23 +187,54 @@ func (c *Client) ApplyDoc(ctx context.Context, token, revision string, ops []mod
 // List returns complete typed items; missing remote timestamps stay explicitly
 // unknown. The durable consumer owns a persisted first-observed fallback.
 func (c *Client) List(ctx context.Context, parent string) ([]larkcli.DriveItem, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
 	items, err := c.drive.List(ctx, parent)
 	return items, canonicalError(err)
 }
 func (c *Client) UploadFile(ctx context.Context, parent, token, name string, in io.Reader) (larkcli.UploadResult, error) {
+	if err := c.check(ctx); err != nil {
+		return larkcli.UploadResult{}, err
+	}
 	r, err := c.drive.Upload(ctx, parent, token, name, in)
 	return r, canonicalError(err)
 }
 func (c *Client) CreateFolder(ctx context.Context, parent, name string) (string, error) {
+	if err := c.check(ctx); err != nil {
+		return "", err
+	}
 	token, err := c.drive.CreateFolder(ctx, parent, name)
 	return token, canonicalError(err)
 }
 func (c *Client) RenameFile(ctx context.Context, token, name string) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
 	return canonicalError(c.drive.Rename(ctx, token, "file", name))
 }
 func (c *Client) MoveFile(ctx context.Context, token, parent string) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
 	return canonicalError(c.drive.Move(ctx, token, "file", parent))
 }
 func (c *Client) DeleteFile(ctx context.Context, token string) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
 	return canonicalError(c.drive.Delete(ctx, token, "file"))
+}
+
+// ErrNotDispatched proves that the managed guard rejected an invocation before
+// starting its CLI child. It never describes a process/transport failure.
+var ErrNotDispatched = errors.New("managed RPC rejected before dispatch")
+
+func (c *Client) check(ctx context.Context) error {
+	if c.checkIdentity != nil {
+		if err := c.checkIdentity(ctx); err != nil {
+			return errors.Join(ErrNotDispatched, err)
+		}
+	}
+	return nil
 }

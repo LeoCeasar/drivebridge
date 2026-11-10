@@ -25,3 +25,19 @@ func TestResourceKindsRejectedBeforeRunner(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityPreflightBlocksRPCBeforeDispatch(t *testing.T) {
+	c, err := New(managed(t, "must-not-run"), Options{CheckIdentity: func(context.Context) error { return model.ErrIdentityChanged }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.List(context.Background(), "folder"); !errors.Is(err, ErrNotDispatched) || !errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal(err)
+	}
+	if err = c.Rename(context.Background(), "token", model.KindDocx, "title"); !errors.Is(err, ErrNotDispatched) {
+		t.Fatal(err)
+	}
+	if _, err = c.CreateDoc(context.Background(), "folder", "title", nil); !errors.Is(err, ErrNotDispatched) {
+		t.Fatal(err)
+	}
+}

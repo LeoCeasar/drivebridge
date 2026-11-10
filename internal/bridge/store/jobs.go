@@ -83,6 +83,17 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 			return e, j, ErrFrozen
 		}
 	}
+	// An empty-file capability block happened before dispatch. A newer save can
+	// supersede it without claiming a cloud confirmation or losing its blob.
+	if err = each[jobRecord](tx, "jobs", func(r jobRecord) error {
+		if r.Job.EntryID == e.ID && r.Job.State == model.StatusBlocked && r.ErrorCode == "empty_file_unsupported" && r.Job.Plan == "" {
+			r.Superseded = true
+			return saveJob(tx, r)
+		}
+		return nil
+	}); err != nil {
+		return e, j, err
+	}
 	e.Generation++
 	e.Local = b
 	e.Visible = b

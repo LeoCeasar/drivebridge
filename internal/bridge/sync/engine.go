@@ -20,6 +20,8 @@ type PublisherFunc func(context.Context, model.PublishCandidate) error
 func (f PublisherFunc) Publish(ctx context.Context, c model.PublishCandidate) error { return f(ctx, c) }
 
 type Dependencies struct {
+	CheckIdentity      func(context.Context) error
+	OnConflict         func(context.Context, model.Conflict) error
 	Store              *store.Store
 	Cloud              *cloud.Client
 	Source             Source
@@ -30,6 +32,7 @@ type Dependencies struct {
 	RefreshDirectories func(context.Context) error
 }
 type Options struct {
+	EmptyFileUploadVerified         bool // trusted capability evidence, not a config override
 	Now                             func() time.Time
 	Concurrency                     int
 	PollInterval, DirectoryInterval time.Duration
@@ -85,6 +88,9 @@ func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error
 	}
 }
 func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
+	if err := e.check(ctx); err != nil {
+		return err
+	}
 	unlock, err := e.entryLock(ctx, id)
 	if err != nil {
 		return err
@@ -187,4 +193,11 @@ func (e *Engine) confirm(ctx context.Context, j model.Job, sn model.Snapshot) er
 		return err
 	}
 	return e.publisher.Publish(ctx, c)
+}
+
+func (e *Engine) check(ctx context.Context) error {
+	if e.deps.CheckIdentity != nil {
+		return e.deps.CheckIdentity(ctx)
+	}
+	return ctx.Err()
 }

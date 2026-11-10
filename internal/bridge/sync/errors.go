@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"syscall"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -19,8 +20,10 @@ func classify(err error) string {
 		return "unknown_result"
 	case errors.Is(err, model.ErrUnsupportedContent):
 		return "unsupported_content"
-	case errors.Is(err, store.ErrSpace):
+	case errors.Is(err, store.ErrSpace) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT):
 		return "insufficient_space"
+	case errors.Is(err, syscall.EIO):
+		return "io_error"
 	case errors.Is(err, os.ErrPermission):
 		return "permission_denied"
 	case errors.Is(err, context.Canceled):

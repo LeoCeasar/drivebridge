@@ -12,8 +12,10 @@ import (
 // Run polls only explicitly active entries and directories already visited by the
 // filesystem. Network mutations always go through the per-entry durable journal.
 func (e *Engine) Run(ctx context.Context) error {
-	tick := time.NewTicker(e.opt.PollInterval)
-	defer tick.Stop()
+	jobs := time.NewTicker(time.Second)
+	defer jobs.Stop()
+	docs := time.NewTicker(e.opt.PollInterval)
+	defer docs.Stop()
 	dirs := time.NewTicker(e.opt.DirectoryInterval)
 	defer dirs.Stop()
 	for {
@@ -23,7 +25,16 @@ func (e *Engine) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-tick.C:
+		case <-jobs.C:
+		case <-docs.C:
+			if e.deps.ActiveEntries != nil {
+				for _, id := range e.deps.ActiveEntries() {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					_ = e.RefreshEntry(ctx, id)
+				}
+			}
 		case <-dirs.C:
 			if e.deps.RefreshDirectories != nil {
 				_ = e.deps.RefreshDirectories(ctx)
@@ -31,7 +42,11 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 }
+
 func (e *Engine) cycle(ctx context.Context) error {
+	if err := e.check(ctx); err != nil {
+		return err
+	}
 	// Namespace intent precedes dependent content, particularly new parent folders.
 	namespaceErr := e.syncNamespace(ctx)
 	jobs, err := e.store.Pending(ctx)
@@ -62,17 +77,25 @@ func (e *Engine) cycle(ctx context.Context) error {
 		go func() { defer wg.Done(); defer func() { <-sem }(); _ = e.SyncEntry(ctx, id) }()
 	}
 	wg.Wait()
-	if e.deps.ActiveEntries != nil {
-		for _, id := range e.deps.ActiveEntries() {
+	if e.deps.OnConflict != nil {
+		conflicts, err := e.store.Conflicts(ctx)
+		if err != nil {
+			return err
+		}
+		for _, conflict := range conflicts {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			_ = e.RefreshEntry(ctx, id)
+			_ = e.deps.OnConflict(ctx, conflict)
 		}
 	}
+
 	return namespaceErr
 }
 func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
+	if err := e.check(ctx); err != nil {
+		return err
+	}
 	unlock, err := e.entryLock(ctx, id)
 	if err != nil {
 		return err

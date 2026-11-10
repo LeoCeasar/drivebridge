@@ -7,11 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -26,6 +30,9 @@ import (
 var bg = context.Background()
 
 type fixtureCloud struct {
+	guardDenied     bool
+	directory       string
+	deletes         int
 	readErr         error
 	xml             string
 	revision        int
@@ -63,16 +70,42 @@ func (f *fixtureCloud) Capabilities() []cloud.CapabilityGrant {
 	return out
 }
 func (f *fixtureCloud) ApplyDoc(_ context.Context, token, revision string, ops []model.Operation) (cloud.ApplyResult, error) {
+	if f.guardDenied {
+		return cloud.ApplyResult{}, errors.Join(cloud.ErrNotDispatched, model.ErrIdentityChanged)
+	}
 	f.writes++
 	op := ops[0]
 	var p model.OperationPayload
 	_ = json.Unmarshal(op.Payload, &p)
 	before, _ := markdown.Decode([]byte(f.xml), strconv.Itoa(f.revision))
-	for _, b := range before.Blocks {
-		if b.RemoteID == op.BlockID {
-			f.xml = strings.Replace(f.xml, string(b.RawXML), strings.Replace(p.XML, ">", ` id="new`+strconv.Itoa(f.writes)+`">`, 1), 1)
+	newXML := p.XML
+	if newXML != "" {
+		at := strings.IndexByte(newXML, '>')
+		if at < 0 {
+			return cloud.ApplyResult{}, model.ErrUnsupportedContent
+		}
+		newXML = newXML[:at] + ` id="new` + strconv.Itoa(f.writes) + `"` + newXML[at:]
+	}
+	switch op.Kind {
+	case model.OperationBlockReplace, model.OperationBlockDelete:
+		for _, b := range before.Blocks {
+			if b.RemoteID == op.BlockID {
+				f.xml = strings.Replace(f.xml, string(b.RawXML), newXML, 1)
+			}
+		}
+	case model.OperationBlockInsertAfter:
+		if op.AfterBlockID == "0" {
+			at := strings.Index(f.xml, "</title>") + len("</title>")
+			f.xml = f.xml[:at] + newXML + f.xml[at:]
+		} else {
+			for _, b := range before.Blocks {
+				if b.RemoteID == op.AfterBlockID {
+					f.xml = strings.Replace(f.xml, string(b.RawXML), string(b.RawXML)+newXML, 1)
+				}
+			}
 		}
 	}
+
 	if f.applyHook != nil {
 		f.applyHook()
 		f.applyHook = nil
@@ -85,6 +118,9 @@ func (f *fixtureCloud) ApplyDoc(_ context.Context, token, revision string, ops [
 	return cloud.ApplyResult{Revision: strconv.Itoa(f.revision)}, nil
 }
 func (f *fixtureCloud) CreateDoc(_ context.Context, parent, title string, xml []byte) (cloud.Document, error) {
+	if f.guardDenied {
+		return cloud.Document{}, errors.Join(cloud.ErrNotDispatched, model.ErrIdentityChanged)
+	}
 	f.creates++
 	f.xml = `<title id="doc">` + title + `</title>` + string(xml)
 	next := 0
@@ -107,8 +143,15 @@ func (f *fixtureCloud) ObserveFile(_ context.Context, token string) (ObservedFil
 	return ObservedFile{Token: token, Identity: model.FileIdentity{Kind: model.FileIdentityObservation, ObservationID: uuid.NewString(), SHA256: hex.EncodeToString(h[:]), StartedAt: now, CompletedAt: now}, Size: int64(len(data)), Reader: io.NopCloser(bytes.NewReader(data))}, nil
 }
 func (f *fixtureCloud) UploadFile(_ context.Context, parent, token, name string, in io.Reader) (larkcli.UploadResult, error) {
+	if f.guardDenied {
+		return larkcli.UploadResult{}, errors.Join(cloud.ErrNotDispatched, model.ErrIdentityChanged)
+	}
 	f.writes++
 	f.file, _ = io.ReadAll(in)
+	if token == "" {
+		token = "created-file"
+		f.items = append(f.items, larkcli.DriveItem{Token: token, Name: name, Type: "file", ParentToken: parent})
+	}
 	if f.loseResponse {
 		f.loseResponse = false
 		return larkcli.UploadResult{}, model.ErrUnknownResult
@@ -127,18 +170,35 @@ func (f *fixtureCloud) Rename(_ context.Context, token string, kind model.Kind, 
 	return nil
 }
 func (f *fixtureCloud) Move(context.Context, string, model.Kind, string) error { return nil }
-func (f *fixtureCloud) Delete(context.Context, string, model.Kind) error       { return nil }
+func (f *fixtureCloud) Delete(_ context.Context, token string, kind model.Kind) error {
+	f.deletes++
+	var items []larkcli.DriveItem
+	for _, item := range f.items {
+		if item.Token != token {
+			items = append(items, item)
+		}
+	}
+	f.items = items
+	if f.loseResponse {
+		f.loseResponse = false
+		return model.ErrUnknownResult
+	}
+	return nil
+}
 func (f *fixtureCloud) CreateFolder(context.Context, string, string) (string, error) {
 	return "folder", nil
 }
 
 func setup(t *testing.T, kind model.Kind) (*store.Store, *Engine, *fixtureCloud, model.Entry) {
+	return setupOptions(t, kind, store.Options{})
+}
+func setupOptions(t *testing.T, kind model.Kind, options store.Options) (*store.Store, *Engine, *fixtureCloud, model.Entry) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := store.Open(root)
+	s, err := store.OpenWithOptions(root, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +211,7 @@ func setup(t *testing.T, kind model.Kind) (*store.Store, *Engine, *fixtureCloud,
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := &fixtureCloud{xml: `<title id="doc">Title</title><p id="a">alpha one</p><p id="b">beta two</p>`, revision: 1, file: []byte("old"), grants: true}
+	source := &fixtureCloud{directory: root, xml: `<title id="doc">Title</title><p id="a">alpha one</p><p id="b">beta two</p>`, revision: 1, file: []byte("old"), grants: true}
 	engine, err := New(Dependencies{Store: s, Source: source, Publisher: PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
 		_, err := s.CommitPublication(ctx, c)
 		return err
@@ -408,5 +468,301 @@ func TestManualResolutionRebasesAgainstCapturedRemote(t *testing.T) {
 	current, _ := s.Entry(bg, entry.ID)
 	if current.Status != model.StatusSynced || !strings.Contains(c.xml, "alpha merged") {
 		t.Fatal(current, c.xml)
+	}
+}
+
+func TestEmptyFileGateRetainsBytesAndNonemptySaveResumes(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindFile)
+	entry = stageContent(t, s, entry, "")
+	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnsupportedContent) {
+		t.Fatal(err)
+	}
+	got, _ := s.Entry(bg, entry.ID)
+	if got.Status != model.StatusBlocked || blobText(t, s, got.Local) != "" || c.writes != 0 {
+		t.Fatal(got, c.writes)
+	}
+	entry = stageContent(t, s, got, "nonempty")
+	if err := e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Entry(bg, entry.ID)
+	if got.Status != model.StatusSynced || string(c.file) != "nonempty" {
+		t.Fatal(got, string(c.file))
+	}
+}
+
+func TestInsertDeleteResponseLossNeverReplays(t *testing.T) {
+	for _, local := range []string{"first\n\nalpha one\n\nbeta two\n", "alpha one\n"} {
+		t.Run(local, func(t *testing.T) {
+			s, e, c, entry := setup(t, model.KindDocx)
+			entry = stageContent(t, s, entry, local)
+			c.loseResponse = true
+			if err := e.SyncEntry(bg, entry.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.SyncEntry(bg, entry.ID); err != nil || c.writes != 1 {
+				t.Fatal(err, c.writes)
+			}
+		})
+	}
+}
+func TestUnknownDuplicateBodyPausesWithoutReplay(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindDocx)
+	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n")
+	c.loseResponse = true
+	c.applyHook = func() { c.xml += `<p id="duplicate">alpha changed</p>` }
+	for range 2 {
+		if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnknownResult) {
+			t.Fatal(err)
+		}
+	}
+	if c.writes != 1 {
+		t.Fatal(c.writes)
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusAwaitingVerification {
+		t.Fatal(current)
+	}
+}
+func TestNamespaceUnknownDeleteDoesNotRepeat(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindFile)
+	c.items = []larkcli.DriveItem{{Token: entry.Token, Name: entry.Remote, Type: "file"}}
+	c.loseResponse = true
+	op, err := s.PrepareNamespace(bg, model.NamespaceOp{Kind: "delete", Src: entry.Remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SealNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CommitNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = e.syncNamespace(bg); !errors.Is(err, model.ErrUnknownResult) {
+			t.Fatal(err)
+		}
+	}
+	if c.deletes != 1 {
+		t.Fatal(c.deletes)
+	}
+}
+func TestCreateUnknownMultipleMatchesDoesNotBind(t *testing.T) {
+	s, e, c, _ := setup(t, model.KindDocx)
+	entry, err := s.EnsureEntry(bg, "new.md", model.KindDocx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry = stageContent(t, s, entry, "body\n")
+	c.loseResponse = true
+	if err = e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnknownResult) {
+		t.Fatal(err)
+	}
+	copy := c.items[0]
+	copy.Token = "ambiguous-other"
+	c.items = append(c.items, copy)
+	if err = e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnknownResult) {
+		t.Fatal(err)
+	}
+	got, _ := s.Entry(bg, entry.ID)
+	if got.Token != "" || c.creates != 1 {
+		t.Fatal(got, c.creates)
+	}
+}
+
+type faultIO struct{ fail bool }
+
+func (f *faultIO) SyncFile(file *os.File) error {
+	if f.fail {
+		return syscall.ENOSPC
+	}
+	return file.Sync()
+}
+func (f *faultIO) Rename(a, b string) error { return platform.ReplaceFile(a, b) }
+func (f *faultIO) SyncDir(dir string) error { return platform.SyncDir(dir) }
+func TestDiskFailurePausesWithoutCloudMutation(t *testing.T) {
+	faults := &faultIO{}
+	s, e, c, entry := setupOptions(t, model.KindDocx, store.Options{IO: faults})
+	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n")
+	faults.fail = true
+	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatal(err)
+	}
+	pending, err := s.Pending(bg)
+	if err != nil || len(pending) != 1 {
+		t.Fatal(pending, err)
+	}
+	journal, err := s.Journal(bg, pending[0].ID)
+	if err != nil || journal.ErrorCode != "insufficient_space" || journal.Job.State != model.StatusPaused || c.writes != 0 {
+		t.Fatal(journal, err, c.writes)
+	}
+	faults.fail = false
+	if err = e.Retry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestPartialPatchRestartReconcilesPersistedOperation(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindDocx)
+	c.xml += `<p id="c">gamma three</p>`
+	c.revision++
+	if err := e.RefreshEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ = s.Entry(bg, entry.ID)
+	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n\ngamma changed\n")
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	c.applyHook = cancel
+	if err := e.SyncEntry(ctx, entry.ID); err == nil {
+		t.Fatal("canceled mutation unexpectedly confirmed")
+	}
+	scope, err := s.Scope(bg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(c.directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err = reopened.BindScope(bg, scope); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := New(Dependencies{Store: reopened, Source: c, Publisher: PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
+		_, err := reopened.CommitPublication(ctx, c)
+		return err
+	})}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = restored.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c.writes != 2 {
+		t.Fatal("replayed first operation", c.writes)
+	}
+}
+
+type zeroInput struct{}
+
+func (zeroInput) Read(b []byte) (int, error) { clear(b); return len(b), nil }
+
+type streamingSource struct {
+	*fixtureCloud
+	size int64
+	sum  string
+}
+
+func (f *streamingSource) UploadFile(_ context.Context, parent, token, name string, in io.Reader) (larkcli.UploadResult, error) {
+	h := sha256.New()
+	size, err := io.Copy(h, in)
+	if err != nil {
+		return larkcli.UploadResult{}, err
+	}
+	f.size = size
+	f.sum = hex.EncodeToString(h.Sum(nil))
+	f.items = []larkcli.DriveItem{{Token: "streamed", Type: "file", Name: name, ParentToken: parent}}
+	return larkcli.UploadResult{FileToken: "streamed", Size: size}, nil
+}
+func (f *streamingSource) ObserveFile(_ context.Context, token string) (ObservedFile, error) {
+	now := time.Now().UTC()
+	return ObservedFile{Token: token, Size: f.size, Identity: model.FileIdentity{Kind: model.FileIdentityObservation, ObservationID: uuid.NewString(), SHA256: f.sum, StartedAt: now, CompletedAt: now}, Reader: io.NopCloser(io.LimitReader(zeroInput{}, f.size))}, nil
+}
+func TestOrdinaryCreateStreamsLargeBlob(t *testing.T) {
+	s, e, c, _ := setupOptions(t, model.KindFile, store.Options{SpacePolicy: func(context.Context, string, int64) error { return nil }})
+	e.source = &streamingSource{fixtureCloud: c}
+	entry, err := s.EnsureEntry(bg, "large.bin", model.KindFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const size = 32 << 20
+	entry, _, err = s.Stage(bg, entry.ID, nil, io.LimitReader(zeroInput{}, size))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= size {
+		t.Fatalf("ordinary creation buffered a whole file: allocated %d for %d-byte blob", allocated, size)
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusSynced {
+		t.Fatal(current)
+	}
+}
+
+func TestIdentityCheckStopsQueueBeforePrepare(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindDocx)
+	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n")
+	e.deps.CheckIdentity = func(context.Context) error { return model.ErrIdentityChanged }
+	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal(err)
+	}
+	pending, _ := s.Pending(bg)
+	if len(pending) != 1 || pending[0].State != model.StatusQueued || c.writes != 0 {
+		t.Fatal(pending, c.writes)
+	}
+}
+
+func TestRejectedBeforeDispatchCanSafelyRetry(t *testing.T) {
+	for _, kind := range []model.Kind{model.KindDocx, model.KindFile} {
+		t.Run(string(kind), func(t *testing.T) {
+			s, e, c, entry := setup(t, kind)
+			local := "bytes"
+			if kind == model.KindDocx {
+				local = "alpha changed\n\nbeta two\n"
+			}
+			entry = stageContent(t, s, entry, local)
+			c.guardDenied = true
+			if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrIdentityChanged) {
+				t.Fatal(err)
+			}
+			current, _ := s.Entry(bg, entry.ID)
+			if current.Status != model.StatusBlocked || c.writes != 0 {
+				t.Fatal(current, c.writes)
+			}
+			c.guardDenied = false
+			if err := e.Retry(bg, entry.ID); err != nil {
+				t.Fatal(err)
+			}
+			current, _ = s.Entry(bg, entry.ID)
+			if current.Status != model.StatusSynced || c.writes != 1 {
+				t.Fatal(current, c.writes)
+			}
+		})
+	}
+}
+func TestRejectedCreateCanSafelyRetryWithoutUnknownResource(t *testing.T) {
+	s, e, c, _ := setup(t, model.KindDocx)
+	entry, err := s.EnsureEntry(bg, "new.md", model.KindDocx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry = stageContent(t, s, entry, "body\n")
+	c.guardDenied = true
+	if err = e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal(err)
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusBlocked || c.creates != 0 {
+		t.Fatal(current, c.creates)
+	}
+	c.guardDenied = false
+	if err = e.Retry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c.creates != 1 {
+		t.Fatal(c.creates)
 	}
 }

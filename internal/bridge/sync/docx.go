@@ -17,6 +17,7 @@ type stepPayload struct {
 	BeforeSnapshot model.SnapshotID `json:"before_snapshot"`
 }
 type stepResult struct {
+	NotDispatched bool             `json:"not_dispatched,omitempty"`
 	AfterSnapshot model.SnapshotID `json:"after_snapshot"`
 }
 
@@ -154,6 +155,13 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			return err
 		}
 		_, applyErr := e.source.ApplyDoc(ctx, en.Token, current.Revision, []model.Operation{op})
+		if errors.Is(applyErr, cloud.ErrNotDispatched) {
+			result, _ := json.Marshal(stepResult{AfterSnapshot: sn.ID, NotDispatched: true})
+			if err = e.store.RecordOperation(ctx, j.ID, index, result); err != nil {
+				return err
+			}
+			return e.pause(ctx, j, applyErr)
+		}
 		if applyErr != nil {
 			_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		}
@@ -177,6 +185,6 @@ func (e *Engine) recordReadback(ctx context.Context, id model.JobID, index int, 
 	if err := e.store.ProtectBackup(ctx, id, sn.ID); err != nil {
 		return err
 	}
-	encoded, _ := json.Marshal(stepResult{sn.ID})
+	encoded, _ := json.Marshal(stepResult{AfterSnapshot: sn.ID})
 	return e.store.RecordOperation(ctx, id, index, encoded)
 }

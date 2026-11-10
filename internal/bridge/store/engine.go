@@ -152,3 +152,49 @@ func (s *Store) ResumeJob(ctx context.Context, id model.JobID) error {
 		return saveJob(tx, r)
 	})
 }
+
+// ResetUndispatched may only be called with a trusted transport guard's proof
+// that no CLI child started. It cannot reset a journaled document mutation.
+func (s *Store) ResetUndispatched(ctx context.Context, id model.JobID) error {
+	return s.update(ctx, func(tx *bolt.Tx) error { return resetUndispatched(tx, id) })
+}
+func resetUndispatched(tx *bolt.Tx, id model.JobID) error {
+	r, err := jobTx(tx, id)
+	if err != nil {
+		return err
+	}
+	if r.Job.State != model.StatusUploading || len(r.Operations) != 0 {
+		return ErrInvalidState
+	}
+	r.Job.State = model.StatusMerging
+	r.Job.Plan = ""
+	r.Desired = ""
+	en, err := entryTx(tx, r.Job.EntryID)
+	if err != nil {
+		return err
+	}
+	if en.Generation == r.Job.Generation {
+		en.Desired = ""
+		en.Status = r.Job.State
+		if err = saveEntry(tx, en); err != nil {
+			return err
+		}
+	}
+	return saveJob(tx, r)
+}
+func (s *Store) RejectUndispatchedCreate(ctx context.Context, id string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var op model.CreateOp
+		if err := get(tx, "createops", id, &op); err != nil {
+			return err
+		}
+		if op.State != "prepared" || op.Token != "" {
+			return ErrInvalidState
+		}
+		op.State = "not_dispatched"
+		if err := put(tx, "createops", id, op); err != nil {
+			return err
+		}
+		return resetUndispatched(tx, op.JobID)
+	})
+}

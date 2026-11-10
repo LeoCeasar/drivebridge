@@ -55,6 +55,9 @@ func transient(code string) bool {
 
 // Retry reconciles unknown work; it never changes an unknown mutation to queued.
 func (e *Engine) Retry(ctx context.Context, id model.EntryID) error {
+	if err := e.check(ctx); err != nil {
+		return err
+	}
 	jobs, err := e.store.Pending(ctx)
 	if err != nil {
 		return err

@@ -17,7 +17,7 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 	err = s.update(ctx, func(tx *bolt.Tx) error {
 		found := false
 		if er := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
-			if op.JobID == jobID {
+			if op.JobID == jobID && op.State != "not_dispatched" {
 				out = op
 				found = true
 			}
@@ -156,7 +156,7 @@ func (s *Store) FinishCreate(ctx context.Context, id string) error {
 func (s *Store) PendingCreates(ctx context.Context) (out []model.CreateOp, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		return each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
-			if op.State != "finished" {
+			if op.State != "finished" && op.State != "not_dispatched" {
 				out = append(out, op)
 			}
 			return nil

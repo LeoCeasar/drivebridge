@@ -10,6 +10,9 @@ import (
 // Resolve rechecks the captured remote and stages a new local generation. The
 // subsequent upload still has the documented check/write race; this is not CAS.
 func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Entry, model.Job, error) {
+	if err := e.check(ctx); err != nil {
+		return model.Entry{}, model.Job{}, err
+	}
 	conflicts, err := e.store.Conflicts(ctx)
 	if err != nil {
 		return model.Entry{}, model.Job{}, err
