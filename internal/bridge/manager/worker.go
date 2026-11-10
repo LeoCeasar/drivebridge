@@ -163,6 +163,9 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	return out, nil
 }
 func (w *worker) stop(ctx context.Context, wait time.Duration) error {
+	return w.stopPolicy(ctx, wait, false)
+}
+func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bool) error {
 	w.mu.Lock()
 	if w.stopping || !w.ready || w.services == nil {
 		w.mu.Unlock()
@@ -172,13 +175,14 @@ func (w *worker) stop(ctx context.Context, wait time.Duration) error {
 	services := w.services
 	w.mu.Unlock()
 	success := false
+	keepPaused := false
 	defer func() { w.mu.Lock(); w.stopping = false; w.mu.Unlock() }()
 	resume, err := services.runtime.Pause()
 	if err != nil {
 		return ErrPending
 	}
 	defer func() {
-		if !success {
+		if !success && !keepPaused {
 			resume()
 		}
 	}()
@@ -198,7 +202,7 @@ func (w *worker) stop(ctx context.Context, wait time.Duration) error {
 		if pubErr != nil || nsErr != nil || crErr != nil {
 			return ErrPending
 		}
-		if readers == 0 && writers == 0 && reservations == 0 && status.VFSPending == 0 && status.Queued == 0 && status.Inflight == 0 && status.Conflicts == 0 && len(publications) == 0 && len(names) == 0 && len(creates) == 0 {
+		if readers == 0 && writers == 0 && reservations == 0 && status.VFSPending == 0 && (preserve || (status.Queued == 0 && status.Inflight == 0 && status.Conflicts == 0 && len(publications) == 0 && len(names) == 0 && len(creates) == 0)) {
 			break
 		}
 		select {
@@ -212,6 +216,7 @@ func (w *worker) stop(ctx context.Context, wait time.Duration) error {
 	w.engineCancel()
 	<-w.engineDone
 	if err := services.runtime.Unmount(); err != nil {
+		keepPaused = true
 		w.recordError(err)
 		return err
 	}

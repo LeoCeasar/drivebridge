@@ -1,0 +1,30 @@
+package platform
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os/user"
+	"strings"
+	"syscall"
+)
+
+func SetStartup(ctx context.Context, s StartupSpec, enabled bool) error {
+	if err := validateStartup(s); err != nil {
+		return err
+	}
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	h := sha256.Sum256([]byte(u.Uid))
+	name := "DriveBridge-" + hex.EncodeToString(h[:8]) + "-" + s.ID
+	if !enabled {
+		return runStartup(ctx, "schtasks.exe", "/Delete", "/TN", name, "/F")
+	}
+	args := []string{syscall.EscapeArg(s.Executable)}
+	for _, arg := range s.Args {
+		args = append(args, syscall.EscapeArg(arg))
+	}
+	return runStartup(ctx, "schtasks.exe", "/Create", "/TN", name, "/SC", "ONLOGON", "/TR", strings.Join(args, " "), "/RU", u.Username, "/IT", "/RL", "LIMITED", "/F")
+}

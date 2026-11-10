@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"unicode/utf8"
 
@@ -78,6 +79,9 @@ func (w *worker) conflicts(ctx context.Context) ([]ConflictView, error) {
 func (m *Manager) Conflicts(ctx context.Context, id model.MountID) ([]ConflictView, error) {
 	var out []ConflictView
 	err := m.withStore(ctx, id, "/conflicts", nil, &out, func(s *store.Store) error { var err error; out, err = conflictViews(ctx, s); return err })
+	if errors.Is(err, errNoState) {
+		return []ConflictView{}, nil
+	}
 	return out, err
 }
 func (m *Manager) Conflict(ctx context.Context, id model.ConflictID) (ConflictView, error) {

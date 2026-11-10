@@ -19,6 +19,11 @@ func ResolveCLI(explicit, bridgeExecutable string) (string, error) {
 		candidates = append(candidates, explicit)
 	} else {
 		base := filepath.Dir(bridgeExecutable)
+		native := "lark-cli"
+		if runtime.GOOS == "windows" {
+			native += ".exe"
+		}
+		candidates = append(candidates, filepath.Join(base, "..", "libexec", "lark", native), filepath.Join(base, "libexec", "lark", native))
 		if runtime.GOOS == "windows" {
 			candidates = append(candidates, filepath.Join(base, "tools", "lark-cli", "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe"), filepath.Join(base, "tools", "lark-cli", "lark-cli.exe"))
 		} else {

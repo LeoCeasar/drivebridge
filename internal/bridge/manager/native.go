@@ -11,6 +11,7 @@ import (
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
 	fsconfig "github.com/rclone/rclone/fs/config"
+	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/cloud"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/overlay"
@@ -83,7 +84,17 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err != nil {
 		return nil, err
 	}
-	client, err := cloud.New(runner, cloud.Options{TempDir: filepath.Join(spec.Paths.Root, "transport"), Capabilities: grants})
+	verifyIdentity := func(ctx context.Context) error {
+		identity, err := a.Status(ctx, spec.Profile.ID)
+		if err != nil {
+			return err
+		}
+		if auth.IdentityHash(identity.Brand, identity.AppID, identity.UserOpenID) != spec.Profile.IdentityHash {
+			return model.ErrIdentityChanged
+		}
+		return nil
+	}
+	client, err := cloud.New(runner, cloud.Options{CheckIdentity: verifyIdentity, TempDir: filepath.Join(spec.Paths.Root, "transport"), Capabilities: grants})
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +167,16 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		native.Unmount()
 		return nil, ErrConfig
 	}
-	engine, err := syncer.New(syncer.Dependencies{Store: s, Cloud: client, Publisher: syncer.PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
+	engine, err := syncer.New(syncer.Dependencies{CheckIdentity: func(ctx context.Context) error {
+		binding, err := a.Resolve(ctx, spec.Profile.ID)
+		if err != nil {
+			return err
+		}
+		if binding.IdentityHash != spec.Profile.IdentityHash {
+			return model.ErrIdentityChanged
+		}
+		return nil
+	}, OnConflict: func(ctx context.Context, c model.Conflict) error { return m.notifyConflict(ctx, spec, s, c) }, Store: s, Cloud: client, Publisher: syncer.PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
 		entry, err := s.Entry(ctx, c.EntryID)
 		if err != nil {
 			return err

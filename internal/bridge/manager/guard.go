@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/config"
@@ -151,6 +152,9 @@ func durablePending(ctx context.Context, s *store.Store) (bool, error) {
 // lifecycle lease. New parent/hidden-worker starts share that same lease. A live
 // mount is busy; offline ownership locks remain held through the auth operation.
 func (m *Manager) Acquire(ctx context.Context, appID string, refs []auth.Reference) (func(), error) {
+	return m.acquireRefs(ctx, refs, false)
+}
+func (m *Manager) acquireRefs(ctx context.Context, refs []auth.Reference, allowPending bool) (func(), error) {
 	if len(refs) == 0 {
 		return func() {}, nil
 	}
@@ -262,7 +266,7 @@ func (m *Manager) Acquire(ctx context.Context, appID string, refs []auth.Referen
 			if err = s.BindScope(ctx, o.Scope); err != nil {
 				return nil, auth.ErrReferencesBusy
 			}
-			if pending, err := durablePending(ctx, s); err != nil || pending {
+			if pending, err := durablePending(ctx, s); err != nil || (pending && !allowPending) {
 				return nil, auth.ErrReferencesBusy
 			}
 		}
@@ -272,3 +276,56 @@ func (m *Manager) Acquire(ctx context.Context, appID string, refs []auth.Referen
 }
 
 var _ auth.LifecycleGuard = (*Manager)(nil)
+
+// AcquireRecovery is used only by explicit same-identity account recovery. The
+// auth service holds exclusive lifecycle admission before invoking it.
+func (m *Manager) AcquireRecovery(ctx context.Context, appID string, refs []auth.Reference) (func(), error) {
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		other := Manager{options: m.options, domain: m.domain}
+		other.options.ConfigFile = ref.ConfigFile
+		c, err := other.LoadConfig(ctx)
+		if err != nil {
+			return nil, auth.ErrReferencesBusy
+		}
+		owners, err := other.owners(ctx)
+		if err != nil {
+			return nil, auth.ErrReferencesBusy
+		}
+		for _, mount := range c.Mounts {
+			s, err := other.spec(ctx, mount.ID)
+			if err != nil {
+				return nil, auth.ErrReferencesBusy
+			}
+			if s.Profile.ID == ref.ProfileID {
+				owners = append(owners, ownershipFor(ref.ConfigFile, s))
+			}
+		}
+		for _, o := range owners {
+			if o.Scope.ProfileID != ref.ProfileID {
+				continue
+			}
+			key := ref.ConfigID + "/" + string(o.Scope.MountID)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			l, err := privateLock(other.runtimeLockPath(o.Scope.MountID))
+			if err != nil {
+				return nil, auth.ErrReferencesBusy
+			}
+			ok, err := l.TryLock()
+			if err != nil {
+				return nil, auth.ErrReferencesBusy
+			}
+			if ok {
+				_ = l.Unlock()
+				continue
+			}
+			if err = other.stopForRecovery(ctx, o.Scope.MountID, 60*time.Second); err != nil {
+				return nil, auth.ErrReferencesBusy
+			}
+		}
+	}
+	return m.acquireRefs(ctx, refs, true)
+}

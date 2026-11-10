@@ -136,6 +136,43 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 		return out, err
 	}
 	out = model.MountStatus{SchemaVersion: 1, MountID: id, CloudState: "stopped", LocalSaved: true}
+	if _, statErr := os.Stat(filepath.Join(spec.Paths.Root, "store.db")); statErr == nil {
+		lock, lockErr := privateLock(m.runtimeLockPath(id))
+		if lockErr != nil {
+			return out, lockErr
+		}
+		ok, lockErr := lock.TryLock()
+		if lockErr != nil {
+			return out, lockErr
+		}
+		if !ok {
+			return out, ErrPending
+		}
+		defer lock.Unlock()
+		s, openErr := store.Open(spec.Paths.Root)
+		if openErr != nil {
+			return out, openErr
+		}
+		defer s.Close()
+		if openErr = s.BindScope(ctx, ownershipFor(m.options.ConfigFile, spec).Scope); openErr != nil {
+			return out, openErr
+		}
+		out, openErr = storeStatus(ctx, id, s)
+		if openErr != nil {
+			return out, openErr
+		}
+		out.Running = false
+		pending, cacheErr := offlineCachePending(ownershipFor(m.options.ConfigFile, spec))
+		if cacheErr != nil {
+			return out, cacheErr
+		}
+		if pending {
+			out.VFSPending++
+		}
+		out.LocalSaved = out.VFSPending == 0
+	} else if !os.IsNotExist(statErr) {
+		return out, statErr
+	}
 	raw, err := os.ReadFile(filepath.Join(spec.Paths.Root, "last-state.json"))
 	if err == nil {
 		var state struct {
@@ -186,6 +223,9 @@ func storeGCOptions(budget int64) store.GCOptions { return store.GCOptions{Clean
 func (m *Manager) UploadStatus(ctx context.Context, id model.MountID) ([]model.Job, error) {
 	var out []model.Job
 	err := m.withStore(ctx, id, "/uploads", nil, &out, func(s *store.Store) error { var err error; out, err = s.Pending(ctx); return err })
+	if errors.Is(err, errNoState) {
+		return []model.Job{}, nil
+	}
 	return out, err
 }
 func (m *Manager) Retry(ctx context.Context, id model.MountID) error {
@@ -203,6 +243,9 @@ func (m *Manager) CleanCache(ctx context.Context, id model.MountID) (store.GCRes
 		out, err = s.GC(ctx, storeGCOptions(spec.Mount.CacheMaxBytes))
 		return err
 	})
+	if errors.Is(err, errNoState) {
+		return store.GCResult{}, nil
+	}
 	return out, err
 }
 func (m *Manager) CacheStatus(ctx context.Context, id model.MountID) (CacheStatus, error) {
@@ -214,8 +257,14 @@ func (m *Manager) CacheStatus(ctx context.Context, id model.MountID) (CacheStatu
 		}
 		return err
 	})
+	if errors.Is(err, errNoState) {
+		return CacheStatus{}, nil
+	}
 	return out, err
 }
+
+var errNoState = errors.New("mount state has not been created")
+
 func (m *Manager) withStore(ctx context.Context, id model.MountID, route string, input, output any, fn func(*store.Store) error) error {
 	if err := m.call(ctx, id, route, input, output); err == nil {
 		return nil
@@ -225,6 +274,11 @@ func (m *Manager) withStore(ctx context.Context, id model.MountID, route string,
 	spec, err := m.spec(ctx, id)
 	if err != nil {
 		return err
+	}
+	if _, statErr := os.Stat(filepath.Join(spec.Paths.Root, "store.db")); os.IsNotExist(statErr) {
+		return errNoState
+	} else if statErr != nil {
+		return statErr
 	}
 	l, err := privateLock(m.runtimeLockPath(id))
 	if err != nil {

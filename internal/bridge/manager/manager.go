@@ -90,12 +90,15 @@ func newManager(o Options, d dependencies) (*Manager, error) {
 		}
 	}
 	if d.startLease == nil {
-		c, err := auth.NewCoordinator()
-		if err != nil {
-			return nil, err
+		d.startLease = func(ctx context.Context) (func(), error) {
+			c, err := auth.NewCoordinator()
+			if err != nil {
+				return nil, err
+			}
+			return c.AcquireWorkerStart(ctx)
 		}
-		d.startLease = c.AcquireWorkerStart
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{options: o, domain: d.domain, factory: d.factory, startLease: d.startLease, workers: map[model.MountID]*worker{}, ctx: ctx, cancel: cancel}
 	if m.factory == nil {
@@ -246,6 +249,13 @@ func (m *Manager) updateConfig(ctx context.Context, update func(*config.Config) 
 	}
 	if err = update(&c); err != nil {
 		return err
+	}
+	paths, pathErr := m.paths(c)
+	if pathErr != nil {
+		return pathErr
+	}
+	if validationErr := config.Validate(c, paths); validationErr != nil {
+		return errors.Join(ErrConfig, validationErr)
 	}
 	return config.Save(m.options.ConfigFile, c)
 }

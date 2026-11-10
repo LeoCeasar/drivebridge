@@ -254,7 +254,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
-	case "/stop":
+	case "/stop", "/recovery/stop":
 		var input struct {
 			Wait int64 `json:"wait_ns"`
 		}
@@ -264,7 +264,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		if input.Wait < 0 || time.Duration(input.Wait) > 24*time.Hour {
 			return nil, ErrConfig
 		}
-		return struct{}{}, w.stop(ctx, time.Duration(input.Wait))
+		return struct{}{}, w.stopPolicy(ctx, time.Duration(input.Wait), r.URL.Path == "/recovery/stop")
 	case "/uploads":
 		if r.Method != "GET" {
 			return nil, ErrConfig

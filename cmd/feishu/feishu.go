@@ -40,6 +40,7 @@ func NewCommand(o CommandOptions) *cobra.Command {
 	root.PersistentFlags().String(config.BridgeConfigFlag, "", "Product configuration file (separate from rclone --config)")
 	root.PersistentFlags().String("lark-cli", "", "Official CLI native executable (absolute or resolved from PATH)")
 	root.PersistentFlags().Bool("json", false, "Write structured JSON to stdout")
+	installCommands(root, o)
 	return root
 }
 func commandRun(o CommandOptions, fn func(context.Context, *manager.Manager, []string) (any, error)) func(*cobra.Command, []string) error {

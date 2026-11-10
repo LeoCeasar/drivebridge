@@ -204,3 +204,41 @@ func TestCacheCleanSkipsReferencedData(t *testing.T) {
 	}
 	reader.Close()
 }
+func TestRecoveryStopPreservesPendingAndReportsOfflineQueue(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	w := m.localWorker(id)
+	e, _ := w.services.store.EnsureEntry(context.Background(), "pending.md", model.KindDocx)
+	if _, _, err := w.services.store.Stage(context.Background(), e.ID, nil, strings.NewReader("preserved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.stopForRecovery(context.Background(), id, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(context.Background(), id)
+	if err != nil || status.Running || status.Queued != 1 {
+		t.Fatalf("lost pending status after recovery stop: %+v %v", status, err)
+	}
+}
+func TestUnstartedMountQueriesStayEmptyWithoutCreatingStore(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	status, err := m.Status(context.Background(), id)
+	if err != nil || status.Running || status.Queued != 0 {
+		t.Fatal(status, err)
+	}
+	if list, err := m.Conflicts(context.Background(), id); err != nil || len(list) != 0 {
+		t.Fatal(list, err)
+	}
+	if list, err := m.UploadStatus(context.Background(), id); err != nil || len(list) != 0 {
+		t.Fatal(list, err)
+	}
+	if value, err := m.CacheStatus(context.Background(), id); err != nil || value.BlobBytes != 0 {
+		t.Fatal(value, err)
+	}
+	spec, _ := m.spec(context.Background(), id)
+	if _, err := os.Stat(filepath.Join(spec.Paths.Root, "store.db")); !os.IsNotExist(err) {
+		t.Fatal("read-only empty query created a database", err)
+	}
+}

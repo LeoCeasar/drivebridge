@@ -1,0 +1,374 @@
+package feishu
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strings"
+	"time"
+
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/internal/bridge/auth"
+	"github.com/rclone/rclone/internal/bridge/config"
+	"github.com/rclone/rclone/internal/bridge/manager"
+	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/spf13/cobra"
+)
+
+func exactArgs(n int) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) != n {
+			return manager.ErrConfig
+		}
+		return nil
+	}
+}
+func installCommands(root *cobra.Command, o CommandOptions) {
+	doctor := &cobra.Command{Use: "doctor", Short: "Check compiled mount engine, driver, CLI and optional account", Args: exactArgs(0)}
+	doctor.Flags().String("profile", "", "Verify this configured profile")
+	doctor.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, _ []string) (any, error) {
+		var id model.ProfileID
+		if name := flagString(doctor, "profile"); name != "" {
+			p, err := m.ResolveProfile(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			id = p.ID
+		}
+		return m.Doctor(ctx, id)
+	})
+	root.AddCommand(doctor)
+	account := &cobra.Command{Use: "account", Short: "Manage this computer's personal account bindings"}
+	account.PersistentFlags().String("profile", "", "Profile name or UUID")
+	account.PersistentFlags().String("brand", "feishu", "feishu or lark")
+	for _, action := range []string{"login", "recover", "status", "logout", "unlink"} {
+		action := action
+		c := &cobra.Command{Use: action, Args: exactArgs(0)}
+		c.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, _ []string) (any, error) {
+			name := flagString(c, "profile")
+			if name == "" {
+				return nil, manager.ErrConfig
+			}
+			p, err := m.ResolveProfile(ctx, name)
+			if err != nil && action == "login" {
+				p, err = m.AddProfile(ctx, name, flagString(c, "brand"))
+			}
+			if err != nil {
+				return nil, err
+			}
+			a, err := m.Auth(ctx)
+			if err != nil {
+				return nil, err
+			}
+			switch action {
+			case "status":
+				return a.Status(ctx, p.ID)
+			case "logout":
+				return map[string]bool{"logged_out": true}, a.Logout(ctx, p.ID)
+			case "unlink":
+				return map[string]bool{"unlinked": true}, a.Unlink(ctx, p.ID)
+			default:
+				return authorize(ctx, c, a, p.ID, action == "recover")
+			}
+		})
+		account.AddCommand(c)
+	}
+	root.AddCommand(account)
+	remote := &cobra.Command{Use: "remote", Short: "Configure shared-folder mappings"}
+	addRemote := &cobra.Command{Use: "add NAME", Args: exactArgs(1)}
+	addRemote.Flags().String("profile", "", "Configured profile")
+	addRemote.Flags().String("folder-token", "", "Shared folder token or URL")
+	addRemote.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		p, err := m.ResolveProfile(ctx, flagString(addRemote, "profile"))
+		if err != nil {
+			return nil, err
+		}
+		return m.AddRemote(ctx, args[0], p.ID, flagString(addRemote, "folder-token"))
+	})
+	remote.AddCommand(addRemote)
+	remote.AddCommand(&cobra.Command{Use: "list", Args: exactArgs(0), RunE: commandRun(o, func(ctx context.Context, m *manager.Manager, _ []string) (any, error) {
+		c, err := m.LoadConfig(ctx)
+		return c.Remotes, err
+	})})
+	for _, action := range []string{"test", "remove"} {
+		action := action
+		c := &cobra.Command{Use: action + " NAME", Args: exactArgs(1)}
+		c.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+			r, err := m.ResolveRemote(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			if action == "test" {
+				return m.TestRemote(ctx, r.ID)
+			}
+			return map[string]bool{"removed": true}, m.RemoveRemote(ctx, r.ID)
+		})
+		remote.AddCommand(c)
+	}
+	root.AddCommand(remote)
+	mount := &cobra.Command{Use: "mount", Short: "Create, start, inspect and safely stop managed mounts"}
+	defaults := config.DefaultMount()
+	addMount := &cobra.Command{Use: "add NAME", Args: exactArgs(1)}
+	addMount.Flags().String("remote", "", "Configured shared folder")
+	addMount.Flags().String("mountpoint", "", "Local mount path or Windows drive letter")
+	addMount.Flags().String("cache-mode", "full", "Managed mounts require full cache")
+	addMount.Flags().String("cache-size", "5G", "Soft clean-cache budget")
+	addMount.Flags().String("write-back", defaults.WriteBack, "Local write-back delay")
+	addMount.Flags().Bool("notify", true, "Notify about conflicts when a desktop is available")
+	addMount.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		r, err := m.ResolveRemote(ctx, flagString(addMount, "remote"))
+		if err != nil {
+			return nil, err
+		}
+		v := config.DefaultMount()
+		v.Name = args[0]
+		v.RemoteID = r.ID
+		v.Mountpoint = flagString(addMount, "mountpoint")
+		v.CacheMode = flagString(addMount, "cache-mode")
+		var size fs.SizeSuffix
+		if err = size.Set(flagString(addMount, "cache-size")); err != nil {
+			return nil, manager.ErrConfig
+		}
+		v.CacheMaxBytes = int64(size)
+		v.WriteBack = flagString(addMount, "write-back")
+		v.Notify = flagString(addMount, "notify") == "true"
+		return m.AddMount(ctx, v)
+	})
+	mount.AddCommand(addMount)
+	start := &cobra.Command{Use: "start NAME", Args: exactArgs(1)}
+	start.Flags().Bool("background", false, "Return after the worker and mount are ready")
+	start.Flags().Duration("wait", 30*time.Second, "Maximum time to wait for readiness")
+	start.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		background := flagString(start, "background") == "true"
+		status, err := m.Start(ctx, v.ID, background)
+		if err != nil || background {
+			return status, err
+		}
+		waitCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+		defer cancel()
+		err = m.Wait(waitCtx, v.ID)
+		if errors.Is(err, context.Canceled) {
+			err = m.Stop(context.Background(), v.ID, 60*time.Second)
+		}
+		return status, err
+	})
+	mount.AddCommand(start)
+	status := &cobra.Command{Use: "status [NAME]", Args: cobra.MaximumNArgs(1)}
+	status.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		if len(args) == 1 {
+			v, err := m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			return m.Status(ctx, v.ID)
+		}
+		c, err := m.LoadConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := []model.MountStatus{}
+		for _, v := range c.Mounts {
+			s, err := m.Status(ctx, v.ID)
+			if err != nil {
+				return out, err
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	})
+	mount.AddCommand(status)
+	stop := &cobra.Command{Use: "stop NAME", Args: exactArgs(1)}
+	stop.Flags().Duration("wait-upload", 60*time.Second, "Wait for open handles, VFS data and cloud work")
+	stop.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		wait, err := time.ParseDuration(flagString(stop, "wait-upload"))
+		if err != nil {
+			return nil, manager.ErrConfig
+		}
+		return map[string]bool{"stopped": true}, m.Stop(ctx, v.ID, wait)
+	})
+	mount.AddCommand(stop)
+	stopAll := &cobra.Command{Use: "stop-all", Args: exactArgs(0)}
+	stopAll.Flags().Duration("wait-upload", 60*time.Second, "Wait for each worker to drain safely")
+	stopAll.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, _ []string) (any, error) {
+		wait, err := time.ParseDuration(flagString(stopAll, "wait-upload"))
+		if err != nil {
+			return nil, manager.ErrConfig
+		}
+		return map[string]bool{"stopped": true}, m.StopAll(ctx, wait)
+	})
+	mount.AddCommand(stopAll)
+	for _, action := range []string{"enable-autostart", "disable-autostart"} {
+		action := action
+		c := &cobra.Command{Use: action + " NAME", Args: exactArgs(1)}
+		c.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+			v, err := m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"autostart": action == "enable-autostart"}, m.SetAutostart(ctx, v.ID, action == "enable-autostart")
+		})
+		mount.AddCommand(c)
+	}
+	root.AddCommand(mount)
+	upload := &cobra.Command{Use: "upload", Short: "Inspect or reconcile queued cloud writes"}
+	for _, action := range []string{"status", "retry"} {
+		action := action
+		c := &cobra.Command{Use: action + " NAME", Args: exactArgs(1)}
+		c.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+			v, err := m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			if action == "status" {
+				return m.UploadStatus(ctx, v.ID)
+			}
+			return map[string]bool{"reconciled": true}, m.Retry(ctx, v.ID)
+		})
+		upload.AddCommand(c)
+	}
+	root.AddCommand(upload)
+	conflict := &cobra.Command{Use: "conflict", Short: "Inspect conflicts, open the merge UI, or submit an explicit merge"}
+	conflict.AddCommand(&cobra.Command{Use: "list NAME", Args: exactArgs(1), RunE: commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		views, err := m.Conflicts(ctx, v.ID)
+		out := []model.Conflict{}
+		for _, view := range views {
+			out = append(out, view.Conflict)
+		}
+		return out, err
+	})})
+	openConflict := &cobra.Command{Use: "open ID", Args: exactArgs(1)}
+	openConflict.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		if _, err := m.Conflict(ctx, model.ConflictID(args[0])); err != nil {
+			return nil, err
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, err
+		}
+		command := exec.CommandContext(ctx, exe, "feishu", "--bridge-config", m.ConfigFile(), "gui", "--conflict", args[0])
+		command.Stdout = openConflict.OutOrStdout()
+		command.Stderr = openConflict.ErrOrStderr()
+		return nil, command.Run()
+	})
+	conflict.AddCommand(openConflict)
+	resolve := &cobra.Command{Use: "resolve ID", Args: exactArgs(1)}
+	resolve.Flags().String("file", "", "Merged file to submit")
+	resolve.Flags().Uint64("expected-generation", 0, "Captured local generation")
+	resolve.Flags().String("expected-remote-revision", "", "Captured cloud revision or observation identity")
+	resolve.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		file, err := os.Open(flagString(resolve, "file"))
+		if err != nil {
+			return nil, manager.ErrConfig
+		}
+		defer file.Close()
+		body, err := io.ReadAll(io.LimitReader(file, (80<<20)+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 80<<20 {
+			return nil, model.ErrUnsupportedContent
+		}
+		generation, err := resolve.Flags().GetUint64("expected-generation")
+		if err != nil {
+			return nil, manager.ErrConfig
+		}
+		return map[string]bool{"accepted": true}, m.ResolveConflict(ctx, model.ResolveRequest{ConflictID: model.ConflictID(args[0]), ExpectedGeneration: generation, ExpectedRemoteRevision: flagString(resolve, "expected-remote-revision"), Content: body})
+	})
+	conflict.AddCommand(resolve)
+	root.AddCommand(conflict)
+	cache := &cobra.Command{Use: "cache", Short: "Inspect caches or remove only unreferenced clean data"}
+	for _, action := range []string{"status", "clean"} {
+		action := action
+		c := &cobra.Command{Use: action + " NAME", Args: exactArgs(1)}
+		c.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+			v, err := m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			if action == "status" {
+				return m.CacheStatus(ctx, v.ID)
+			}
+			return m.CleanCache(ctx, v.ID)
+		})
+		cache.AddCommand(c)
+	}
+	root.AddCommand(cache)
+	logs := &cobra.Command{Use: "logs NAME", Short: "Read structured, redacted worker events", Args: exactArgs(1)}
+	logs.Flags().Bool("follow", false, "Follow newly recorded events")
+	logs.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		return m.Logs(ctx, v.ID)
+	})
+	root.AddCommand(logs)
+	completion := &cobra.Command{Use: "completion SHELL", Args: exactArgs(1), RunE: func(c *cobra.Command, args []string) error {
+		switch strings.ToLower(args[0]) {
+		case "bash":
+			return root.GenBashCompletionV2(c.OutOrStdout(), true)
+		case "zsh":
+			return root.GenZshCompletion(c.OutOrStdout())
+		case "fish":
+			return root.GenFishCompletion(c.OutOrStdout(), true)
+		case "powershell":
+			return root.GenPowerShellCompletionWithDesc(c.OutOrStdout())
+		default:
+			return manager.ErrConfig
+		}
+	}}
+	root.AddCommand(completion)
+	worker := &cobra.Command{Use: "_worker", Hidden: true, Args: exactArgs(0)}
+	worker.Flags().String("mount-id", "", "Mount UUID")
+	worker.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, _ []string) (any, error) {
+		return nil, m.RunWorker(ctx, model.MountID(flagString(worker, "mount-id")))
+	})
+	root.AddCommand(worker)
+}
+func authorize(ctx context.Context, c *cobra.Command, a *auth.Service, id model.ProfileID, recovery bool) (any, error) {
+	for {
+		var flow auth.AuthFlow
+		var err error
+		if recovery {
+			_, _ = fmt.Fprintln(c.ErrOrStderr(), "Stopping related mounts and preserving pending data before same-account authorization.")
+			flow, err = a.StartRecovery(ctx, id)
+		} else {
+			flow, err = a.Start(ctx, id)
+		}
+		if errors.Is(err, auth.ErrNeedsReconcile) {
+			identity, reconcileErr := a.Reconcile(ctx, id)
+			if reconcileErr == nil {
+				return identity, nil
+			}
+			if errors.Is(reconcileErr, auth.ErrUserMissing) {
+				continue
+			}
+			return nil, reconcileErr
+		}
+		if err != nil {
+			return nil, err
+		}
+		_, _ = fmt.Fprintln(c.ErrOrStderr(), flow.URL)
+		identity, err := a.Complete(ctx, flow.ID)
+		if errors.Is(err, auth.ErrUserMissing) {
+			continue
+		}
+		return identity, err
+	}
+}
