@@ -159,6 +159,11 @@ func (m *Manager) pathsMust(ctx context.Context) (string, error) {
 	return p.StateDir, err
 }
 func (m *Manager) SetAutostart(ctx context.Context, id model.MountID, enabled bool) error {
+	release, err := m.startLease(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	spec, err := m.spec(ctx, id)
 	if err != nil {
 		return err

@@ -58,20 +58,29 @@ func (m *Manager) writeEndpoint(id model.MountID, e endpoint) error {
 	return atomicJSON(filepath.Join(s.Paths.Root, "ipc.json"), e)
 }
 func (m *Manager) readEndpoint(id model.MountID) (endpoint, string, error) {
-	var e endpoint
-	s, err := m.spec(context.Background(), id)
+	spec, err := m.spec(context.Background(), id)
 	if err != nil {
-		return e, "", err
+		return endpoint{}, "", err
 	}
-	path := filepath.Join(s.Paths.Root, "ipc.json")
-	if err = platform.CheckNoSymlinks(path); err != nil {
+	return readEndpointAt(spec.Paths.Root, id, m.options.ConfigFile)
+}
+
+// readEndpointAt is bound to a validated historical ownership record, allowing
+// installation recovery without trusting the current config's mutable paths.
+func readEndpointAt(root string, id model.MountID, configFile string) (endpoint, string, error) {
+	var e endpoint
+	if !filepath.IsAbs(root) || !filepath.IsAbs(configFile) || !validID(string(id)) {
+		return e, "", ErrInstanceChanged
+	}
+	path := filepath.Join(root, "ipc.json")
+	if err := platform.CheckNoSymlinks(path); err != nil {
 		return e, "", err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return e, "", err
 	}
-	if len(b) > 64<<10 || json.Unmarshal(b, &e) != nil || e.SchemaVersion != 1 || e.MountID != id || e.ConfigFile != m.options.ConfigFile || !validID(e.InstanceID) || e.PID <= 0 || e.KeyRef != "ipc.key" {
+	if len(b) > 64<<10 || json.Unmarshal(b, &e) != nil || e.SchemaVersion != 1 || e.MountID != id || e.ConfigFile != configFile || !validID(e.InstanceID) || e.PID <= 0 || e.KeyRef != "ipc.key" {
 		return e, "", ErrInstanceChanged
 	}
 	u, err := url.Parse(e.Address)
@@ -82,7 +91,7 @@ func (m *Manager) readEndpoint(id model.MountID) (endpoint, string, error) {
 	if err != nil || port < 1 || port > 65535 {
 		return e, "", ErrInstanceChanged
 	}
-	keyPath := filepath.Join(s.Paths.Root, e.KeyRef)
+	keyPath := filepath.Join(root, e.KeyRef)
 	if err = platform.CheckNoSymlinks(keyPath); err != nil {
 		return e, "", err
 	}
@@ -103,6 +112,9 @@ func (m *Manager) call(ctx context.Context, id model.MountID, route string, inpu
 	if err != nil {
 		return err
 	}
+	return callEndpoint(ctx, ep, key, route, input, output)
+}
+func callEndpoint(ctx context.Context, ep endpoint, key, route string, input, output any) error {
 	var body io.Reader
 	method := "GET"
 	if input != nil {
@@ -137,7 +149,7 @@ func (m *Manager) call(ctx context.Context, id model.MountID, route string, inpu
 	if json.Unmarshal(raw, &out) != nil {
 		return ErrInstanceChanged
 	}
-	if out.InstanceID != ep.InstanceID || out.PID != ep.PID || out.MountID != id || out.ConfigFile != ep.ConfigFile {
+	if out.InstanceID != ep.InstanceID || out.PID != ep.PID || out.MountID != ep.MountID || out.ConfigFile != ep.ConfigFile {
 		return ErrInstanceChanged
 	}
 	if out.Error != nil {

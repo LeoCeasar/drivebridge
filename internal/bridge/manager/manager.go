@@ -272,23 +272,23 @@ func (m *Manager) updateConfig(ctx context.Context, update func(*config.Config) 
 }
 func (m *Manager) AddProfile(ctx context.Context, name, brand string) (model.Profile, error) {
 	p := model.Profile{ID: model.ProfileID(uuid.NewString()), Name: name, Brand: brand}
-	err := m.updateConfig(ctx, func(c *config.Config) error { c.Profiles = append(c.Profiles, p); return nil })
+	err := m.admittedConfigUpdate(ctx, func(c *config.Config) error { c.Profiles = append(c.Profiles, p); return nil })
 	return p, err
 }
 func (m *Manager) AddRemote(ctx context.Context, name string, profile model.ProfileID, folder string) (model.Remote, error) {
 	r := model.Remote{ID: model.RemoteID(uuid.NewString()), Name: name, ProfileID: profile, FolderToken: folder, NewMDPolicy: "docx"}
-	err := m.updateConfig(ctx, func(c *config.Config) error { c.Remotes = append(c.Remotes, r); return nil })
+	err := m.admittedConfigUpdate(ctx, func(c *config.Config) error { c.Remotes = append(c.Remotes, r); return nil })
 	return r, err
 }
 func (m *Manager) AddMount(ctx context.Context, v model.Mount) (model.Mount, error) {
 	if v.ID == "" {
 		v.ID = model.MountID(uuid.NewString())
 	}
-	err := m.updateConfig(ctx, func(c *config.Config) error { c.Mounts = append(c.Mounts, v); return nil })
+	err := m.admittedConfigUpdate(ctx, func(c *config.Config) error { c.Mounts = append(c.Mounts, v); return nil })
 	return v, err
 }
 func (m *Manager) RemoveRemote(ctx context.Context, id model.RemoteID) error {
-	return m.updateConfig(ctx, func(c *config.Config) error {
+	return m.admittedConfigUpdate(ctx, func(c *config.Config) error {
 		for _, v := range c.Mounts {
 			if v.RemoteID == id {
 				return ErrPending
@@ -382,4 +382,15 @@ func atomicJSON(path string, v any) error {
 func validID(s string) bool {
 	v, e := uuid.Parse(s)
 	return e == nil && v != uuid.Nil && v.String() == s
+}
+
+// Public config writers share lifecycle admission; auth.ProfileStore.Bind is
+// deliberately the raw privileged writer under its already-exclusive lease.
+func (m *Manager) admittedConfigUpdate(ctx context.Context, update func(*config.Config) error) error {
+	release, err := m.startLease(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return m.updateConfig(ctx, update)
 }

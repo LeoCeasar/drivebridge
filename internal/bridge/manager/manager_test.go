@@ -491,3 +491,52 @@ func fixtureLease(ctx context.Context, path string, shared bool) (func(), error)
 	var once sync.Once
 	return func() { once.Do(func() { _ = l.Unlock() }) }, nil
 }
+
+func TestLifecycleExcludesPublicConfigWriters(t *testing.T) {
+	m, _, _, _ := fixture(t, nil)
+	release, err := m.lifecycleLease(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, err = m.AddProfile(ctx, "excluded", "feishu"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("config writer bypassed lifecycle admission", err)
+	}
+	c, err := m.LoadConfig(context.Background())
+	if err != nil || len(c.Profiles) != 1 {
+		t.Fatal(c.Profiles, err)
+	}
+}
+
+func TestHistoricalEndpointDoesNotDependOnCurrentConfig(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := m.spec(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.updateConfig(context.Background(), func(c *config.Config) error {
+		c.Mounts = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = m.readEndpoint(id); !errors.Is(err, ErrConfig) {
+		t.Fatal(err)
+	}
+	ep, key, err := readEndpointAt(spec.Paths.Root, id, m.options.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status model.MountStatus
+	if err = callEndpoint(context.Background(), ep, key, "/status", nil, &status); err != nil || !status.Running {
+		t.Fatal("historical worker unreachable", status, err)
+	}
+	if _, _, err = readEndpointAt(spec.Paths.Root, id, m.options.ConfigFile+".other"); !errors.Is(err, ErrInstanceChanged) {
+		t.Fatal("historical endpoint accepted wrong config", err)
+	}
+}
