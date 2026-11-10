@@ -8,6 +8,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,7 +53,7 @@ func TestExportConflictCopiesExactBytesAndReopen(t *testing.T) {
 			t.Fatal(p, string(got), err)
 		}
 		info, err := os.Stat(p)
-		if err != nil || info.Mode().Perm()&0077 != 0 {
+		if err != nil || runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0 {
 			t.Fatal(info, err)
 		}
 	}
