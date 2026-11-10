@@ -33,6 +33,9 @@ func runGUI(command *cobra.Command, _ []string) error {
 		return err
 	}
 	defer m.Close()
+	if err := m.InitializeConfig(command.Context()); err != nil {
+		return err
+	}
 	backend, err := ui.NewManagerBackend(m)
 	if err != nil {
 		return err

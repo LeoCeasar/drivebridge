@@ -11,24 +11,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rclone/rclone/internal/bridge/config"
 	"github.com/rclone/rclone/internal/bridge/manager"
+	"strings"
 )
 
-func TestHeadlessOwnsUIUntilAuthenticatedQuit(t *testing.T) {
+func TestHeadlessInitializesPrivateRootsBeforeUIAndOwnsUntilQuit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("startup task query requires injected native Windows runner")
 	}
-	// Every state/auth/cache path is redirected before constructing the manager.
-	home, canonicalErr := filepath.EvalSymlinks(t.TempDir())
-	if canonicalErr != nil {
-		t.Fatal(canonicalErr)
-	}
-	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
-		t.Setenv(key, filepath.Join(home, key))
-		if err := os.MkdirAll(os.Getenv(key), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
+	home := desktopTestHome(t)
 	file := filepath.Join(home, "personal.json")
 	m, err := manager.New(manager.Options{ConfigFile: file})
 	if err != nil {
@@ -62,6 +54,16 @@ func TestHeadlessOwnsUIUntilAuthenticatedQuit(t *testing.T) {
 			t.Fatalf("not ready: %v", e)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	// A fresh desktop must claim the private state/cache roots before creating
+	// State/ui, so the first management-page profile can be persisted.
+	profile, err := m.AddProfile(ctx, "first account", "feishu")
+	if err != nil {
+		t.Fatalf("first desktop profile could not be saved: %v", err)
+	}
+	persisted, err := m.LoadConfig(ctx)
+	if err != nil || len(persisted.Profiles) != 1 || persisted.Profiles[0].ID != profile.ID {
+		t.Fatalf("first desktop profile not persisted: %+v, %v", persisted.Profiles, err)
 	}
 	if err = m.DesktopOpen(ctx); err != nil {
 		t.Fatal(err)
@@ -143,5 +145,60 @@ func TestAppBundleResolvesPairedWorker(t *testing.T) {
 	got, app = Executables(worker)
 	if got != worker || app != binary {
 		t.Fatalf("%s %s", got, app)
+	}
+}
+
+func desktopTestHome(t *testing.T) string {
+	t.Helper()
+	// Every state/auth/cache path is redirected before constructing the manager.
+	home, canonicalErr := filepath.EvalSymlinks(t.TempDir())
+	if canonicalErr != nil {
+		t.Fatal(canonicalErr)
+	}
+	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+		t.Setenv(key, filepath.Join(home, key))
+		if err := os.MkdirAll(os.Getenv(key), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return home
+}
+
+func TestHeadlessRefusesUnclaimedOccupiedStateBeforeUI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Known Folder needs injected path provider")
+	}
+	desktopTestHome(t)
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.StateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(paths.StateDir, "unrelated")
+	if err := os.WriteFile(unrelated, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := manager.New(manager.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = Run(ctx, Options{Manager: m, Headless: true})
+	if err == nil || !strings.Contains(err.Error(), "refusing occupied private directory") {
+		t.Fatalf("occupied state was accepted: %v", err)
+	}
+	for _, leaf := range []string{".drivebridge-owner", "ui"} {
+		if _, err := os.Lstat(filepath.Join(paths.StateDir, leaf)); !os.IsNotExist(err) {
+			t.Fatalf("rejected root changed: %s: %v", leaf, err)
+		}
+	}
+	raw, err := os.ReadFile(unrelated)
+	if err != nil || string(raw) != "preserve" {
+		t.Fatalf("unrelated file changed: %q %v", raw, err)
 	}
 }

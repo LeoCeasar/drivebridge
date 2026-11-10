@@ -270,6 +270,14 @@ func (m *Manager) updateConfig(ctx context.Context, update func(*config.Config) 
 	}
 	return config.Save(m.options.ConfigFile, c)
 }
+
+// InitializeConfig persists the loaded configuration and claims its private roots
+// before a desktop host creates runtime files there. It follows the same lifecycle,
+// manager/config, and private-root lock order as other public config writers.
+func (m *Manager) InitializeConfig(ctx context.Context) error {
+	return m.admittedConfigUpdate(ctx, func(*config.Config) error { return nil })
+}
+
 func (m *Manager) AddProfile(ctx context.Context, name, brand string) (model.Profile, error) {
 	p := model.Profile{ID: model.ProfileID(uuid.NewString()), Name: name, Brand: brand}
 	err := m.admittedConfigUpdate(ctx, func(c *config.Config) error { c.Profiles = append(c.Profiles, p); return nil })

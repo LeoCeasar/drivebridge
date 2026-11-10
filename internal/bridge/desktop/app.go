@@ -52,6 +52,11 @@ func Run(ctx context.Context, o Options) error {
 			initializationRelease()
 		}
 	}()
+	// Claim state/cache before ui.Start creates runtime files. A first-run
+	// configuration cannot claim an already occupied, unowned private root.
+	if err := o.Manager.InitializeConfig(ctx); err != nil {
+		return err
+	}
 	open := o.Open
 	if open == nil {
 		open = platform.OpenBrowser
