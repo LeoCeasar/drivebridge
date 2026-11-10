@@ -3,9 +3,11 @@
   const $ = id => document.getElementById(id);
   const diff = window.DriveBridgeDiff;
   const recovery = window.DriveBridgeRecovery;
-  let activeHunk = null;
-  let csrf = '', current = null, choices = new Map(), manual = false, editSeq = 0, savedSeq = 0;
-  let draftTimer = null, draftChain = Promise.resolve(), authFlow = '', busy = false;
+  const queue = window.DriveBridgeBatch.createQueue();
+  let activeHunk = null, openSeq = 0, activeView = 'workspace';
+  let csrf = '', current = null, choices = new Map(), manual = false;
+  let draftTimer = null, authFlow = '';
+  const record = () => current && queue.records.get(current.id);
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
   function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
   function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; $('connection').textContent = '本机会话已失效'; }
@@ -19,7 +21,16 @@
     return data;
   }
   function bytes(text) { const data = new TextEncoder().encode(text); let result = ''; for (let i = 0; i < data.length; i += 8192) result += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(result); }
-  function view(name) { for (const key of ['workspace', 'settings']) $(key).hidden = key !== name; document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name)); $('page-label').textContent = name === 'settings' ? '账号与目录' : '文件与同步'; }
+  function view(name) {
+    activeView = name;
+    for (const key of ['workspace', 'settings']) $(key).hidden = key !== (name === 'conflicts' ? 'workspace' : name);
+    document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
+    const conflicts = name === 'conflicts';
+    $('page-label').textContent = name === 'settings' ? '账号与目录' : conflicts ? '冲突与合并' : '文件与同步';
+    $('workspace-title').textContent = conflicts ? '冲突与合并' : '文件与同步';
+    $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '查看本机保存和云端确认，处理需要你决定的差异。';
+    $('mount-panel').hidden = conflicts; $('setup-shortcut').hidden = conflicts;
+  }
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
   for (const id of ['setup-shortcut', 'start-setup']) $(id).addEventListener('click', () => view('settings'));
   function cloudLabel(state) { const value = state.cloud_state; const labels = {synced:'已确认',queued:'等待同步',uploading:'正在上传',merging:'正在合并',awaiting_verification:'等待回读核验',conflict:'需要合并',blocked:'已阻塞',paused:'已暂停',offline:'离线'}; return labels[value] || (state.running ? '等待确认' : '挂载未启动'); }
@@ -34,9 +45,34 @@
       row.append(name, local, cloud, queue, action); $('mount-rows').append(row);
     }
   }
-  function renderConflicts(conflicts = []) {
-    $('conflict-count').textContent = conflicts.length; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = conflicts.length > 0;
-    for (const c of conflicts) { const button = make('button', c.name || '待合并文件', 'conflict-item' + (current?.id === c.id ? ' selected' : '')); button.title = c.name || ''; button.addEventListener('click', () => openConflict(c.id)); $('conflict-list').append(button); }
+  const outcomeLabels = {unreviewed:'请先打开复核',draft:'待提交',submitting:'正在提交',queued:'已接受，等待同步',needs_refresh:'需要刷新并复核',failed:'提交失败，可重试',blocked:'无法自动合并，请保存副本'};
+  function renderQueue() {
+    const records = [...queue.records.values()];
+    $('queue-rows').replaceChildren(); $('queue-empty').hidden = records.length > 0;
+    for (const r of records) {
+      const row = make('tr'), select = make('td'), checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.id = `queue-select-${r.id}`; checkbox.checked = r.selected; checkbox.disabled = queue.running || (!r.selected && !queue.canSubmit(r)); checkbox.setAttribute('aria-label',`选择 ${r.name || '待合并文件'}`);
+      checkbox.addEventListener('change',() => { queue.select(r.id,checkbox.checked); renderQueue(); $(checkbox.id)?.focus(); }); select.append(checkbox);
+      const file = make('td'), open = make('button',r.name || '待合并文件','text-button queue-file'); open.addEventListener('click',() => openConflict(r.id)); file.append(open);
+      const draft = make('td',!r.input ? '未打开' : !r.input.text ? '非文本，保留副本' : r.seq !== r.savedSeq ? '页面草稿已保留' : r.savedSeq || r.input.has_draft ? '本机草稿已保存' : '来源已载入，尚未修改');
+      const result = make('td'); result.append(make('span',outcomeLabels[r.status],'queue-outcome ' + r.status));
+      if (r.status === 'failed') result.append(make('small',r.error || '请检查本机连接后重试。','queue-detail'));
+      if (r.status === 'needs_refresh') result.append(make('small','草稿已保留；打开后刷新差异，再核对来源。','queue-detail'));
+      if (r.newerDraft) result.append(make('small','本次提交后的新编辑仍保留在页面中，尚未提交。请复制保存。','queue-detail'));
+      row.append(select,file,draft,result); $('queue-rows').append(row);
+    }
+    const count = status => records.filter(r => r.status === status).length;
+    const selected = records.filter(r => r.selected && queue.canSubmit(r)).length;
+    $('submit-selected').textContent = queue.running ? '正在逐个提交…' : `提交已选文件（${selected}）`;
+    $('submit-selected').disabled = queue.running || !selected;
+    $('select-reviewed').disabled = queue.running || !records.some(r => queue.canSubmit(r)); $('clear-selection').disabled = queue.running || !records.some(r => r.selected);
+    $('queue-summary').textContent = `共 ${records.length} 份，已选 ${selected} 份；本机已接受 ${count('queued')} 份，需要复核 ${count('needs_refresh')} 份，失败 ${count('failed')} 份。`;
+  }
+  function renderConflicts(conflicts) {
+    if (conflicts) queue.sync(conflicts);
+    const records = [...queue.records.values()];
+    $('conflict-count').textContent = records.filter(r => r.present && r.status !== 'queued').length; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
+    for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
+    renderQueue();
   }
   async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true); } }
   $('refresh').addEventListener('click', refresh);
@@ -48,31 +84,42 @@
   }
   for (const [id, action] of [['profile-form','profile'],['remote-form','remote'],['mount-form','mount']]) $(id).addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true; const data = Object.fromEntries(new FormData(form)); data.action = action; try { await api('/api/config', 'POST', data); message(action === 'mount' ? '挂载配置已保存，可在“文件与同步”中启动。' : '配置已保存。'); form.reset(); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } });
   $('auth-complete').addEventListener('click', async () => { if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; message('授权成功，可以选择共享目录。'); await loadConfig(); } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
-  function stash() { if (!current) return; try { localStorage.setItem(`draft:${current.id}`, JSON.stringify({text:$('merged-text').value, generation:current.generation, revision:current.remote_revision})); } catch (_) { /* The editor and durable backend draft remain the primary copies. */ } }
+  function stash(r = record()) {
+    if (!r?.input?.text) return;
+    try { localStorage.setItem(`draft:${r.id}`,JSON.stringify({text:r.text,generation:r.intent.generation,revision:r.intent.remote_revision})); } catch (_) { /* Keep the in-page and backend copies. */ }
+  }
   function draftState(text) { $('draft-state').textContent = text; }
   function recoveryControls() {
-    const state = recovery.conflictState(current,busy);
-    $('merged-text').disabled = !state.canEdit;
-    $('save-draft').disabled = !state.canSaveDraft;
-    $('resolve').disabled = !state.canResolve;
-    $('resolve').title = current?.stale ? '请先刷新差异并重新核验云端' : '';
-    $('reset-choices').disabled = !state.canEdit;
+    const r = record(), state = recovery.conflictState(current,queue.running);
+    $('merged-text').disabled = !state.canEdit; $('merged-text').readOnly = r?.status === 'queued';
+    $('save-draft').disabled = !state.canSaveDraft || r?.status === 'queued' || queue.running;
+    $('resolve').disabled = queue.running || !queue.canSubmit(r);
+    $('resolve').title = r?.reviewRequired || current?.stale ? '请先刷新差异并重新核对来源' : '';
+    $('reset-choices').disabled = !state.canEdit || queue.running || r?.status === 'queued';
+    $('refresh-conflict').disabled = queue.running || r?.status === 'queued';
+    $('review-sources').hidden = !r?.reviewRequired || current?.stale || !current?.text || r?.status === 'queued';
+    $('review-sources').disabled = queue.running;
+    $('later').disabled = queue.running;
     $('export-copies').hidden = !current?.can_export_copies;
     $('export-copies').disabled = !state.canExport;
-    $('source-warning').textContent = state.warning;
-    $('source-warning').hidden = !state.warning;
+    const warning = state.warning || (r?.reviewRequired ? '草稿保持原样。请对照当前来源核对已恢复的草稿，再点击“已核对新来源”允许提交。' : '');
+    $('source-warning').textContent = warning; $('source-warning').hidden = !warning;
   }
-  async function saveDraft() {
-    if (!current || !current.text) return true; clearTimeout(draftTimer); const id = current.id, seq = editSeq, content = $('merged-text').value; stash();
-    let success = false; draftChain = draftChain.catch(() => {}).then(async () => { try { await api(`/api/conflicts/${encodeURIComponent(id)}/draft`,'PUT',{content:bytes(content)}); if (current?.id === id && seq === editSeq) { savedSeq = seq; draftState('草稿已保存到本机'); try { localStorage.removeItem(`draft:${id}`); } catch (_) {} } success = true; } catch (e) { if (current?.id === id) { draftState('尚未保存到本机，请保持页面打开'); message(e.message + ' 当前编辑仍在页面中，请恢复连接后保存。', true); } } }); await draftChain; return success;
+  const draftIO = {save:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/draft`,'PUT',{content:bytes(s.text)}),resolve:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/resolve`,'POST',{conflict_id:s.id,expected_generation:s.intent.generation,expected_remote_revision:s.intent.remote_revision,content:bytes(s.text)})};
+  async function saveDraft(id = current?.id) {
+    const r = queue.records.get(id); if (!r?.input?.text || r.status === 'queued') return true;
+    if (queue.running) return false;
+    clearTimeout(draftTimer); stash(r);
+    try { await queue.save(id,draftIO); if (current?.id === id) draftState(r.seq === r.savedSeq ? '草稿已保存到本机' : '新编辑已保留，等待保存'); renderQueue(); return true; }
+    catch(e) { if (current?.id === id) { draftState('页面草稿已保留，等待恢复连接'); message(e.message + ' 编辑仍保留在此页面，请恢复连接后保存。',true); } renderQueue(); return false; }
   }
-  function edited() { editSeq++; manual = true; stash(); draftState('正在编辑，稍后自动保存'); document.querySelectorAll('.choice').forEach(e => e.disabled = true); clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 650); }
-  $('merged-text').addEventListener('input', edited); $('save-draft').addEventListener('click', saveDraft);
+  function scheduleSave() { const id = current?.id; clearTimeout(draftTimer); draftTimer = setTimeout(() => { if (!queue.running) saveDraft(id); },650); }
+  function edited() { const r = record(); if (!r) return; queue.edit(r.id,$('merged-text').value); r.manual = manual = true; stash(); draftState('正在编辑，稍后自动保存'); document.querySelectorAll('.choice').forEach(e => e.disabled = true); scheduleSave(); renderQueue(); }
+  $('merged-text').addEventListener('input',edited); $('save-draft').addEventListener('click',() => saveDraft());
   function rebuild() {
     if (!current) return;
     $('merged-text').value = diff.mergeChoices(current.Base,current.hunks,choices);
-    editSeq++; stash(); draftState('差异选择已更新，稍后自动保存');
-    clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft,650);
+    queue.edit(current.id,$('merged-text').value); stash(); draftState('差异选择已更新，稍后自动保存'); scheduleSave(); renderQueue();
   }
   function jumpHunk(id) {
     activeHunk = id;
@@ -114,7 +161,7 @@
       jump.title = '定位到三份来源的对应文本'; jump.addEventListener('click',() => jumpHunk(h.id));
       const group = make('div',undefined,'hunk-choices');
       for (const [key,label] of [['Local','采用本地'],['Remote','采用云端'],['Base','还原原版']]) {
-        const button = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); button.disabled = manual;
+        const button = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); button.disabled = manual || queue.running || !current.text || record()?.status === 'queued';
         button.addEventListener('click',() => { choices.set(h.id,key); rebuild(); renderHunks(); jumpHunk(h.id); }); group.append(button);
       }
       heading.append(jump,group); row.append(heading);
@@ -129,17 +176,34 @@
       row.append(context); $('hunk-list').append(row);
     }
   }
-  async function openConflict(id) {
-    if (busy) return;
-    if (current && editSeq !== savedSeq && !(await saveDraft())) return;
-    try { const data = await api(`/api/conflicts/${encodeURIComponent(id)}`); current = data; current.hunks ||= []; choices = new Map(); editSeq = 0; savedSeq = 0; manual = data.has_draft; $('merge').hidden = false; view('workspace'); $('merge-name').textContent = data.name; $('merge-version').textContent = `本地代次 ${data.generation}，云端修订 ${data.remote_revision || '下载观测'}`; activeHunk = null; renderSources(); $('merged-text').value = data.has_draft ? data.Draft : data.Local; recoveryControls(); $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
-      try { const cached = JSON.parse(localStorage.getItem(`draft:${id}`)); if (cached && cached.text !== $('merged-text').value) { $('merged-text').value = cached.text; manual = true; editSeq++; draftState('恢复了此浏览器暂存内容，请保存草稿'); } else draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); } catch (_) { draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); }
-      if (!data.text) message('该文件不是可编辑文本。原版和双方副本仍保留，请通过恢复入口另存后处理。'); renderHunks(); await refresh();
-    } catch (e) { message(e.message,true); }
+  function showConflict(r) {
+    current = r.input; current.hunks ||= []; choices = r.choices; manual = r.manual; activeHunk = null;
+    $('merge').hidden = false; view(activeView === 'settings' ? 'conflicts' : activeView);
+    $('merge-name').textContent = r.name; $('merge-version').textContent = `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
+    renderSources(); $('merged-text').value = r.text; recoveryControls(); renderHunks();
+    $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
+    draftState(r.status === 'queued' ? (r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步') : r.seq !== r.savedSeq ? '页面草稿已保留' : current.has_draft ? '已载入本机草稿' : '草稿未修改');
+    renderConflicts();
   }
-  $('refresh-conflict').addEventListener('click',async () => { if (!current || busy) return; const id = current.id; $('refresh-conflict').disabled = true; try { await openConflict(id); } finally { $('refresh-conflict').disabled = false; } });
+  async function openConflict(id, reload = false) {
+    const requestSeq = ++openSeq;
+    clearTimeout(draftTimer);
+    if (record()?.seq !== record()?.savedSeq && !queue.running) saveDraft();
+    const existing = queue.records.get(id);
+    if (existing?.input && (!reload || existing.status === 'queued')) { showConflict(existing); return; }
+    try {
+      const data = await api(`/api/conflicts/${encodeURIComponent(id)}`);
+      let cached; try { cached = JSON.parse(localStorage.getItem(`draft:${id}`)); } catch (_) {}
+      const r = queue.load(data,cached); stash(r);
+      if (requestSeq !== openSeq) return;
+      showConflict(r);
+      if (!data.text) message('该文件不是可编辑文本。原版和双方副本仍保留，请保存副本后处理。');
+    } catch(e) { if (requestSeq === openSeq) message(e.message,true); }
+  }
+  $('refresh-conflict').addEventListener('click',() => { if (current && !queue.running) openConflict(current.id,true); });
+  $('review-sources').addEventListener('click',() => { if (current && queue.review(current.id)) { stash(); recoveryControls(); renderConflicts(); draftState('保留草稿，已核对当前来源'); } });
   $('export-copies').addEventListener('click',async () => {
-    if (!current || busy) return;
+    if (!current || queue.running) return;
     const id = current.id; $('export-copies').disabled = true;
     try {
       if (!(await saveDraft())) return;
@@ -151,13 +215,36 @@
       box.append(paths); box.hidden = false;
     } catch(e) { message(e.message,true); } finally { recoveryControls(); }
   });
-  $('reset-choices').addEventListener('click', async () => { if (!current || !(await saveDraft())) return; manual = false; choices = new Map(); rebuild(); renderHunks(); });
-  $('resolve').addEventListener('click', async () => { if (!recovery.conflictState(current,busy).canResolve) return; busy = true; recoveryControls(); try { if (!(await saveDraft())) return; await api(`/api/conflicts/${encodeURIComponent(current.id)}/resolve`,'POST',{conflict_id:current.id,expected_generation:current.generation,expected_remote_revision:current.remote_revision,content:bytes($('merged-text').value)}); message('合并结果已在本机接受，云端确认请查看同步状态。'); $('merge').hidden = true; current = null; await refresh(); } catch (e) { draftState('草稿已保留'); if (current && (e.status === 409 || e.code === 'refresh_required')) { current.stale = true; if (e.status === 409) current.refresh_warning = 'version_changed'; } message(e.status === 409 ? '输入版本已变化，草稿已保留。请刷新差异并重新核对后提交。' : e.message,true); } finally { busy = false; recoveryControls(); } });
-  $('later').addEventListener('click', async () => { if (await saveDraft()) { $('merge').hidden = true; message('草稿已保留，可随时从左侧继续处理。'); } });
-  window.addEventListener('beforeunload', event => { if (current && editSeq !== savedSeq) { stash(); event.preventDefault(); event.returnValue = ''; } });
+  $('reset-choices').addEventListener('click',async () => { const id = current?.id; if (!id || queue.running || !(await saveDraft()) || current?.id !== id || queue.running) return; record().manual = manual = false; record().choices = choices = new Map(); rebuild(); renderHunks(); });
+  function batchChanged(r) {
+    if (r) {
+      if (r.status === 'queued' && !r.newerDraft) { try { localStorage.removeItem(`draft:${r.id}`); } catch (_) {} }
+      else stash(r);
+    }
+    renderConflicts(); recoveryControls();
+    if (r && r.id === current?.id) {
+      draftState(r.status === 'queued' ? r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步' : r.status === 'submitting' ? '正在保存并提交本次草稿…' : '草稿已保留');
+      // Batch replies only change controls and status; they never replace editor text.
+    }
+    if (current) renderHunks();
+  }
+  async function submitFiles(ids) {
+    if (queue.running) return;
+    clearTimeout(draftTimer); stash();
+    await queue.submit(draftIO,batchChanged,ids);
+    message('本次提交已处理，请查看每份文件的结果。本机接受的结果仍需等待云端确认。');
+    await refresh();
+    const r = record(); if (r && r.seq !== r.savedSeq && r.status !== 'queued') scheduleSave();
+  }
+  $('resolve').addEventListener('click',() => { if (current && queue.canSubmit(record())) submitFiles([current.id]); });
+  $('submit-selected').addEventListener('click',() => submitFiles());
+  $('select-reviewed').addEventListener('click',() => { for (const r of queue.records.values()) queue.select(r.id,true); renderQueue(); });
+  $('clear-selection').addEventListener('click',() => { for (const r of queue.records.values()) queue.select(r.id,false); renderQueue(); });
+  $('later').addEventListener('click',async () => { if (await saveDraft()) { $('merge').hidden = true; message('草稿已保留，可随时从列表继续处理。'); } });
+  window.addEventListener('beforeunload',event => { const unsaved = [...queue.records.values()].filter(r => r.input?.text && r.seq !== r.savedSeq); for (const r of unsaved) stash(r); if (unsaved.length) { event.preventDefault(); event.returnValue = ''; } });
   async function start() {
     const fragment = new URLSearchParams(location.hash.slice(1)); const bootstrap = fragment.get('bootstrap'); history.replaceState(null,'',location.pathname + location.search);
-    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const id = new URLSearchParams(location.search).get('conflict'); if (id) await openConflict(id); else if (!config.mounts.length) view('settings'); setInterval(refresh,5000); } catch (_) { showSessionError(); }
+    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); setInterval(refresh,5000); } catch (_) { showSessionError(); }
   }
   start();
 })();

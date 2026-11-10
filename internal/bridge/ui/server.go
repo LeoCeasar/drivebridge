@@ -90,7 +90,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -103,7 +103,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/app.js", "/diff-view.js", "/recovery-view.js":
+		case "/app.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
