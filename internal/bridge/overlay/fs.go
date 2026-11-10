@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,7 +85,12 @@ type materialization struct {
 	err    error
 }
 
-var defaultTemps = []string{".DS_Store", "Thumbs.db", "*.swp", "*.swo", ".~*"}
+var defaultTemps = []string{".DS_Store", "Thumbs.db", "*.swp", "*.swo", ".~*", "._*"}
+
+// NSDocument safe-save containers have a precise name; arbitrary .tmp or .sb
+// user documents remain syncable. Only directory entries and their descendants
+// use this rule, never a regular file with a similar name.
+var safeSaveDirectory = regexp.MustCompile(`^.+\.sb-[0-9A-Fa-f]{8}-[A-Za-z0-9]{6}$`)
 
 func New(d Dependencies) (fs.Fs, error) {
 	if d.Store == nil {
@@ -128,6 +134,19 @@ func (f *Fs) Precision() time.Duration { return time.Nanosecond }
 func (f *Fs) Hashes() hash.Set         { return hash.NewHashSet(hash.SHA256) }
 func (f *Fs) Features() *fs.Features   { return f.features }
 func (f *Fs) LocalOnly(remote string) bool {
+	parts := strings.Split(remote, "/")
+	for i, component := range parts {
+		if !safeSaveDirectory.MatchString(component) {
+			continue
+		}
+		if i < len(parts)-1 {
+			return true
+		}
+		entry, err := f.store.EntryByRemote(context.Background(), remote)
+		if err == nil && entry.Kind == model.KindFolder {
+			return true
+		}
+	}
 	base := path.Base(remote)
 	for _, p := range f.patterns {
 		if ok, _ := path.Match(p, base); ok {

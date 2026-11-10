@@ -102,6 +102,9 @@ func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 			return err
 		}
 	}
+	if err := e.store.SupersedeUnsentPredecessors(ctx, id); err != nil {
+		return err
+	}
 	pending, err := e.store.Pending(ctx)
 	if err != nil {
 		return err

@@ -700,11 +700,17 @@ func TestRenameAbortAndFrozenTree(t *testing.T) {
 	if _, err = s.EnsureEntry(ctx, "dir/new", model.KindFile); !errors.Is(err, ErrFrozen) {
 		t.Fatal(err)
 	}
-	e, _ = stage(t, s, e, "flush")
+	e, flushed := stage(t, s, e, "flush")
 	if err = s.AbortNamespace(ctx, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.Prepare(ctx, original.ID); err != nil {
+	if _, _, err = s.Prepare(ctx, original.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("obsolete queued generation remained dispatchable: %v", err)
+	}
+	if read(t, s, original.Local) != "old" {
+		t.Fatal("coalescing lost original accepted bytes")
+	}
+	if _, _, err = s.Prepare(ctx, flushed.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.PrepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: "dir", Dst: "moved"}); !errors.Is(err, ErrBusy) {
@@ -892,14 +898,14 @@ func TestOlderConfirmationPreservesNewGenerationConflict(t *testing.T) {
 func TestPrepareCannotDispatchQueuedGenerationsOutOfOrder(t *testing.T) {
 	s, _, _ := openTest(t)
 	e, j1 := stage(t, s, entry(t, s, "a"), "first")
+	if _, _, err := s.Prepare(ctx, j1.ID); err != nil {
+		t.Fatal(err)
+	}
 	_, j2 := stage(t, s, e, "second")
 	wait, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	defer cancel()
 	if _, _, err := s.Prepare(wait, j2.ID); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("G2 jumped pending G1: %v", err)
-	}
-	if _, _, err := s.Prepare(ctx, j1.ID); err != nil {
-		t.Fatal(err)
 	}
 	jobs, err := s.Pending(ctx)
 	if err != nil || len(jobs) != 2 || jobs[0].ID != j1.ID || jobs[1].ID != j2.ID {

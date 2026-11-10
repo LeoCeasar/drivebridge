@@ -85,15 +85,8 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 			return e, j, ErrFrozen
 		}
 	}
-	// A paused/blocked preparation has not dispatched a mutation. A newer save can
-	// supersede it without claiming a cloud confirmation or losing its blob.
-	if err = each[jobRecord](tx, "jobs", func(r jobRecord) error {
-		if r.Job.EntryID == e.ID && !r.Superseded && (r.Job.State == model.StatusBlocked || r.Job.State == model.StatusPaused) && r.ResumeState == model.StatusMerging && r.Job.Plan == "" {
-			r.Superseded = true
-			return saveJob(tx, r)
-		}
-		return nil
-	}); err != nil {
+	// Only provably undispatched predecessors can be superseded by a newer save.
+	if err = supersedeUnsentBefore(tx, e.ID, e.Generation+1); err != nil {
 		return e, j, err
 	}
 	e.Generation++
@@ -107,6 +100,39 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 	err = saveJob(tx, jobRecord{Job: j})
 	return
 }
+
+// supersedeUnsentBefore retains every journal and blob. A plan, operation,
+// result, create journal, or unknown/active state forbids cancellation.
+func supersedeUnsentBefore(tx *bolt.Tx, id model.EntryID, generation uint64) error {
+	creates := map[model.JobID]bool{}
+	if err := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error { creates[op.JobID] = true; return nil }); err != nil {
+		return err
+	}
+	return each[jobRecord](tx, "jobs", func(r jobRecord) error {
+		safeState := r.Job.State == model.StatusQueued || (r.Job.State == model.StatusBlocked || r.Job.State == model.StatusPaused) && r.ResumeState == model.StatusMerging
+		if r.Job.EntryID != id || r.Job.Generation >= generation || r.Superseded || !safeState || r.Job.Plan != "" || len(r.Job.OperationIDs) != 0 || len(r.Operations) != 0 || len(r.Results) != 0 || r.Desired != "" || creates[r.Job.ID] {
+			return nil
+		}
+		r.Superseded = true
+		return saveJob(tx, r)
+	})
+}
+
+// SupersedeUnsentPredecessors recovers obsolete pre-dispatch work, including
+// queues saved by older versions. It never labels that historical work synced.
+func (s *Store) SupersedeUnsentPredecessors(ctx context.Context, id model.EntryID) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		e, err := entryTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if e.FrozenBy != "" {
+			return ErrFrozen
+		}
+		return supersedeUnsentBefore(tx, id, e.Generation)
+	})
+}
+
 func (s *Store) Stage(ctx context.Context, id model.EntryID, expected *uint64, src io.Reader) (e model.Entry, j model.Job, err error) {
 	current, err := s.Entry(ctx, id)
 	if err != nil {
