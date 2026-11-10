@@ -39,7 +39,7 @@ func (m *Manager) WithQuiescence(ctx context.Context, fn func(context.Context) e
 			_ = lock.Unlock()
 			continue
 		}
-		if err = m.Stop(ctx, mount.ID, 60*time.Second); err != nil {
+		if err = m.stopAdmitted(ctx, mount.ID, 60*time.Second); err != nil {
 			return errors.Join(ErrPending, err)
 		}
 	}

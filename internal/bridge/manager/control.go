@@ -44,17 +44,6 @@ func (m *Manager) StopAll(ctx context.Context, wait time.Duration) error {
 	}
 	var failures error
 	for _, v := range c.Mounts {
-		state, err := m.Status(ctx, v.ID)
-		if err != nil {
-			failures = errors.Join(failures, err)
-			continue
-		}
-		if !state.Running {
-			if state.Queued+state.Inflight+state.Conflicts+state.VFSPending > 0 {
-				failures = errors.Join(failures, ErrPending)
-			}
-			continue
-		}
 		failures = errors.Join(failures, m.Stop(ctx, v.ID, wait))
 	}
 	return failures
@@ -159,11 +148,28 @@ func (m *Manager) pathsMust(ctx context.Context) (string, error) {
 	return p.StateDir, err
 }
 func (m *Manager) SetAutostart(ctx context.Context, id model.MountID, enabled bool) error {
+	return m.setAutostart(ctx, id, enabled, platform.SetStartup)
+}
+func (m *Manager) setAutostart(ctx context.Context, id model.MountID, enabled bool, startup func(context.Context, platform.StartupSpec, bool) error) error {
 	release, err := m.startLease(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
+	unlock, err := m.desktopIntentLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := m.readDesktopState()
+	if err != nil {
+		return err
+	}
+	if state != nil {
+		_, err = m.desktopIntent(ctx, id, &enabled, true)
+		return err
+	}
+
 	spec, err := m.spec(ctx, id)
 	if err != nil {
 		return err
@@ -177,7 +183,7 @@ func (m *Manager) SetAutostart(ctx context.Context, id model.MountID, enabled bo
 		args = append(args, "--lark-cli", cli)
 	}
 	args = append(args, "_worker", "--mount-id", string(id))
-	if err = platform.SetStartup(ctx, platform.StartupSpec{ID: string(id), Executable: m.options.Executable, Args: args}, enabled); err != nil {
+	if err = startup(ctx, platform.StartupSpec{ID: string(id), Executable: m.options.Executable, Args: args}, enabled); err != nil {
 		return err
 	}
 	return m.updateConfig(ctx, func(c *config.Config) error {

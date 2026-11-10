@@ -259,13 +259,11 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 	return nil
 }
 func (m *Manager) Start(ctx context.Context, id model.MountID, background bool) (model.MountStatus, error) {
-	readyCtx, cancel := context.WithTimeout(ctx, m.options.ReadyTimeout)
-	defer cancel()
-	release, err := m.startLease(readyCtx)
-	if err != nil {
-		return model.MountStatus{}, err
-	}
-	defer release()
+	return m.startWithDesktopIntent(ctx, id, false)
+}
+
+// startAdmitted requires the worker-start lease and desktop operation lock.
+func (m *Manager) startAdmitted(readyCtx context.Context, id model.MountID) (model.MountStatus, error) {
 	spec, err := m.spec(readyCtx, id)
 	if err != nil {
 		return model.MountStatus{}, err
@@ -340,10 +338,7 @@ func (m *Manager) Start(ctx context.Context, id model.MountID, background bool) 
 		}
 		select {
 		case <-readyCtx.Done():
-			if ctx.Err() != nil {
-				return state, ctx.Err()
-			}
-			return state, ErrReadyTimeout
+			return state, readyCtx.Err()
 		case <-tick.C:
 		}
 	}
@@ -353,6 +348,26 @@ func (m *Manager) Stop(ctx context.Context, id model.MountID, wait time.Duration
 	if wait < 0 {
 		return ErrConfig
 	}
+	release, err := m.startLease(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	unlock, err := m.desktopIntentLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	disabled := false
+	if _, err = m.desktopIntent(ctx, id, &disabled, false); err != nil {
+		return err
+	}
+	return m.stopAdmitted(ctx, id, wait)
+}
+
+// stopAdmitted performs a safe maintenance stop without changing user intent.
+// Its caller already holds lifecycle admission, which must not be re-entered.
+func (m *Manager) stopAdmitted(ctx context.Context, id model.MountID, wait time.Duration) error {
 	var out struct{}
 	err := m.call(ctx, id, "/stop", map[string]int64{"wait_ns": int64(wait)}, &out)
 	if err != nil && !errors.Is(err, ErrUnavailable) && !os.IsNotExist(err) {

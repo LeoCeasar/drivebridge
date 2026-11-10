@@ -31,6 +31,15 @@ func (m *Manager) WithInstallationLease(ctx context.Context, fn func() error) er
 		return err
 	}
 	defer release()
+
+	// Stop desktop recovery and wait for UI/tray teardown before taking config
+	// locks or replacing files. Retain singleton ownership through replacement.
+	releaseDesktop, err := m.installationDesktopLease(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseDesktop()
+
 	releases := []func(){}
 	defer func() {
 		for i := len(releases) - 1; i >= 0; i-- {
