@@ -28,6 +28,23 @@ func TestCLIProcess(t *testing.T) {
 	}
 	emit := func(data string) { fmt.Print(`{"ok":true,"identity":"user","data":` + data + `}`) }
 	switch scenario {
+	case "logout", "logout-not-logged", "logout-malformed", "logout-partial":
+		if strings.Join(args, " ") != "auth logout --json" {
+			os.Exit(99)
+		}
+		switch scenario {
+		case "logout":
+			fmt.Print(`{"ok":true,"loggedOut":true}`)
+		case "logout-not-logged":
+			fmt.Print(`{"ok":true,"loggedOut":false,"reason":"not_logged_in"}`)
+		case "logout-malformed":
+			fmt.Print(`{"ok":true}`)
+		case "logout-partial":
+			fmt.Print(`{"ok":true,"loggedOut":true}`)
+			fmt.Fprint(os.Stderr, "SECRET")
+			os.Exit(1)
+		}
+
 	case "config-metadata":
 		fmt.Print(`{"appId":"cli_app","brand":"feishu","appSecret":"SECRET"}`)
 	case "identity-metadata":

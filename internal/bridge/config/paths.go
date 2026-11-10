@@ -74,6 +74,12 @@ func validAuthRef(ref string) bool {
 	parts := strings.Split(ref, "/")
 	return len(parts) == 4 && parts[0] == "auth" && parts[1] == "identities" && validUUID(parts[2]) && parts[3] == "lark"
 }
+
+// ResolveAuthRoot resolves the legacy state-local registry only. New managed
+// workers MUST use auth.Service.Resolve, whose OS-user domain is independent of
+// StateDir and unifies cross-config credential locks/references. This legacy
+// helper does not enroll or migrate credentials and is not a production binding.
+// Deprecated: use auth.Service.Resolve for managed profiles.
 func ResolveAuthRoot(p Paths, r model.IdentityRegistry, profile model.Profile) (string, error) {
 	if err := p.validate(); err != nil {
 		return "", err
