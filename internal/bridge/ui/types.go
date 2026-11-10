@@ -26,6 +26,7 @@ type MountView struct {
 	State      model.MountStatus `json:"state"`
 }
 type ConfigView struct {
+	Platform   string        `json:"platform"`
 	CanRecover bool          `json:"can_recover"`
 	Profiles   []ProfileView `json:"profiles"`
 	Remotes    []RemoteView  `json:"remotes"`
@@ -43,13 +44,14 @@ type StatusView struct {
 	Conflicts     []ConflictSummary `json:"conflicts"`
 }
 type ConfigRequest struct {
-	Action      string          `json:"action"`
-	Name        string          `json:"name"`
-	Brand       string          `json:"brand,omitempty"`
-	ProfileID   model.ProfileID `json:"profile_id,omitempty"`
-	RemoteID    model.RemoteID  `json:"remote_id,omitempty"`
-	FolderToken string          `json:"folder_token,omitempty"`
-	Mountpoint  string          `json:"mountpoint,omitempty"`
+	Action       string          `json:"action"`
+	Name         string          `json:"name"`
+	Brand        string          `json:"brand,omitempty"`
+	ProfileID    model.ProfileID `json:"profile_id,omitempty"`
+	RemoteID     model.RemoteID  `json:"remote_id,omitempty"`
+	FolderToken  string          `json:"folder_token,omitempty"`
+	Mountpoint   string          `json:"mountpoint,omitempty"`
+	MacOSBackend string          `json:"macos_backend,omitempty"`
 }
 type ConflictInputs struct {
 	Conflict                   model.Conflict

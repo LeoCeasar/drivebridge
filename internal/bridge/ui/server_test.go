@@ -29,6 +29,7 @@ type fakeBackend struct {
 	draftFile                    string
 	resolveErr                   error
 	authCompleteErr              error
+	lastConfig                   ConfigRequest
 	resolves, starts, configured int
 }
 
@@ -42,7 +43,22 @@ func (b *fakeBackend) Configure(_ context.Context, r ConfigRequest) (ConfigView,
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.configured++
+	b.lastConfig = r
 	return ConfigView{Profiles: []ProfileView{{Name: r.Name, Brand: r.Brand}}}, nil
+}
+func TestMountConfigurationAcceptsExplicitMacOSBackend(t *testing.T) {
+	h, b, c, csrf, _ := fixture(t)
+	res := request(t, c, h, "POST", "/api/config", map[string]string{"action": "mount", "name": "FSKit test", "remote_id": uuid.NewString(), "mountpoint": "/tmp/bridge-test", "macos_backend": "fskit"}, csrf, h.URL())
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatal(res.Status)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	raw, err := json.Marshal(b.lastConfig)
+	if err != nil || !bytes.Contains(raw, []byte(`"macos_backend":"fskit"`)) {
+		t.Fatalf("explicit backend did not reach configuration adapter: %s, %v", raw, err)
+	}
 }
 func (b *fakeBackend) AuthStart(context.Context, model.ProfileID) (auth.AuthFlow, error) {
 	b.mu.Lock()

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"runtime"
 	"time"
 
 	"github.com/rclone/rclone/internal/bridge/auth"
@@ -26,7 +27,7 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		return ConfigView{}, err
 	}
 	_, canRecover := any(b.manager).(auth.RecoveryGuard)
-	v := ConfigView{CanRecover: canRecover, Profiles: []ProfileView{}, Remotes: []RemoteView{}, Mounts: []MountView{}}
+	v := ConfigView{Platform: runtime.GOOS, CanRecover: canRecover, Profiles: []ProfileView{}, Remotes: []RemoteView{}, Mounts: []MountView{}}
 	for _, p := range c.Profiles {
 		v.Profiles = append(v.Profiles, ProfileView{ID: p.ID, Name: p.Name, Brand: p.Brand, Authorized: p.AuthRef != "" && p.IdentityHash != ""})
 	}
@@ -72,6 +73,7 @@ func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (Config
 		mount.Name = r.Name
 		mount.RemoteID = r.RemoteID
 		mount.Mountpoint = r.Mountpoint
+		mount.MacOSBackend = r.MacOSBackend
 		_, err = b.manager.AddMount(ctx, mount)
 	default:
 		return ConfigView{}, errors.New("unknown configuration action")
