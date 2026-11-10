@@ -13,7 +13,12 @@ import (
 	"github.com/rclone/rclone/lib/larkcli"
 )
 
-const CLIRevision = "1bfdcc2c1a0ed0296ddb6349d251bdd75145bc5a"
+// CLIRevision is the VCS revision embedded by the verified official 1.0.99 binaries.
+const CLIRevision = "8d8357d39dd15ac5e9aa815d4ab2639d56bd3239"
+
+// InspectedSourceRevision is the later checkout used during initial source review.
+// Drive/Docx/auth/runtime contracts are unchanged between these two revisions.
+const InspectedSourceRevision = "1bfdcc2c1a0ed0296ddb6349d251bdd75145bc5a"
 const ShortcutXMLRoute = "docs_shortcut_xml"
 
 var ErrUnsupportedBatch = errors.New("unsupported_batch")
@@ -28,11 +33,13 @@ type CapabilityGrant struct {
 	Verified          bool
 }
 type Options struct {
+	CheckMutation func(context.Context) error
 	CheckIdentity func(context.Context) error
 	TempDir       string
 	Capabilities  []CapabilityGrant
 }
 type Client struct {
+	checkMutation func(context.Context) error
 	checkIdentity func(context.Context) error
 	drive         *larkcli.Drive
 	docs          *larkcli.Docx
@@ -43,7 +50,7 @@ func New(r *larkcli.Runner, o Options) (*Client, error) {
 	if _, ok := r.ManagedIdentity(); !ok {
 		return nil, model.ErrIdentityChanged
 	}
-	return &Client{checkIdentity: o.CheckIdentity, drive: larkcli.NewDrive(r, o.TempDir), docs: larkcli.NewDocx(r), capabilities: append([]CapabilityGrant(nil), o.Capabilities...)}, nil
+	return &Client{checkMutation: o.CheckMutation, checkIdentity: o.CheckIdentity, drive: larkcli.NewDrive(r, o.TempDir), docs: larkcli.NewDocx(r), capabilities: append([]CapabilityGrant(nil), o.Capabilities...)}, nil
 }
 
 type FileMeta struct {
@@ -131,7 +138,7 @@ func (c *Client) FetchDoc(ctx context.Context, token, revision string) (Document
 	return convertDoc(d), canonicalError(err)
 }
 func (c *Client) CreateDoc(ctx context.Context, parent, title string, xml []byte) (Document, error) {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return Document{}, err
 	}
 	d, err := c.docs.Create(ctx, parent, title, xml)
@@ -173,7 +180,7 @@ func (c *Client) ApplyDoc(ctx context.Context, token, revision string, ops []mod
 	if op.Kind == model.OperationBlockInsertAfter {
 		block = op.AfterBlockID
 	}
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return ApplyResult{}, err
 	}
 	r, err := c.docs.Apply(ctx, token, revision, larkcli.DocMutation{Kind: op.Kind, BlockID: block, XML: payload.XML})
@@ -194,33 +201,33 @@ func (c *Client) List(ctx context.Context, parent string) ([]larkcli.DriveItem, 
 	return items, canonicalError(err)
 }
 func (c *Client) UploadFile(ctx context.Context, parent, token, name string, in io.Reader) (larkcli.UploadResult, error) {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return larkcli.UploadResult{}, err
 	}
 	r, err := c.drive.Upload(ctx, parent, token, name, in)
 	return r, canonicalError(err)
 }
 func (c *Client) CreateFolder(ctx context.Context, parent, name string) (string, error) {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return "", err
 	}
 	token, err := c.drive.CreateFolder(ctx, parent, name)
 	return token, canonicalError(err)
 }
 func (c *Client) RenameFile(ctx context.Context, token, name string) error {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return err
 	}
 	return canonicalError(c.drive.Rename(ctx, token, "file", name))
 }
 func (c *Client) MoveFile(ctx context.Context, token, parent string) error {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return err
 	}
 	return canonicalError(c.drive.Move(ctx, token, "file", parent))
 }
 func (c *Client) DeleteFile(ctx context.Context, token string) error {
-	if err := c.check(ctx); err != nil {
+	if err := c.guardMutation(ctx); err != nil {
 		return err
 	}
 	return canonicalError(c.drive.Delete(ctx, token, "file"))
@@ -233,6 +240,18 @@ var ErrNotDispatched = errors.New("managed RPC rejected before dispatch")
 func (c *Client) check(ctx context.Context) error {
 	if c.checkIdentity != nil {
 		if err := c.checkIdentity(ctx); err != nil {
+			return errors.Join(ErrNotDispatched, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) guardMutation(ctx context.Context) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
+	if c.checkMutation != nil {
+		if err := c.checkMutation(ctx); err != nil {
 			return errors.Join(ErrNotDispatched, err)
 		}
 	}

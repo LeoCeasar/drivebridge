@@ -3,6 +3,7 @@ package cloud
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -38,6 +39,22 @@ func TestIdentityPreflightBlocksRPCBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = c.CreateDoc(context.Background(), "folder", "title", nil); !errors.Is(err, ErrNotDispatched) {
+		t.Fatal(err)
+	}
+}
+
+func TestMutationGateLeavesReadCapabilitiesAvailable(t *testing.T) {
+	c, err := New(managed(t, "must-not-run"), Options{CheckMutation: func(context.Context) error { return model.ErrUnsupportedContent }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.FileMeta(context.Background(), "token"); errors.Is(err, ErrNotDispatched) {
+		t.Fatal("read route blocked by mutation capability")
+	}
+	if _, err = c.UploadFile(context.Background(), "folder", "token", "name", strings.NewReader("bytes")); !errors.Is(err, ErrNotDispatched) || !errors.Is(err, model.ErrUnsupportedContent) {
+		t.Fatal(err)
+	}
+	if err = c.Delete(context.Background(), "token", model.KindFile); !errors.Is(err, ErrNotDispatched) {
 		t.Fatal(err)
 	}
 }

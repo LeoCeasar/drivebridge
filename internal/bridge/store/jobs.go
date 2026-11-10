@@ -15,14 +15,16 @@ import (
 )
 
 type jobRecord struct {
-	ErrorCode   string                  `json:"error_code,omitempty"`
-	ResumeState model.Status            `json:"resume_state,omitempty"`
-	Superseded  bool                    `json:"superseded,omitempty"`
-	Job         model.Job               `json:"job"`
-	Operations  []model.Operation       `json:"operations,omitempty"`
-	Results     map[int]json.RawMessage `json:"results,omitempty"`
-	Desired     model.BlobID            `json:"desired,omitempty"`
-	CompletedAt time.Time               `json:"completed_at,omitempty"`
+	PreparationRestart bool                    `json:"preparation_restart,omitempty"`
+	HumanResolution    bool                    `json:"human_resolution,omitempty"`
+	ErrorCode          string                  `json:"error_code,omitempty"`
+	ResumeState        model.Status            `json:"resume_state,omitempty"`
+	Superseded         bool                    `json:"superseded,omitempty"`
+	Job                model.Job               `json:"job"`
+	Operations         []model.Operation       `json:"operations,omitempty"`
+	Results            map[int]json.RawMessage `json:"results,omitempty"`
+	Desired            model.BlobID            `json:"desired,omitempty"`
+	CompletedAt        time.Time               `json:"completed_at,omitempty"`
 }
 
 func jobTx(tx *bolt.Tx, id model.JobID) (j jobRecord, err error) {
@@ -83,10 +85,10 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 			return e, j, ErrFrozen
 		}
 	}
-	// An empty-file capability block happened before dispatch. A newer save can
+	// A paused/blocked preparation has not dispatched a mutation. A newer save can
 	// supersede it without claiming a cloud confirmation or losing its blob.
 	if err = each[jobRecord](tx, "jobs", func(r jobRecord) error {
-		if r.Job.EntryID == e.ID && r.Job.State == model.StatusBlocked && r.ErrorCode == "empty_file_unsupported" && r.Job.Plan == "" {
+		if r.Job.EntryID == e.ID && !r.Superseded && (r.Job.State == model.StatusBlocked || r.Job.State == model.StatusPaused) && r.ResumeState == model.StatusMerging && r.Job.Plan == "" {
 			r.Superseded = true
 			return saveJob(tx, r)
 		}
@@ -228,9 +230,10 @@ func (s *Store) RecordPlan(ctx context.Context, id model.JobID, ops []model.Oper
 		if err != nil {
 			return err
 		}
-		if r.Job.State != model.StatusMerging {
+		if r.Job.State != model.StatusMerging && !(r.Job.State == model.StatusAwaitingVerification && r.PreparationRestart && r.Job.Plan == "") {
 			return ErrInvalidState
 		}
+		r.PreparationRestart = false
 		r.Operations = ops
 		r.Job.OperationIDs = nil
 		for _, op := range ops {
@@ -307,7 +310,9 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
-	ErrorCode string
+	PreparationRestart bool
+	HumanResolution    bool
+	ErrorCode          string
 
 	Job        model.Job
 	Operations []model.Operation
@@ -318,7 +323,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
+		j = JobJournal{PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return
@@ -498,6 +503,18 @@ func (s *Store) CommitPublication(ctx context.Context, c model.PublishCandidate)
 func recoverInterrupted(tx *bolt.Tx) error {
 	if err := each[jobRecord](tx, "jobs", func(r jobRecord) error {
 		if active(r.Job.State) {
+			if r.Job.State == model.StatusMerging && r.Job.Plan == "" {
+				hasCreate := false
+				if err := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
+					if op.JobID == r.Job.ID && op.State != "finished" && op.State != "not_dispatched" {
+						hasCreate = true
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+				r.PreparationRestart = !hasCreate
+			}
 			r.Job.State = model.StatusAwaitingVerification
 			if err := saveJob(tx, r); err != nil {
 				return err

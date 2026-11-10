@@ -766,3 +766,127 @@ func TestRejectedCreateCanSafelyRetryWithoutUnknownResource(t *testing.T) {
 		t.Fatal(c.creates)
 	}
 }
+
+func TestRefreshConflictUpdatesInputsAndKeepsDraft(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindDocx)
+	entry = stageContent(t, s, entry, "alpha local\n\nbeta two\n")
+	c.xml = strings.Replace(c.xml, "alpha one", "alpha remote", 1)
+	c.revision++
+	if err := e.SyncEntry(bg, entry.ID); err == nil {
+		t.Fatal("overlap accepted")
+	}
+	conflicts, _ := s.Conflicts(bg)
+	if len(conflicts) != 1 {
+		t.Fatal(conflicts)
+	}
+	before := conflicts[0]
+	if err := s.SaveDraft(bg, before.ID, strings.NewReader("unfinished user draft")); err != nil {
+		t.Fatal(err)
+	}
+	entry = stageContent(t, s, entry, "alpha local newer\n\nbeta two\n")
+	c.xml = strings.Replace(c.xml, "alpha remote", "alpha remote newer", 1)
+	c.revision++
+	refreshed, err := e.RefreshConflict(bg, before.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Generation != entry.Generation || refreshed.RemoteRevision != strconv.Itoa(c.revision) || blobText(t, s, refreshed.Draft) != "unfinished user draft" || !strings.Contains(blobText(t, s, refreshed.Local), "local newer") {
+		t.Fatal(refreshed)
+	}
+	if _, _, err = e.Resolve(bg, model.ResolveRequest{ConflictID: before.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: refreshed.RemoteRevision, Content: []byte("alpha final\n\nbeta two\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewSaveSupersedesUnsentUnsupportedContent(t *testing.T) {
+	s, e, c, _ := setup(t, model.KindDocx)
+	entry, err := s.EnsureEntry(bg, "new.md", model.KindDocx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry = stageContent(t, s, entry, "<div>unsupported raw HTML</div>\n")
+	if err = e.SyncEntry(bg, entry.ID); err == nil {
+		t.Fatal("unsupported content accepted")
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusBlocked {
+		t.Fatal(current)
+	}
+	entry = stageContent(t, s, current, "supported body\n")
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = s.Entry(bg, entry.ID)
+	if current.Status != model.StatusSynced || c.creates != 1 {
+		t.Fatal(current, c.creates)
+	}
+}
+
+func TestExplicitManualResolutionCanReplaceAmbiguousSupportedBody(t *testing.T) {
+	s, e, _, entry := setup(t, model.KindDocx)
+	entry = stageContent(t, s, entry, "replacement\n")
+	if err := e.SyncEntry(bg, entry.ID); err == nil {
+		t.Fatal("ambiguous automatic replacement accepted")
+	}
+	conflicts, _ := s.Conflicts(bg)
+	if len(conflicts) != 1 {
+		t.Fatal(conflicts)
+	}
+	conflict := conflicts[0]
+	if _, _, err := e.Resolve(bg, model.ResolveRequest{ConflictID: conflict.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: conflict.RemoteRevision, Content: []byte("replacement\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.Entry(bg, entry.ID)
+	if current.Status != model.StatusSynced || current.Token != entry.Token || blobText(t, s, current.Visible) != "replacement\n" {
+		t.Fatal(current)
+	}
+}
+
+func TestRestartDuringReadPreparationDoesNotInventMutation(t *testing.T) {
+	for _, kind := range []model.Kind{model.KindDocx, model.KindFile} {
+		t.Run(string(kind), func(t *testing.T) {
+			s, _, c, entry := setup(t, kind)
+			local := "bytes"
+			if kind == model.KindDocx {
+				local = "alpha changed\n\nbeta two\n"
+			}
+			entry = stageContent(t, s, entry, local)
+			pending, _ := s.Pending(bg)
+			if _, _, err := s.Prepare(bg, pending[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			scope, _ := s.Scope(bg)
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := store.Open(c.directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			if err = reopened.BindScope(bg, scope); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := New(Dependencies{Store: reopened, Source: c, Publisher: PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
+				_, err := reopened.CommitPublication(ctx, c)
+				return err
+			})}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = restored.SyncEntry(bg, entry.ID); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := reopened.Entry(bg, entry.ID)
+			if got.Status != model.StatusSynced || c.writes != 1 {
+				t.Fatal(got, c.writes)
+			}
+		})
+	}
+}

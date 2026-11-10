@@ -7,12 +7,17 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 )
 
 func classify(err error) string {
+	var content *markdown.ContentError
+	if errors.As(err, &content) {
+		return "unsupported_content"
+	}
 	switch {
 	case errors.Is(err, model.ErrIdentityChanged):
 		return "identity_changed"

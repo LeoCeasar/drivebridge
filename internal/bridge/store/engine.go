@@ -88,6 +88,10 @@ func (s *Store) PauseJob(ctx context.Context, id model.JobID, state model.Status
 		if err != nil {
 			return err
 		}
+		if r.Job.State == model.StatusAwaitingVerification && r.PreparationRestart {
+			r.Job.State = model.StatusMerging
+			r.PreparationRestart = false
+		}
 		if r.Job.State == model.StatusAwaitingVerification {
 			return model.ErrUnknownResult
 		}

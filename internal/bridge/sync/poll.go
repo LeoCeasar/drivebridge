@@ -53,6 +53,17 @@ func (e *Engine) cycle(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	pendingIDs := map[model.JobID]bool{}
+	for _, j := range jobs {
+		pendingIDs[j.ID] = true
+	}
+	e.retryMu.Lock()
+	for id := range e.retries {
+		if !pendingIDs[id] {
+			delete(e.retries, id)
+		}
+	}
+	e.retryMu.Unlock()
 	ids := map[model.EntryID]bool{}
 	for _, j := range jobs {
 		ids[j.EntryID] = true

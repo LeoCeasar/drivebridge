@@ -14,6 +14,9 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err != nil {
 		return e.pause(ctx, j, err)
 	}
+	if err = e.store.ProtectBackup(ctx, j.ID, actual.ID); err != nil {
+		return e.pause(ctx, j, err)
+	}
 	if actual.FileData == j.Local {
 		return e.confirm(ctx, j, actual)
 	}
@@ -27,7 +30,7 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err != nil {
 		return err
 	}
-	if j.State == model.StatusAwaitingVerification || j.State == model.StatusUploading || journal.Job.Plan != "" {
+	if (j.State == model.StatusAwaitingVerification && !journal.PreparationRestart) || j.State == model.StatusUploading || journal.Job.Plan != "" {
 		_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		return model.ErrUnknownResult
 	}
@@ -56,6 +59,9 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err != nil {
 		_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		return errors.Join(uploadErr, closeErr, err)
+	}
+	if err = e.store.ProtectBackup(ctx, j.ID, readback.ID); err != nil {
+		return err
 	}
 	if readback.FileData != j.Local {
 		_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)

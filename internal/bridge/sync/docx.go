@@ -100,6 +100,9 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			return e.pause(ctx, j, err)
 		}
 		merge, err := markdown.PlanStep(base, local, current)
+		if journal.HumanResolution {
+			merge, err = markdown.PlanResolvedStep(base, local, current)
+		}
 		if err != nil {
 			return e.pause(ctx, j, err)
 		}

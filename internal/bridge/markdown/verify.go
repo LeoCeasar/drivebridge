@@ -28,7 +28,7 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 	position := index
 	switch op.Kind {
 	case model.OperationBlockReplace, model.OperationBlockDelete:
-		if index < 0 || p.BeforeHash == "" || before.Blocks[index].Hash != p.BeforeHash || countHash(before.Blocks, p.BeforeHash) != 1 {
+		if index < 0 || p.BeforeHash == "" || before.Blocks[index].Hash != p.BeforeHash || (!p.ExplicitResolution && countHash(before.Blocks, p.BeforeHash) != 1) {
 			return unknown
 		}
 	case model.OperationBlockInsertAfter:
@@ -62,7 +62,7 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 		oldID = before.Blocks[index].RemoteID
 	}
 	if op.Kind != model.OperationBlockDelete {
-		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || countHash(after.Blocks, p.AfterHash) != 1 {
+		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || (!p.ExplicitResolution && countHash(after.Blocks, p.AfterHash) != 1) {
 			return unknown
 		}
 		newID = after.Blocks[position].RemoteID

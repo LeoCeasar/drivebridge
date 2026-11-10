@@ -124,6 +124,16 @@ func (s *Store) resolve(ctx context.Context, r model.ResolveRequest, remote *mod
 		if er != nil {
 			return er
 		}
+		if remote != nil {
+			rec, err := jobTx(tx, j.ID)
+			if err != nil {
+				return err
+			}
+			rec.HumanResolution = true
+			if err = saveJob(tx, rec); err != nil {
+				return err
+			}
+		}
 		c.Resolved = true
 		return put(tx, "conflicts", string(c.ID), c)
 	})

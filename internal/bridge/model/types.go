@@ -293,7 +293,8 @@ const (
 
 // OperationPayload hashes semantic content without remote IDs. Delete has empty XML.
 type OperationPayload struct {
-	XML        string `json:"xml,omitempty"`
-	BeforeHash string `json:"before_hash,omitempty"`
-	AfterHash  string `json:"after_hash,omitempty"`
+	ExplicitResolution bool   `json:"explicit_resolution,omitempty"`
+	XML                string `json:"xml,omitempty"`
+	BeforeHash         string `json:"before_hash,omitempty"`
+	AfterHash          string `json:"after_hash,omitempty"`
 }
