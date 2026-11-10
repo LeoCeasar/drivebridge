@@ -258,6 +258,15 @@ func (f *Fs) remove(ctx context.Context, remote string, folder bool) error {
 			return fs.ErrorDirectoryNotEmpty
 		}
 	}
+	if !folder {
+		cancelled, err := f.store.CancelUnsentLocalFile(ctx, e.ID, e.Generation)
+		if err != nil {
+			return err
+		}
+		if cancelled {
+			return nil
+		}
+	}
 	jobs, err := f.store.Pending(ctx)
 	if err != nil {
 		return err

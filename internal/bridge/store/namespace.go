@@ -22,6 +22,7 @@ type namespaceRecord struct {
 	Op             model.NamespaceOp        `json:"op"`
 	Before         []model.Entry            `json:"before"`
 	Sealed         map[model.EntryID]uint64 `json:"sealed,omitempty"`
+	LocalCancel    bool                     `json:"local_cancel,omitempty"`
 	ActionPending  bool                     `json:"action_pending,omitempty"`
 	ResultKind     model.Kind               `json:"result_kind,omitempty"`
 }

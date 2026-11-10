@@ -15,6 +15,14 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 		return out, errors.New("invalid creation target")
 	}
 	err = s.update(ctx, func(tx *bolt.Tx) error {
+		j, er := jobTx(tx, jobID)
+		if er != nil {
+			return er
+		}
+		e, er := liveJobEntry(tx, j)
+		if er != nil {
+			return er
+		}
 		found := false
 		if er := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
 			if op.JobID == jobID && op.State != "not_dispatched" {
@@ -30,14 +38,6 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 				return ErrInvalidState
 			}
 			return nil
-		}
-		j, er := jobTx(tx, jobID)
-		if er != nil {
-			return er
-		}
-		e, er := entryTx(tx, j.Job.EntryID)
-		if er != nil {
-			return er
 		}
 		if e.FrozenBy != "" {
 			return ErrFrozen

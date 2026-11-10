@@ -8,6 +8,7 @@ import (
 )
 
 type NamespaceWork struct {
+	LocalCancel   bool
 	TemporaryName string
 
 	Op         model.NamespaceOp
@@ -23,7 +24,7 @@ func (s *Store) NamespaceJournal(ctx context.Context, id string) (out NamespaceW
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		out = NamespaceWork{TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
+		out = NamespaceWork{LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
 		return nil
 	})
 	return

@@ -101,6 +101,33 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 	return
 }
 
+// unsentJob checks journal-local evidence; callers must separately exclude any
+// create journal before treating it as proof that no mutation was dispatched.
+func unsentJob(r jobRecord) bool {
+	safeState := r.Job.State == model.StatusQueued || (r.Job.State == model.StatusBlocked || r.Job.State == model.StatusPaused) && r.ResumeState == model.StatusMerging
+	return safeState && r.Job.Plan == "" && len(r.Job.OperationIDs) == 0 && len(r.Operations) == 0 && len(r.Results) == 0 && r.Desired == ""
+}
+
+// liveJobEntry is checked in the same write transaction that claims dispatch.
+// A previously read job cannot be revived after local cancellation.
+func liveJobEntry(tx *bolt.Tx, r jobRecord) (model.Entry, error) {
+	if r.Superseded {
+		return model.Entry{}, ErrNotFound
+	}
+	e, err := entryTx(tx, r.Job.EntryID)
+	if err != nil {
+		return e, err
+	}
+	var metadata Metadata
+	if err = get(tx, "metadata", string(e.ID), &metadata); err != nil {
+		return e, err
+	}
+	if metadata.Tombstone {
+		return e, ErrNotFound
+	}
+	return e, nil
+}
+
 // supersedeUnsentBefore retains every journal and blob. A plan, operation,
 // result, create journal, or unknown/active state forbids cancellation.
 func supersedeUnsentBefore(tx *bolt.Tx, id model.EntryID, generation uint64) error {
@@ -109,8 +136,7 @@ func supersedeUnsentBefore(tx *bolt.Tx, id model.EntryID, generation uint64) err
 		return err
 	}
 	return each[jobRecord](tx, "jobs", func(r jobRecord) error {
-		safeState := r.Job.State == model.StatusQueued || (r.Job.State == model.StatusBlocked || r.Job.State == model.StatusPaused) && r.ResumeState == model.StatusMerging
-		if r.Job.EntryID != id || r.Job.Generation >= generation || r.Superseded || !safeState || r.Job.Plan != "" || len(r.Job.OperationIDs) != 0 || len(r.Operations) != 0 || len(r.Results) != 0 || r.Desired != "" || creates[r.Job.ID] {
+		if r.Job.EntryID != id || r.Job.Generation >= generation || r.Superseded || !unsentJob(r) || creates[r.Job.ID] {
 			return nil
 		}
 		r.Superseded = true
@@ -256,6 +282,10 @@ func (s *Store) RecordPlan(ctx context.Context, id model.JobID, ops []model.Oper
 		if err != nil {
 			return err
 		}
+		e, err := liveJobEntry(tx, r)
+		if err != nil {
+			return err
+		}
 		if r.Job.State != model.StatusMerging && !(r.Job.State == model.StatusAwaitingVerification && r.PreparationRestart && r.Job.Plan == "") {
 			return ErrInvalidState
 		}
@@ -268,10 +298,6 @@ func (s *Store) RecordPlan(ctx context.Context, id model.JobID, ops []model.Oper
 		r.Job.Plan = b
 		r.Desired = desired
 		r.Job.State = model.StatusUploading
-		e, err := entryTx(tx, r.Job.EntryID)
-		if err != nil {
-			return err
-		}
 		if e.Generation == r.Job.Generation {
 			e.Desired = desired
 			e.Status = model.StatusUploading
