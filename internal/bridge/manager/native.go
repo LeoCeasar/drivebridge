@@ -238,7 +238,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			return err
 		}
 		return v.TryExternalUpdate(ctx, entry.Remote, func() (fs.Object, error) { return overlayFS.Publish(ctx, c) })
-	}), ShouldSync: overlayFS.ShouldSync, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries, RefreshDirectories: overlayFS.RefreshDirectories}, syncer.Options{PollInterval: poll, DirectoryInterval: dirs})
+	}), ShouldSync: overlayFS.ShouldSync, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries, RefreshDirectories: overlayFS.RefreshDirectories}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
 	if err != nil {
 		native.Unmount()
 		return nil, err
