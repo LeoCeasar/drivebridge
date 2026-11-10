@@ -44,7 +44,11 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err != nil {
 		return e.pause(ctx, j, err)
 	}
-	_, uploadErr := e.source.UploadFile(ctx, "", en.Token, path.Base(en.Remote), reader)
+	name := en.CloudName
+	if name == "" {
+		name = path.Base(en.Remote)
+	}
+	_, uploadErr := e.source.UploadFile(ctx, "", en.Token, name, reader)
 	closeErr := reader.Close()
 	if errors.Is(uploadErr, cloud.ErrNotDispatched) {
 		if err = e.store.ResetUndispatched(ctx, j.ID); err != nil {

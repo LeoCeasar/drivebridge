@@ -157,6 +157,9 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 			return err
 		}
 	}
+	if err = e.store.RecordCloudName(ctx, en.ID, en.Token, desired); err != nil {
+		return err
+	}
 	return e.store.AcknowledgeNamespaceAction(ctx, op.ID)
 }
 func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, en model.Entry, step string) error {
@@ -164,6 +167,15 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 		return model.ErrUnknownResult
 	}
 	if !work.Completed[step] {
+		if en.Kind == model.KindFolder {
+			children, err := e.source.List(ctx, en.Token)
+			if err != nil {
+				return err
+			}
+			if len(children) > 0 {
+				return store.ErrBusy
+			}
+		}
 		// Preserve newly acquired remote bytes before a destructive request.
 		if en.Kind == model.KindFile {
 			sn, err := e.observeFile(ctx, en.Token)
@@ -315,6 +327,9 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 		if err = e.store.ConfirmNamespaceStep(ctx, work.Op.ID, "rename"); err != nil {
 			return err
 		}
+	}
+	if err = e.store.RecordCloudName(ctx, en.ID, en.Token, path.Base(en.Remote)); err != nil {
+		return err
 	}
 	return e.store.AcknowledgeNamespaceAction(ctx, work.Op.ID)
 }

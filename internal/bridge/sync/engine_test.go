@@ -30,6 +30,7 @@ import (
 var bg = context.Background()
 
 type fixtureCloud struct {
+	uploadedName    string
 	guardDenied     bool
 	directory       string
 	deletes         int
@@ -147,6 +148,7 @@ func (f *fixtureCloud) UploadFile(_ context.Context, parent, token, name string,
 		return larkcli.UploadResult{}, errors.Join(cloud.ErrNotDispatched, model.ErrIdentityChanged)
 	}
 	f.writes++
+	f.uploadedName = name
 	f.file, _ = io.ReadAll(in)
 	if token == "" {
 		token = "created-file"
@@ -888,5 +890,47 @@ func TestRestartDuringReadPreparationDoesNotInventMutation(t *testing.T) {
 				t.Fatal(got, c.writes)
 			}
 		})
+	}
+}
+
+func TestFileOverwriteKeepsObservedCloudName(t *testing.T) {
+	s, e, c, entry := setup(t, model.KindFile)
+	entry, err := s.ObserveEntry(bg, store.Observation{Remote: entry.Remote, Kind: entry.Kind, Token: entry.Token, CloudName: "remote:literal%.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry = stageContent(t, s, entry, "updated bytes")
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c.uploadedName != "remote:literal%.md" {
+		t.Fatal("local display name leaked into cloud overwrite", c.uploadedName)
+	}
+}
+func TestCloudFolderGainingChildIsNotRecursivelyDeleted(t *testing.T) {
+	s, e, c, _ := setup(t, model.KindFile)
+	folder, err := s.ObserveEntry(bg, store.Observation{Remote: "folder", Kind: model.KindFolder, Token: "folder-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.PrepareNamespace(bg, model.NamespaceOp{Kind: "delete", Src: folder.Remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SealNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CommitNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishNamespace(bg, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	c.items = []larkcli.DriveItem{{Token: "new-sheet", Name: "new child", Type: "sheet", ParentToken: folder.Token}}
+	if err = e.syncNamespace(bg); !errors.Is(err, store.ErrBusy) {
+		t.Fatal(err)
+	}
+	if c.deletes != 0 {
+		t.Fatal("nonempty cloud folder deleted", c.deletes)
 	}
 }
