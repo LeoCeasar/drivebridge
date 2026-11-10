@@ -35,8 +35,8 @@ jobs:
           python-version: '3.12'
       - run: python3 -m unittest discover -s packaging/drivebridge/tests
       - run: bash -n packaging/drivebridge/*.sh
-      - run: go test ./lib/larkcli ./backend/feishu ./cmd/feishu ./internal/bridge/... ./vfs/... -count=1
-      - run: go test -race ./lib/larkcli ./cmd/feishu ./internal/bridge/... ./vfs/... -count=1
+      - run: go test ./lib/larkcli ./backend/feishu ./cmd/feishu ./cmd/desktop ./internal/bridge/... ./vfs/... -count=1
+      - run: go test -race ./lib/larkcli ./cmd/feishu ./cmd/desktop ./internal/bridge/... ./vfs/... -count=1
       - name: Reject a release request without native gates
         if: inputs.release && !inputs.native
         run: echo 'NOT VERIFIED - release requires all native runners'; exit 1
