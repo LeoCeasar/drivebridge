@@ -23,30 +23,43 @@ if ! $DB_UNSIGNED; then
   [ -n "${DRIVEBRIDGE_NOTARY_PROFILE:-}" ] || fail 'notarytool keychain profile required'
 fi
 prepare_work
+if ! $DB_UNSIGNED; then
+  # Hash the official bytes before any mutation, sign that exact file, then bind both
+  # hashes into our executable. Runtime never reads capability grants from a manifest.
+  DB_CLI_UPSTREAM="$(python3 "$DB_HERE/package.py" prepare-cli --platform darwin --arch "$DB_ARCH" --archive "$DB_LARK_ARCHIVE" --output "$DB_WORK/signed-lark-cli")"
+  codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_WORK/signed-lark-cli"
+  codesign --verify --strict "$DB_WORK/signed-lark-cli"
+  DB_CLI_SIGNED="$(python3 "$DB_HERE/package.py" hash-file --path "$DB_WORK/signed-lark-cli")"
+  DB_EXTRA_LDFLAGS="-X github.com/rclone/rclone/internal/bridge/manager.ReleaseCLIArtifactSHA256=$DB_CLI_SIGNED -X github.com/rclone/rclone/internal/bridge/manager.ReleaseCLIUpstreamSHA256=$DB_CLI_UPSTREAM"
+  DB_STAGE_EXTRA_ARGS=(--signed-cli "$DB_WORK/signed-lark-cli" --cli-upstream-sha "$DB_CLI_UPSTREAM")
+fi
 build_stage "$DB_CGO" "$DB_TAGS"
 python3 - "$DB_WORK/tools.json" <<'PY'
-import json, subprocess, sys
-commands={'pkgbuild':['pkgbuild','--version'],'productbuild':['productbuild','--version'],
-          'hdiutil':['hdiutil','info'],'codesign':['codesign','--version'],
-          'sdk':['xcrun','--show-sdk-version']}
-result={}
-for k,v in commands.items():
-    p=subprocess.run(v,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
-    # codesign --version is not supported by all SDKs; record OS build as its tool version.
-    if k=='codesign' and p.returncode: result[k]=subprocess.check_output(['sw_vers','-buildVersion'],text=True).strip()
-    elif p.returncode: raise SystemExit('cannot determine tool version: '+k)
-    else: result[k]=p.stdout.strip().splitlines()[0]
+import hashlib, json, shutil, subprocess, sys
+os_version = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
+os_build = subprocess.check_output(['sw_vers', '-buildVersion'], text=True).strip()
+result = {}
+# Apple system packaging tools do not expose a standalone --version. Record their
+# owning OS version/build and exact executable hash rather than inventing a version.
+for name in ('pkgbuild', 'productbuild', 'codesign'):
+    with open(shutil.which(name), 'rb') as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    result[name] = 'Apple system tool, macOS %s (%s); standalone version not exposed; sha256:%s' % (os_version, os_build, digest)
+for name, command in {'hdiutil': ['hdiutil','info'], 'sdk': ['xcrun','--show-sdk-version']}.items():
+    result[name] = subprocess.check_output(command, stderr=subprocess.STDOUT, text=True).strip().splitlines()[0]
 open(sys.argv[1],'w').write(json.dumps(result))
 PY
 if ! $DB_UNSIGNED; then
-  for binary in "$DB_PAYLOAD/bin/drivebridge" "$DB_PAYLOAD/libexec/lark/lark-cli"; do
-    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$binary"
-    codesign --verify --strict --verbose=2 "$binary"
-  done
+  codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/bin/drivebridge"
+  codesign --verify --strict --verbose=2 "$DB_PAYLOAD/bin/drivebridge"
 fi
 write_manifest
-mkdir -p "$DB_WORK/pkgroot/Applications/DriveBridge" "$DB_WORK/pkg-scripts"
-cp -R "$DB_PAYLOAD/." "$DB_WORK/pkgroot/Applications/DriveBridge/"
+mkdir -p "$DB_WORK/pkgroot/Applications" "$DB_WORK/pkg-scripts"
+# All payload mutation/signing is complete; hardlinks avoid a second large scratch copy.
+python3 - "$DB_PAYLOAD" "$DB_WORK/pkgroot/Applications/DriveBridge" <<'PYLINK'
+import os, shutil, sys
+shutil.copytree(sys.argv[1], sys.argv[2], copy_function=os.link)
+PYLINK
 cp "$DB_HERE/templates/macos-preinstall" "$DB_WORK/pkg-scripts/preinstall"
 chmod 755 "$DB_WORK/pkg-scripts/preinstall"
 pkgbuild --root "$DB_WORK/pkgroot" --identifier org.drivebridge.user --version "$DB_VERSION" \
@@ -63,7 +76,7 @@ if ! $DB_UNSIGNED; then
   xcrun stapler validate "$DB_ARTIFACTS/$DB_NAME.pkg"
 fi
 mkdir "$DB_WORK/dmg"
-cp "$DB_ARTIFACTS/$DB_NAME.pkg" "$DB_WORK/dmg/"
+ln "$DB_ARTIFACTS/$DB_NAME.pkg" "$DB_WORK/dmg/"
 hdiutil create -quiet -volname DriveBridge -srcfolder "$DB_WORK/dmg" -format UDZO "$DB_ARTIFACTS/$DB_NAME.dmg"
 if ! $DB_UNSIGNED; then
   codesign --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_ARTIFACTS/$DB_NAME.dmg"

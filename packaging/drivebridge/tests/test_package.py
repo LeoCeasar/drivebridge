@@ -210,6 +210,35 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'developer path'):
                 p.validate_payload(root, 'linux')
 
+    def test_linux_cli_only_package_does_not_require_driver(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = pathlib.Path(d) / 'control'
+            args = argparse.Namespace(root=d, output=str(out), template='deb-control', version='1.2.3', arch='arm64', cli_only=True)
+            p.render(args)
+            self.assertIn('Depends: procps', out.read_text())
+            self.assertNotIn('fuse3', out.read_text())
+            args.cli_only = False
+            p.render(args)
+            self.assertIn('Depends: fuse3, procps', out.read_text())
+
+    def test_pre_sign_source_binding_checks_native_hash_not_only_archive(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            binary = b'\x7fELF\x02\x01' + b'\0' * 12 + b'\x3e\x00' + b'\0' * 50
+            archive = root / 'native.zip'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('lark-cli', binary)
+            asset = {'sha256': p.sha(archive), 'native_sha256': '0' * 64}
+            lock = {'cli': {'version': '1.0.99', 'assets': {'lark-cli-1.0.99-linux-amd64.tar.gz': asset}}}
+            (root / 'runtime-lock.json').write_text(json.dumps(lock))
+            with mock.patch.object(p, 'HERE', root):
+                with self.assertRaisesRegex(ValueError, 'official upstream hash'):
+                    p.prepare_cli(archive, 'linux', 'amd64', root / 'out')
+                asset['native_sha256'] = hashlib.sha256(binary).hexdigest()
+                (root / 'runtime-lock.json').write_text(json.dumps(lock))
+                actual = p.prepare_cli(archive, 'linux', 'amd64', root / 'out')
+                self.assertEqual(actual, asset['native_sha256'])
+
 
 if __name__ == '__main__':
     unittest.main()

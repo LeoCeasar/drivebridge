@@ -19,25 +19,31 @@
     "assets": {
       "lark-cli-1.0.99-darwin-amd64.tar.gz": {
         "sha256": "31f900409082728761346a94b7b81038c78b302883b69c36b849b23d843d7de1",
-        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-amd64.tar.gz"
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-amd64.tar.gz",
+        "native_sha256": "cda6b35bd4d5fa2ae869627e748e1d27b3208847c40d19215ccdcccb7b48a1b4"
       },
       "lark-cli-1.0.99-darwin-arm64.tar.gz": {
         "sha256": "f24f4106d1b0b1a4ee9a24ec0953dee6e518476bbe3d9758f78a732477525b21",
-        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-arm64.tar.gz"
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-darwin-arm64.tar.gz",
+        "native_sha256": "a8f652c2a62577a152467a983ec60548570fb0a08715e95fa3f579438c81885b"
       },
       "lark-cli-1.0.99-linux-amd64.tar.gz": {
         "sha256": "fd29f51030dde6919b6ca9173bc87852d3846f253d198022ea2d9ee63527b945",
-        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-amd64.tar.gz"
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-amd64.tar.gz",
+        "native_sha256": "a2f55a5b7cb618f2635e1034f4e8196146c9c055c3995035322ba14382be66ba"
       },
       "lark-cli-1.0.99-linux-arm64.tar.gz": {
         "sha256": "2837145e72922d558538494d0da30ac6c509681fc0791f8818f4ddb87f5125b4",
-        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-arm64.tar.gz"
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-linux-arm64.tar.gz",
+        "native_sha256": "0e30f6b4e1d0b887f4b6bf3391c747b5e14c11defc255930a59a7dfa23fabf92"
       },
       "lark-cli-1.0.99-windows-amd64.zip": {
         "sha256": "1b43cb63ff533ee067db45d93a862074d147df5a0d05f95c2d2a7c70c3f97375",
-        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-windows-amd64.zip"
+        "source": "https://github.com/larksuite/cli/releases/download/v1.0.99/lark-cli-1.0.99-windows-amd64.zip",
+        "native_sha256": "1b9babbff017bb5d4c9974f9ad547707aed61005196134b41e1e15764b213d74"
       }
-    }
+    },
+    "artifact_source_commit": "8d8357d39dd15ac5e9aa815d4ab2639d56bd3239"
   },
   "node": {
     "version": "24.22.2",

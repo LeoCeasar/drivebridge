@@ -4,7 +4,7 @@ Release: 1
 Summary: Per-user managed Feishu/Lark filesystem client
 License: MIT
 BuildArch: @ARCH@
-Requires: fuse3
+@RPM_FUSE@
 Requires(pre): procps-ng
 Requires(preun): procps-ng
 Source0: payload.tar.gz

@@ -24,6 +24,7 @@ parse_args() {
   [ -n "$DB_ARCH" ] && [ -n "$DB_VERSION" ] && [ -n "$DB_LARK" ] && [ -n "$DB_LARK_ARCHIVE" ] || fail "required: --arch amd64|arm64 --version X.Y.Z --lark-package DIRECTORY --lark-native-archive FILE [--unsigned] [--cli-only] [--output DIRECTORY]"
   [[ "$DB_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version must be numeric X.Y.Z"
   DB_MODE=()
+  DB_STAGE_EXTRA_ARGS=()
   $DB_UNSIGNED && DB_MODE+=(--unsigned)
   $DB_CLI_ONLY && DB_MODE+=(--cli-only)
   DB_NAME="drivebridge-$DB_VERSION-$DB_PLATFORM-$DB_ARCH"
@@ -42,10 +43,10 @@ prepare_work() {
 build_stage() {
   local cgo="$1" tags="$2"
   (cd "$DB_REPO" && GOOS="$DB_PLATFORM" GOARCH="$DB_ARCH" CGO_ENABLED="$cgo" \
-    go build -trimpath -tags "$tags" -ldflags '-s -w' -o "$DB_WORK/drivebridge" .)
+    go build -trimpath -tags "$tags" -ldflags "-s -w ${DB_EXTRA_LDFLAGS:-}" -o "$DB_WORK/drivebridge" .)
   python3 "$DB_HERE/package.py" stage --platform "$DB_PLATFORM" --arch "$DB_ARCH" \
-    --root "$DB_PAYLOAD" --repo "$DB_REPO" --binary "$DB_WORK/drivebridge" \
-    --lark-package "$DB_LARK" --lark-native-archive "$DB_LARK_ARCHIVE" ${DB_MODE[@]+"${DB_MODE[@]}"}
+    --root "$DB_PAYLOAD" --repo "$DB_REPO" --binary "$DB_WORK/drivebridge" --consume-binary \
+    --lark-package "$DB_LARK" --lark-native-archive "$DB_LARK_ARCHIVE" ${DB_MODE[@]+"${DB_MODE[@]}"} ${DB_STAGE_EXTRA_ARGS[@]+"${DB_STAGE_EXTRA_ARGS[@]}"}
 }
 write_manifest() {
   local signature=unsigned_test

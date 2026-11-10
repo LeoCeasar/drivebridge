@@ -4,6 +4,6 @@ Architecture: @ARCH@
 Maintainer: DriveBridge maintainers
 Section: utils
 Priority: optional
-Depends: fuse3, procps
+Depends: @DEB_DEPENDS@
 Description: Per-user managed Feishu/Lark filesystem client
  User data and pending saves are retained on uninstall.

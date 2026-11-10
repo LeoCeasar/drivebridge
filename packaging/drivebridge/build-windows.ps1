@@ -55,7 +55,7 @@ try {
     try { Invoke-Native go @('build', '-trimpath', '-tags', $tags, '-ldflags', '-s -w', '-o', "$work/drivebridge.exe", '.') }
     finally { Pop-Location }
     Invoke-Native python (@("$here/package.py", 'stage', '--platform', 'windows', '--arch', $Arch,
-        '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--lark-package', $LarkPackage,
+        '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--consume-binary', '--lark-package', $LarkPackage,
         '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode)
     $innoVersion = (& ISCC '/?' 2>&1 | Out-String).Trim().Split("`n")[0]
     if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Inno Setup version' }

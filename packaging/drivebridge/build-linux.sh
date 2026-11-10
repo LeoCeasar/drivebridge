@@ -21,9 +21,10 @@ names=['dpkg-deb','rpmbuild','tar']
 open(sys.argv[1],'w').write(json.dumps({n:subprocess.check_output([n,'--version'],text=True).splitlines()[0] for n in names}))
 PY
 write_manifest
+DB_RENDER_MODE=(); if $DB_CLI_ONLY; then DB_RENDER_MODE=(--cli-only); fi
 mkdir -p "$DB_WORK/deb/opt/drivebridge" "$DB_WORK/deb/DEBIAN" "$DB_WORK/rpm/SOURCES" "$DB_WORK/rpm/SPECS" "$DB_WORK/rpm/BUILD" "$DB_WORK/rpm/RPMS" "$DB_WORK/rpm/SRPMS" "$DB_WORK/rpm/BUILDROOT"
 cp -R "$DB_PAYLOAD/." "$DB_WORK/deb/opt/drivebridge/"
-python3 "$DB_HERE/package.py" render --template deb-control --version "$DB_VERSION" --arch "$DB_ARCH" --root "$DB_PAYLOAD" --output "$DB_WORK/deb/DEBIAN/control"
+python3 "$DB_HERE/package.py" render --template deb-control ${DB_RENDER_MODE[@]+"${DB_RENDER_MODE[@]}"} --version "$DB_VERSION" --arch "$DB_ARCH" --root "$DB_PAYLOAD" --output "$DB_WORK/deb/DEBIAN/control"
 cp "$DB_HERE/templates/linux-preinstall" "$DB_WORK/deb/DEBIAN/preinst"
 cp "$DB_HERE/templates/linux-preinstall" "$DB_WORK/deb/DEBIAN/prerm"
 chmod 755 "$DB_WORK/deb/DEBIAN/preinst" "$DB_WORK/deb/DEBIAN/prerm"
@@ -31,7 +32,7 @@ dpkg-deb --root-owner-group --build "$DB_WORK/deb" "$DB_ARTIFACTS/$DB_NAME.deb"
 tar -czf "$DB_WORK/rpm/SOURCES/payload.tar.gz" -C "$DB_PAYLOAD" .
 DB_RPM_ARCH=x86_64
 [ "$DB_ARCH" != arm64 ] || DB_RPM_ARCH=aarch64
-python3 "$DB_HERE/package.py" render --template linux.spec --version "$DB_VERSION" --arch "$DB_RPM_ARCH" --root "$DB_PAYLOAD" --output "$DB_WORK/rpm/SPECS/drivebridge.spec"
+python3 "$DB_HERE/package.py" render --template linux.spec ${DB_RENDER_MODE[@]+"${DB_RENDER_MODE[@]}"} --version "$DB_VERSION" --arch "$DB_RPM_ARCH" --root "$DB_PAYLOAD" --output "$DB_WORK/rpm/SPECS/drivebridge.spec"
 rpmbuild -bb --define "_topdir $DB_WORK/rpm" --target "$DB_RPM_ARCH" "$DB_WORK/rpm/SPECS/drivebridge.spec"
 cp "$DB_WORK/rpm/RPMS/$DB_RPM_ARCH/drivebridge-$DB_VERSION-1.$DB_RPM_ARCH.rpm" "$DB_ARTIFACTS/$DB_NAME.rpm"
 tar -czf "$DB_ARTIFACTS/$DB_NAME.tar.gz" -C "$DB_PAYLOAD" .

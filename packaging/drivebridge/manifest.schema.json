@@ -138,6 +138,24 @@
         "process_check_only",
         "lifecycle_lease"
       ]
+    },
+    "cli_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upstream_sha256",
+        "artifact_sha256"
+      ],
+      "properties": {
+        "upstream_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
     }
   }
 }
