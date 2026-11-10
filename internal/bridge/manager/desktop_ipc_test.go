@@ -25,6 +25,42 @@ func TestDesktopReservedWithoutDescriptorIsNotReady(t *testing.T) {
 	}
 }
 
+func TestDesktopQuitLeavesSyncWorkerRunning(t *testing.T) {
+	m, id, runtime, _ := fixture(t, nil)
+	ctx := context.Background()
+	if _, err := m.Start(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	quit := make(chan struct{})
+	release, err := m.DesktopRegister(ctx, nil, func() { close(quit) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err = m.DesktopQuit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-quit:
+	case <-time.After(time.Second):
+		t.Fatal("quit not delivered")
+	}
+	release()
+	status, err := m.Status(ctx, id)
+	if err != nil || !status.Running {
+		t.Fatalf("tray quit stopped sync: %+v %v", status, err)
+	}
+	runtime.mu.Lock()
+	unmounted := runtime.unmounted
+	runtime.mu.Unlock()
+	if unmounted {
+		t.Fatal("tray quit unmounted file system")
+	}
+	if err = m.Stop(ctx, id, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Singleton ownership must cover all configurations in the OS-user domain and
 // last through actual UI teardown, rather than ending at the quit request.
 func TestDesktopSingletonAuthenticatesAndKeepsLockUntilRelease(t *testing.T) {
