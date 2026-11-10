@@ -249,6 +249,7 @@ type Hunk struct {
 }
 
 type MergeResult struct {
+	Deferred       bool        `json:"deferred,omitempty"` // more insertions require IDs from a verified readback
 	Markdown       []byte      `json:"markdown"`
 	Operations     []Operation `json:"operations"`
 	Hunks          []Hunk      `json:"hunks"`

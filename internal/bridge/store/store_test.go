@@ -536,7 +536,15 @@ func TestRootAndNamespaceActionIntents(t *testing.T) {
 	if len(actions) != 1 || actions[0].ResultID != dir.ID {
 		t.Fatal(actions)
 	}
-	s.AcknowledgeNamespaceAction(ctx, op.ID)
+	if err := s.AcknowledgeNamespaceAction(ctx, op.ID); !errors.Is(err, ErrInvalidState) {
+		t.Fatal(err)
+	}
+	if err := s.BindNamespaceFolder(ctx, op.ID, "new-folder"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AcknowledgeNamespaceAction(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
 	actions, _ = s.NamespaceActions(ctx)
 	if len(actions) != 0 {
 		t.Fatal(actions)

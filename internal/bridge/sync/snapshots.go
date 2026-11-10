@@ -1,0 +1,100 @@
+package syncer
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+
+	"github.com/rclone/rclone/internal/bridge/cloud"
+	"github.com/rclone/rclone/internal/bridge/markdown"
+	"github.com/rclone/rclone/internal/bridge/model"
+)
+
+func (e *Engine) read(ctx context.Context, id model.BlobID) ([]byte, error) {
+	if id == "" {
+		return nil, nil
+	}
+	r, err := e.store.ReadBlob(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(r)
+}
+func (e *Engine) saveDoc(ctx context.Context, d cloud.Document) (model.Snapshot, model.DocView, error) {
+	if d.Token == "" || d.Revision == "" || len(d.Warnings) > 0 {
+		return model.Snapshot{}, model.DocView{}, model.ErrUnsupportedContent
+	}
+	v, err := markdown.DecodeWithOptions(d.XML, d.Revision, markdown.Options{SourceURL: d.SourceURL, ReferenceMap: d.ReferenceMap})
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	x, err := e.store.PutBlob(ctx, bytes.NewReader(v.XML))
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	m, err := e.store.PutBlob(ctx, bytes.NewReader(v.Markdown))
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	side, err := json.Marshal(model.DocSidecar{Blocks: v.Blocks, SourceURL: v.SourceURL, ReferenceMap: v.ReferenceMap})
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	b, err := e.store.PutBlob(ctx, bytes.NewReader(side))
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	sn, err := e.store.SaveSnapshot(ctx, model.Snapshot{Token: d.Token, Revision: d.Revision, XML: x, Markdown: m, BlockMap: b, Size: int64(len(v.Markdown))})
+	return sn, v, err
+}
+func (e *Engine) loadDoc(ctx context.Context, id model.SnapshotID) (model.Snapshot, model.DocView, error) {
+	sn, err := e.store.Snapshot(ctx, id)
+	if err != nil {
+		return sn, model.DocView{}, err
+	}
+	x, err := e.read(ctx, sn.XML)
+	if err != nil {
+		return sn, model.DocView{}, err
+	}
+	side, err := e.read(ctx, sn.BlockMap)
+	if err != nil {
+		return sn, model.DocView{}, err
+	}
+	var b model.DocSidecar
+	if json.Unmarshal(side, &b) != nil {
+		return sn, model.DocView{}, model.ErrUnsupportedContent
+	}
+	v, err := markdown.DecodeWithOptions(x, sn.Revision, markdown.Options{SourceURL: b.SourceURL, ReferenceMap: b.ReferenceMap})
+	return sn, v, err
+}
+func (e *Engine) fetchDoc(ctx context.Context, token string) (model.Snapshot, model.DocView, error) {
+	d, err := e.source.FetchDoc(ctx, token, "")
+	if err != nil {
+		return model.Snapshot{}, model.DocView{}, err
+	}
+	return e.saveDoc(ctx, d)
+}
+func (e *Engine) observeFile(ctx context.Context, token string) (model.Snapshot, error) {
+	o, err := e.source.ObserveFile(ctx, token)
+	if err != nil {
+		return model.Snapshot{}, err
+	}
+	if o.Reader == nil {
+		return model.Snapshot{}, model.ErrUnsupportedContent
+	}
+	defer o.Reader.Close()
+	if o.Token != token || o.Size < 0 {
+		return model.Snapshot{}, model.ErrIdentityChanged
+	}
+	sn, err := e.store.SaveFileSnapshot(ctx, token, o.Identity, o.Reader)
+	if err != nil {
+		return sn, err
+	}
+	if sn.Size != o.Size {
+		return sn, errors.New("download count mismatch")
+	}
+	return sn, nil
+}

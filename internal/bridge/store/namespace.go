@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,11 +14,16 @@ import (
 )
 
 type namespaceRecord struct {
-	Op            model.NamespaceOp        `json:"op"`
-	Before        []model.Entry            `json:"before"`
-	Sealed        map[model.EntryID]uint64 `json:"sealed,omitempty"`
-	ActionPending bool                     `json:"action_pending,omitempty"`
-	ResultKind    model.Kind               `json:"result_kind,omitempty"`
+	Ordinal        uint64                   `json:"ordinal,omitempty"`
+	TemporaryName  string                   `json:"temporary_name,omitempty"`
+	CloudStep      string                   `json:"cloud_step,omitempty"`
+	Dispatched     bool                     `json:"dispatched,omitempty"`
+	CompletedSteps map[string]bool          `json:"completed_steps,omitempty"`
+	Op             model.NamespaceOp        `json:"op"`
+	Before         []model.Entry            `json:"before"`
+	Sealed         map[model.EntryID]uint64 `json:"sealed,omitempty"`
+	ActionPending  bool                     `json:"action_pending,omitempty"`
+	ResultKind     model.Kind               `json:"result_kind,omitempty"`
 }
 
 func under(p, root string) bool { return p == root || (root != "" && strings.HasPrefix(p, root+"/")) }
@@ -109,7 +115,14 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 				}
 			}
 		}
-		r := namespaceRecord{Op: op}
+		sequence, er := tx.Bucket([]byte("namespace")).NextSequence()
+		if er != nil {
+			return er
+		}
+		r := namespaceRecord{Op: op, Ordinal: sequence}
+		if op.Kind == "mkdir" {
+			r.TemporaryName = "DriveBridge-pending-" + op.ID
+		}
 		if er = each[model.Entry](tx, "entries", func(e model.Entry) error {
 			if (op.Src != "" && under(e.Remote, op.Src)) || (op.DstExists && under(e.Remote, op.Dst)) {
 				var m Metadata
@@ -428,14 +441,19 @@ func (s *Store) PendingNamespace(ctx context.Context) (out []model.NamespaceOp, 
 
 // NamespaceActions contains committed local intents eligible for later engine dispatch after Finish.
 func (s *Store) NamespaceActions(ctx context.Context) (out []model.NamespaceOp, err error) {
+	var records []namespaceRecord
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		return each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
 			if r.ActionPending {
-				out = append(out, r.Op)
+				records = append(records, r)
 			}
 			return nil
 		})
 	})
+	sort.SliceStable(records, func(i, j int) bool { return records[i].Ordinal < records[j].Ordinal })
+	for _, r := range records {
+		out = append(out, r.Op)
+	}
 	return
 }
 func (s *Store) AcknowledgeNamespaceAction(ctx context.Context, id string) error {
@@ -446,6 +464,22 @@ func (s *Store) AcknowledgeNamespaceAction(ctx context.Context, id string) error
 		}
 		if r.Op.State != "finished" {
 			return ErrInvalidState
+		}
+		if r.Dispatched {
+			return model.ErrUnknownResult
+		}
+		if r.Op.Kind == "mkdir" {
+			en, err := entryTx(tx, r.Op.ResultID)
+			if err != nil {
+				return err
+			}
+			if en.Token == "" {
+				return ErrInvalidState
+			}
+			en.Status = model.StatusSynced
+			if err = saveEntry(tx, en); err != nil {
+				return err
+			}
 		}
 		r.ActionPending = false
 		return put(tx, "namespace", id, r)

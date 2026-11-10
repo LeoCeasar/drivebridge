@@ -15,6 +15,16 @@ import (
 // the caller must fetch/decode and replan; replacement may invalidate old IDs.
 // Conflicts always return zero operations and retain the local bytes as the draft.
 func Merge(baseLocal, local []byte, remote model.DocView) (model.MergeResult, error) {
+	return merge(baseLocal, local, remote, false)
+}
+
+// PlanStep permits a supported insertion chain to defer operations whose new
+// anchors do not exist yet. The caller must read back and rebase after each step.
+// Markdown remains the complete merged intent; no future block ID is guessed.
+func PlanStep(baseLocal, local []byte, remote model.DocView) (model.MergeResult, error) {
+	return merge(baseLocal, local, remote, true)
+}
+func merge(baseLocal, local []byte, remote model.DocView, deferAnchors bool) (model.MergeResult, error) {
 	fail := func(reason string) (model.MergeResult, error) {
 		return model.MergeResult{Markdown: bytes.Clone(local), ConflictReason: reason, Hunks: []model.Hunk{{BaseStart: 0, BaseEnd: len(exactLines(baseLocal)), Base: exactLines(baseLocal), Local: exactLines(local), Remote: exactLines(remote.Markdown)}}}, nil
 	}
@@ -253,6 +263,10 @@ func Merge(baseLocal, local []byte, remote model.DocView) (model.MergeResult, er
 			continue
 		}
 		// A newly inserted block has no current ID: do not chain guesses.
+		if deferAnchors && i > 0 && out[i-1].remote < 0 && !c.a.Opaque && c.a.parent == "" {
+			result.Deferred = true
+			continue
+		}
 		if i == 0 || out[i-1].remote < 0 || c.a.Opaque || c.a.parent != "" {
 			return fail("unsupported_content")
 		}

@@ -15,6 +15,8 @@ import (
 )
 
 type jobRecord struct {
+	ErrorCode   string                  `json:"error_code,omitempty"`
+	ResumeState model.Status            `json:"resume_state,omitempty"`
 	Superseded  bool                    `json:"superseded,omitempty"`
 	Job         model.Job               `json:"job"`
 	Operations  []model.Operation       `json:"operations,omitempty"`
@@ -294,6 +296,8 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
+	ErrorCode string
+
 	Job        model.Job
 	Operations []model.Operation
 	Results    map[int]json.RawMessage
@@ -303,7 +307,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{r.Job, r.Operations, r.Results, r.Desired}
+		j = JobJournal{ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return

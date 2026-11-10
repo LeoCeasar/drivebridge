@@ -55,7 +55,7 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 			return er
 		}
 		id := uuid.NewString()
-		out = model.CreateOp{ID: id, JobID: jobID, EntryID: e.ID, Generation: j.Job.Generation, Kind: e.Kind, ParentToken: parentToken, TemporaryName: ".drivebridge-" + id, FinalName: finalName, Input: j.Job.Local, State: "prepared"}
+		out = model.CreateOp{ID: id, JobID: jobID, EntryID: e.ID, Generation: j.Job.Generation, Kind: e.Kind, ParentToken: parentToken, TemporaryName: "DriveBridge-pending-" + id, FinalName: finalName, Input: j.Job.Local, State: "prepared"}
 		return put(tx, "createops", id, out)
 	})
 	return
@@ -139,7 +139,7 @@ func (s *Store) FinishCreate(ctx context.Context, id string) error {
 		if op.State == "finished" {
 			return nil
 		}
-		if op.State != "bound" {
+		if op.State != "bound" && op.State != "renaming" {
 			return ErrInvalidState
 		}
 		e, er := entryTx(tx, op.EntryID)
