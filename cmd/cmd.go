@@ -421,17 +421,18 @@ func initConfig() {
 		fs.Debugf("rclone", "systemd logging support activated")
 	}
 
-	// Start the remote control server if configured
-	_, err = rcserver.Start(ctx, &rc.Opt)
-	if err != nil {
-		fs.Fatalf(nil, "Failed to start remote control: %v", err)
-	}
-
-	// Start the metrics server if configured and not running the "rc" command
-	if len(os.Args) >= 2 && os.Args[1] != "rc" {
-		_, err = rcserver.MetricsStart(ctx, &rc.Opt)
+	// Managed product processes use their private IPC/UI only. Evaluate this
+	// before any listener starts, including when settings came from the environment.
+	if !privateControlCommand(Root, os.Args[1:]) {
+		_, err = rcserver.Start(ctx, &rc.Opt)
 		if err != nil {
-			fs.Fatalf(nil, "Failed to start metrics server: %v", err)
+			fs.Fatalf(nil, "Failed to start remote control: %v", err)
+		}
+		if len(os.Args) >= 2 && os.Args[1] != "rc" {
+			_, err = rcserver.MetricsStart(ctx, &rc.Opt)
+			if err != nil {
+				fs.Fatalf(nil, "Failed to start metrics server: %v", err)
+			}
 		}
 	}
 

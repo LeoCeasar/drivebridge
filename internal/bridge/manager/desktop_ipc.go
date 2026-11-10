@@ -168,6 +168,11 @@ func (m *Manager) DesktopRegister(ctx context.Context, open func(context.Context
 	var once sync.Once
 	return func() {
 		once.Do(func() {
+			// Let the authenticated quit response finish before retiring its
+			// endpoint; an immediate headless teardown otherwise loses the ACK.
+			closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = server.Shutdown(closeCtx)
+			cancel()
 			_ = server.Close()
 			_ = os.Remove(filepath.Join(m.desktopRoot(), "ipc.json"))
 			_ = os.Remove(keyPath)
@@ -197,6 +202,9 @@ func (m *Manager) DesktopRunning(ctx context.Context) (bool, error) {
 	}
 	ep, key, err := m.readDesktopEndpoint(true)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	err = callEndpoint(ctx, ep, key, "/status", nil, nil)

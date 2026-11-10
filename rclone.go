@@ -8,8 +8,17 @@ import (
 	"github.com/rclone/rclone/cmd"
 	_ "github.com/rclone/rclone/cmd/all"    // import all commands
 	_ "github.com/rclone/rclone/lib/plugin" // import plugins
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func main() {
+	if strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "drivebridge-desktop" && len(os.Args) == 1 {
+		os.Args = append(os.Args, "desktop", "_run")
+	}
+	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "drivebridge") {
+		cmd.Root.Use = "drivebridge"
+	}
 	cmd.Main()
 }

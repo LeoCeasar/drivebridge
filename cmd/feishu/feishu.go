@@ -46,6 +46,7 @@ func ManagerForCommand(c *cobra.Command) (*manager.Manager, error) {
 }
 func NewCommand(o CommandOptions) *cobra.Command {
 	root := &cobra.Command{Use: "feishu", Short: "Manage personal Feishu accounts, shared folders and durable mounts", SilenceErrors: true, SilenceUsage: true}
+	root.Annotations = map[string]string{"drivebridge-private-control": "true"}
 	root.PersistentFlags().String(config.BridgeConfigFlag, "", "Product configuration file (separate from rclone --config)")
 	root.PersistentFlags().String("lark-cli", "", "Official CLI native executable (absolute or resolved from PATH)")
 	root.PersistentFlags().Bool("json", false, "Write structured JSON to stdout")

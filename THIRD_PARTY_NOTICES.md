@@ -43,3 +43,13 @@ privacy policies, and Open Platform rules when using Feishu/Lark APIs.
 Feishu/Lark services, APIs, product names, and trademarks belong to their
 respective owners. This project is unofficial and is not endorsed by Feishu,
 Lark, or Lark Technologies.
+
+## getlantern/systray
+
+- Source: https://github.com/getlantern/systray
+- Version: v1.2.2
+- License: Apache-2.0
+
+Optional desktop builds use systray for native notification-area icons and menus.
+Desktop distributions include its license and the newly introduced dependency
+licenses in `licenses/desktop.LICENSES`; CLI builds do not link the native tray.

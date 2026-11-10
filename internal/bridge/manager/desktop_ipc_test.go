@@ -10,6 +10,21 @@ import (
 	"time"
 )
 
+func TestDesktopReservedWithoutDescriptorIsNotReady(t *testing.T) {
+	m, _, _, _ := fixture(t, nil)
+	lock, err := privateLock(m.desktopRunLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := lock.TryLock(); err != nil || !ok {
+		t.Fatalf("%v %v", ok, err)
+	}
+	defer lock.Unlock()
+	if running, err := m.DesktopRunning(context.Background()); err != nil || running {
+		t.Fatalf("reserved or retiring desktop must be not ready: %v %v", running, err)
+	}
+}
+
 // Singleton ownership must cover all configurations in the OS-user domain and
 // last through actual UI teardown, rather than ending at the quit request.
 func TestDesktopSingletonAuthenticatesAndKeepsLockUntilRelease(t *testing.T) {
