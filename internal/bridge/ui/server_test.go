@@ -28,6 +28,7 @@ type fakeBackend struct {
 	input                        ConflictInputs
 	draftFile                    string
 	resolveErr                   error
+	authCompleteErr              error
 	resolves, starts, configured int
 }
 
@@ -49,7 +50,11 @@ func (b *fakeBackend) AuthStart(context.Context, model.ProfileID) (auth.AuthFlow
 	b.starts++
 	return auth.AuthFlow{ID: uuid.NewString(), URL: "https://accounts.example/authorize"}, nil
 }
-func (b *fakeBackend) AuthComplete(context.Context, string) error { return nil }
+func (b *fakeBackend) AuthComplete(context.Context, string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.authCompleteErr
+}
 func (b *fakeBackend) Conflict(_ context.Context, id model.ConflictID) (ConflictInputs, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -521,5 +526,36 @@ func TestDiffHunksExposeSourceLineRangesAndActualChanges(t *testing.T) {
 	change := changes[0].(map[string]any)
 	if change["Kind"] != "insert" || change["Start"] != float64(2) || change["End"] != float64(3) {
 		t.Fatal(change)
+	}
+}
+
+func TestAuthCompleteGuidesUserLoginAfterApplicationConfiguration(t *testing.T) {
+	for _, result := range []struct {
+		name string
+		err  error
+	}{
+		{"direct", auth.ErrUserMissing},
+		{"wrapped", errors.Join(errors.New("complete application setup"), auth.ErrUserMissing)},
+	} {
+		t.Run(result.name, func(t *testing.T) {
+			h, b, client, csrf, _ := fixture(t)
+			b.mu.Lock()
+			b.authCompleteErr = result.err
+			b.mu.Unlock()
+			response := request(t, client, h, "POST", "/api/auth/complete", map[string]string{"flow_id": uuid.NewString()}, csrf, h.URL())
+			defer response.Body.Close()
+			var body struct {
+				Code       string `json:"code"`
+				Message    string `json:"message"`
+				Retryable  bool   `json:"retryable"`
+				Authorized *bool  `json:"authorized"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != http.StatusConflict || body.Code != "user_authorization_required" || body.Message != "应用已配置，请再次点击授权以完成用户登录。" || body.Retryable || body.Authorized != nil {
+				t.Fatalf("missing user login reported incorrectly: status=%d body=%+v", response.StatusCode, body)
+			}
+		})
 	}
 }

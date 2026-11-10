@@ -47,11 +47,14 @@ func respond(w http.ResponseWriter, status int, v any) {
 }
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
+	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
 	respond(w, status, map[string]any{"code": code, "retryable": status == 503, "message": messages[code]})
 }
 func apiError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, auth.ErrUserMissing):
+		respondError(w, http.StatusConflict, "user_authorization_required")
 	case errors.Is(err, model.ErrVersionChanged) || errors.Is(err, model.ErrGenerationChanged) || errors.Is(err, model.ErrIdentityChanged):
 		respondError(w, 409, "version_changed")
 	case errors.Is(err, os.ErrNotExist):
