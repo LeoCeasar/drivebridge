@@ -1,7 +1,6 @@
 #!/bin/sh
 set -eu
-if pgrep -x drivebridge >/dev/null 2>&1; then
-  echo 'Stop DriveBridge mounts as each user before package replacement/removal; pending data must be retained.' >&2
-  exit 1
-fi
-exit 0
+# A root/system package affects every OS user; one user's lifecycle lease cannot
+# authorize replacement or removal. Refuse until a multi-user gate is implemented.
+echo 'System package install/upgrade/removal blocked: multi-user installation lease not implemented. Use an isolated per-user portable bundle.' >&2
+exit 1

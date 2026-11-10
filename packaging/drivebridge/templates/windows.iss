@@ -19,20 +19,21 @@ RestartApplications=no
 UninstallDisplayName=DriveBridge (user data retained)
 
 [Files]
+Source: "@PAYLOAD@\bin\drivebridge.exe"; DestName: "drivebridge-install-verifier.exe"; Flags: dontcopy noencryption
 Source: "@PAYLOAD@\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
 Root: HKCU; Subkey: "Software\DriveBridge\Installer"; ValueType: string; ValueName: "Version"; ValueData: "@VERSION@"; Flags: uninsdeletekey
 
 [Code]
-function NoWorkerRunning(): Boolean;
+function VerifyLease(): Boolean;
 var ExitCode: Integer;
 begin
-  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -Command "if(Get-Process -Name drivebridge -ErrorAction SilentlyContinue){exit 1}"',
-    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+  ExtractTemporaryFile('drivebridge-install-verifier.exe');
+  Result := Exec(ExpandConstant('{tmp}\drivebridge-install-verifier.exe'),
+    'feishu maintenance verify', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
   if not Result then
-    MsgBox('Stop DriveBridge mounts as the desktop user before replacement/removal. Pending saves and credentials are preserved.', mbError, MB_OK);
+    MsgBox('Run the synchronous installer through the current-user upgrade wrapper. A live installation lease is required.', mbError, MB_OK);
 end;
 function CompareVersion(A, B: String): Integer;
 var I, J, AV, BV: Integer; AP, BP: String;
@@ -51,7 +52,7 @@ end;
 function InitializeSetup(): Boolean;
 var InstalledVersion: String;
 begin
-  Result := NoWorkerRunning();
+  Result := VerifyLease();
   if Result and RegQueryStringValue(HKCU, 'Software\DriveBridge\Installer', 'Version', InstalledVersion) then
     if CompareVersion(InstalledVersion, '@VERSION@') > 0 then begin
       MsgBox('A newer version is installed. Use the explicit migration workflow; downgrade is blocked.', mbError, MB_OK);
@@ -60,6 +61,9 @@ begin
 end;
 function InitializeUninstall(): Boolean;
 begin
-  Result := NoWorkerRunning();
+  // Setup embedded resources are unavailable in the uninstaller. Refuse until
+  // a dedicated trusted uninstall verifier/lifetime path is validated.
+  Result := False;
+  MsgBox('Uninstall lifecycle coordination is not yet validated; user data is retained.', mbError, MB_OK);
 end;
 // No [Run], [UninstallDelete], registry Run key or SYSTEM task. The manager owns opt-in startup.

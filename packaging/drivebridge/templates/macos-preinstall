@@ -1,7 +1,7 @@
 #!/bin/sh
-# Installer scripts do not start workers or remove user state. Refuse unsafe upgrade.
-if /usr/bin/pgrep -x drivebridge >/dev/null 2>&1; then
-  echo 'Stop DriveBridge mounts as each desktop user before upgrade/uninstall. Pending data is preserved.' >&2
-  exit 1
-fi
-exit 0
+set -eu
+# Trusted candidate is embedded by pkgbuild. Never execute an environment-selected
+# helper. Require the wrapper even for fresh installs to avoid detection races.
+# If Installer changes OS-user identity or strips the proof, verification fails.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+"$script_dir/drivebridge-install-verifier" feishu maintenance verify

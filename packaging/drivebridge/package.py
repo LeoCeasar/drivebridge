@@ -82,7 +82,8 @@ def required_files(target):
     suffix = '.exe' if target == 'windows' else ''
     files = {'bin/drivebridge' + suffix, 'libexec/lark/lark-cli' + suffix,
              'licenses/rclone.COPYING', 'licenses/lark-cli.LICENSE',
-             'licenses/NOTICE.md', 'licenses/THIRD_PARTY_NOTICES.md', 'README.md'}
+             'licenses/NOTICE.md', 'licenses/THIRD_PARTY_NOTICES.md', 'README.md',
+             'upgrade.ps1' if target == 'windows' else 'upgrade.sh'}
     if target == 'windows':
         files |= {'libexec/node/node.exe', 'licenses/node.LICENSE',
                   'libexec/lark/package/package.json', 'libexec/lark/package/LICENSE',
@@ -268,6 +269,8 @@ def stage(args):
                      ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
         copy_file(repo / src, root / 'licenses' / dst)
     copy_file(HERE / 'BUNDLE-README.md', root / 'README.md')
+    wrapper = 'upgrade.ps1' if args.platform == 'windows' else 'upgrade.sh'
+    copy_file(HERE / wrapper, root / wrapper)
     if args.platform == 'windows':
         if not args.node_archive:
             raise ValueError('Windows requires official pinned Node ZIP with LICENSE')
@@ -299,8 +302,8 @@ def manifest(args):
                 'go_version': run(['go', 'version']), 'tools': tools,
                 'runtime': lock, 'cli_binding': {'upstream_sha256': cli_asset(lock, args.platform, args.arch)['native_sha256'], 'artifact_sha256': sha(root / ('libexec/lark/lark-cli.exe' if args.platform == 'windows' else 'libexec/lark/lark-cli'))}, 'vendor_metadata': {'embedded_ci_prefixes': [p.decode() for p in VENDOR_CI_PREFIXES], 'policy': 'Only checksum-verified vendor executables may retain upstream CI source paths; bytes are never rewritten.', 'product_help_examples': [p.decode() for p in PRODUCT_HELP_EXAMPLES]}, 'mount': not args.cli_only,
                 'mount_engine': 'none' if args.cli_only else ('mount2' if args.platform == 'linux' else 'cmount'),
-                'signature': args.signature, 'upgrade_guard': 'process_check_only', 'native_verification': 'not_verified',
-                'release_blockers': ['native installation, upgrade, driver and mount evidence required', 'installer lifecycle lease not integrated; process check is insufficient'],
+                'signature': args.signature, 'upgrade_guard': 'lifecycle_lease_unverified', 'native_verification': 'not_verified',
+                'release_blockers': ['native installation, upgrade, driver and mount evidence required', 'native installer lease environment/identity/lifetime propagation not verified'],
                 'licenses': sorted(p.relative_to(root).as_posix() for p in (root / 'licenses').iterdir()),
                 'files': inventory(root)}
     if args.signature == 'unsigned_test':
@@ -319,6 +322,7 @@ def render(args):
         ns = 'http://wixtoolset.org/schemas/v4/wxs'
         ET.register_namespace('', ns)
         tree = ET.fromstring(template.replace('@VERSION@', args.version))
+        tree.find('.//{%s}Binary' % ns).set('SourceFile', str(root / 'bin' / 'drivebridge.exe'))
         directory = tree.find('.//{%s}Directory[@Id="INSTALLFOLDER"]' % ns)
         group = tree.find('.//{%s}ComponentGroup' % ns)
         dirs = {'': directory}

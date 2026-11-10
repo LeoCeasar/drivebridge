@@ -61,7 +61,8 @@ import os, shutil, sys
 shutil.copytree(sys.argv[1], sys.argv[2], copy_function=os.link)
 PYLINK
 cp "$DB_HERE/templates/macos-preinstall" "$DB_WORK/pkg-scripts/preinstall"
-chmod 755 "$DB_WORK/pkg-scripts/preinstall"
+cp "$DB_PAYLOAD/bin/drivebridge" "$DB_WORK/pkg-scripts/drivebridge-install-verifier"
+chmod 755 "$DB_WORK/pkg-scripts/preinstall" "$DB_WORK/pkg-scripts/drivebridge-install-verifier"
 pkgbuild --root "$DB_WORK/pkgroot" --identifier org.drivebridge.user --version "$DB_VERSION" \
   --scripts "$DB_WORK/pkg-scripts" --install-location / "$DB_WORK/component.pkg"
 python3 "$DB_HERE/package.py" render --template macos-distribution.xml --version "$DB_VERSION" \

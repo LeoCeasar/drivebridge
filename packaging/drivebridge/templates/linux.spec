@@ -19,14 +19,10 @@ Per-user filesystem client. No system service is started. Uninstall preserves us
 mkdir -p %{buildroot}/opt/drivebridge
 tar -xzf %{SOURCE0} -C %{buildroot}/opt/drivebridge
 %pre
-if pgrep -x drivebridge >/dev/null 2>&1; then
-  echo 'Stop DriveBridge as each user before upgrade; pending saves are preserved.' >&2
-  exit 1
-fi
+echo 'System package installation blocked: multi-user lifecycle coordination is required.' >&2
+exit 1
 %preun
-if pgrep -x drivebridge >/dev/null 2>&1; then
-  echo 'Stop DriveBridge as each user before removal.' >&2
-  exit 1
-fi
+echo 'System package removal blocked: multi-user lifecycle coordination is required.' >&2
+exit 1
 %files
 /opt/drivebridge

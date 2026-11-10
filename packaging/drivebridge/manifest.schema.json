@@ -136,6 +136,7 @@
     "upgrade_guard": {
       "enum": [
         "process_check_only",
+        "lifecycle_lease_unverified",
         "lifecycle_lease"
       ]
     },

@@ -7,9 +7,10 @@
     <StandardDirectory Id="LocalAppDataFolder"><Directory Id="ProgramsFolder" Name="Programs"><Directory Id="INSTALLFOLDER" Name="DriveBridge"/></Directory></StandardDirectory>
     <Feature Id="Product" Title="DriveBridge" Level="1"><ComponentGroupRef Id="Payload"/></Feature>
     <ComponentGroup Id="Payload"/>
-    <!-- Immediate, impersonated user action. No worker is run and no state is changed. -->
-    <CustomAction Id="GuardRunning" Directory="SystemFolder" Execute="immediate" Impersonate="yes" Return="check"
-      ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -Command &quot;if(Get-Process -Name drivebridge -ErrorAction SilentlyContinue){Write-Error 'Stop DriveBridge mounts before replacement or removal';exit 1}&quot;"/>
-    <InstallExecuteSequence><Custom Action="GuardRunning" Before="InstallValidate" Condition="1"/></InstallExecuteSequence>
+    <!-- Embedded trusted candidate; no environment-selected executable or shell. -->
+    <Binary Id="LeaseVerifier" SourceFile="@PAYLOAD@/bin/drivebridge.exe"/>
+    <CustomAction Id="GuardLease" BinaryRef="LeaseVerifier" Execute="immediate" Impersonate="yes" Return="check"
+      ExeCommand="feishu maintenance verify"/>
+    <InstallExecuteSequence><Custom Action="GuardLease" Before="InstallValidate" Condition="1"/></InstallExecuteSequence>
   </Package>
 </Wix>

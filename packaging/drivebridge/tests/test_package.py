@@ -6,6 +6,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 import pathlib
 import tempfile
+import subprocess
+import os
 import unittest
 from unittest import mock
 
@@ -159,6 +161,34 @@ class PolicyTests(unittest.TestCase):
             guard = tree.find('.//w:CustomAction', ns)
             self.assertEqual(guard.get('Impersonate'), 'yes')
             self.assertNotIn('SYSTEM', output.read_text())
+
+    def test_lifecycle_wrapper_is_whitelisted_and_native_guards_are_embedded(self):
+        self.assertIn('upgrade.sh', p.required_files('darwin'))
+        self.assertIn('upgrade.ps1', p.required_files('windows'))
+        for name in ('process_check_only', 'lifecycle_lease_unverified'):
+            with self.assertRaisesRegex(ValueError, 'lifecycle lease'):
+                p.check_release({'signature': 'signed', 'upgrade_guard': name}, None)
+        template = (p.HERE / 'templates/windows.wxs').read_text()
+        self.assertIn('BinaryRef="LeaseVerifier"', template)
+        self.assertNotIn('powershell', template.lower())
+        self.assertIn('feishu maintenance verify', (p.HERE / 'templates/macos-preinstall').read_text())
+        self.assertIn('dontcopy noencryption', (p.HERE / 'templates/windows.iss').read_text())
+        self.assertIn('exit 1', (p.HERE / 'templates/linux-preinstall').read_text())
+
+    def test_wrapper_copies_helper_and_preserves_literal_argv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            candidate = root / 'candidate'
+            record = root / 'record'
+            candidate.write_text('#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$DB_WRAPPER_RECORD"\n')
+            candidate.chmod(0o700)
+            literal = '$(never execute); one argument'
+            env = dict(os.environ, DB_WRAPPER_RECORD=str(record))
+            subprocess.run(['sh', str(p.HERE / 'upgrade.sh'), str(candidate), '--', '/synthetic/installer', literal], check=True, env=env)
+            values = record.read_text().splitlines()
+            self.assertNotEqual(values[0], str(candidate))
+            self.assertFalse(pathlib.Path(values[0]).exists())
+            self.assertEqual(values[1:], ['feishu', 'maintenance', 'exec', '--', '/synthetic/installer', literal])
 
     def test_macos_home_domain_and_architecture(self):
         with tempfile.TemporaryDirectory() as d:
