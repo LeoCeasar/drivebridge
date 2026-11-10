@@ -699,7 +699,7 @@ func (fsys *FS) translateError(err error) int {
 			return -fuse.ENOSPC
 		}
 		if errors.Is(err, syscall.EDQUOT) {
-			return -fuse.EDQUOT
+			return -fuse.ENOSPC
 		}
 		if errors.Is(err, syscall.EIO) {
 			return -fuse.EIO
