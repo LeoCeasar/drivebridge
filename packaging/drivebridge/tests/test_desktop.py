@@ -44,9 +44,9 @@ class DesktopPackagingTests(unittest.TestCase):
                 dest.write_bytes(b'fixture')
             binary = pathlib.Path(d) / 'desktop'
             binary.write_bytes(self.binary('darwin'))
-            with mock.patch.object(p, 'run', return_value='enable-autostart') as run:
+            with mock.patch.object(p, 'run', side_effect=['enable-autostart', json.dumps({'native_tray_compiled': True, 'platform': 'darwin', 'architecture': 'arm64'})]) as run:
                 p.stage_desktop(root, 'darwin', 'arm64', binary, '1.2.3')
-            run.assert_called_once_with([binary, 'desktop', '--help'])
+            self.assertEqual(run.call_args_list, [mock.call([binary, 'desktop', '--help']), mock.call([binary, 'desktop', 'capabilities'])])
             info = plistlib.loads((root / 'DriveBridge.app/Contents/Info.plist').read_bytes())
             self.assertIs(info['LSUIElement'], True)
             self.assertEqual(info['CFBundleExecutable'], 'drivebridge-desktop')
@@ -77,9 +77,22 @@ class DesktopPackagingTests(unittest.TestCase):
                 p.stage_desktop(pathlib.Path(d) / 'payload', 'windows', 'amd64', binary, '1.2.3')
             struct.pack_into('<H', data, 64 + 92, 2)
             binary.write_bytes(data)
-            with mock.patch.object(p, 'run', return_value='enable-autostart'):
+            with mock.patch.object(p, 'run', side_effect=['enable-autostart', json.dumps({'native_tray_compiled': True, 'platform': 'windows', 'architecture': 'amd64'})]):
                 p.stage_desktop(pathlib.Path(d) / 'payload', 'windows', 'amd64', binary, '1.2.3')
             self.assertEqual((pathlib.Path(d) / 'payload/bin/drivebridge-desktop.exe').read_bytes(), data)
+
+    def test_native_desktop_capability_required_before_copying_any_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d) / 'payload'
+            binary = pathlib.Path(d) / 'desktop'
+            binary.write_bytes(self.binary('darwin'))
+            for capabilities in ({}, {'native_tray_compiled': False, 'platform': 'darwin', 'architecture': 'arm64'},
+                                 {'native_tray_compiled': True, 'platform': 'linux', 'architecture': 'arm64'},
+                                 {'native_tray_compiled': True, 'platform': 'darwin', 'architecture': 'amd64'}):
+                with mock.patch.object(p, 'run', side_effect=['enable-autostart', json.dumps(capabilities)]):
+                    with self.assertRaisesRegex(ValueError, 'native tray support'):
+                        p.stage_desktop(root, 'darwin', 'arm64', binary, '1.2.3')
+                self.assertFalse(root.exists())
 
     def test_expected_desktop_files_are_required_and_no_other_plist_is_allowed(self):
         with tempfile.TemporaryDirectory() as d:

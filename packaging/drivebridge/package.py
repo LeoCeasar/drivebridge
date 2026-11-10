@@ -335,6 +335,10 @@ def stage_desktop(root, target, arch, binary, version):
     help_text = run([binary, 'desktop', '--help'])
     if 'enable-autostart' not in help_text:
         raise ValueError('desktop binary lacks desktop command')
+    capabilities = json.loads(run([binary, 'desktop', 'capabilities']))
+    if (capabilities.get('native_tray_compiled') is not True or
+            capabilities.get('platform') != target or capabilities.get('architecture') != arch):
+        raise ValueError('desktop binary lacks native tray support for requested OS/architecture')
     relative = 'DriveBridge.app/Contents/MacOS/drivebridge-desktop' if target == 'darwin' else 'bin/drivebridge-desktop' + ('.exe' if target == 'windows' else '')
     copy_file(binary, root / relative)
     copy_file(HERE / 'desktop.LICENSES', root / 'licenses/desktop.LICENSES')

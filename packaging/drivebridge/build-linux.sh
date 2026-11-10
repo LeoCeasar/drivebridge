@@ -15,7 +15,7 @@ if ! $DB_UNSIGNED; then
 fi
 if $DB_DESKTOP; then
   need pkg-config
-  pkg-config --exists gtk+-3.0 ayatana-appindicator3-0.1 || fail 'desktop build requires GTK3 and Ayatana AppIndicator3 development libraries'
+  pkg-config --exists gtk+-3.0 gio-2.0 ayatana-appindicator3-0.1 || fail 'desktop build requires GTK3 and Ayatana AppIndicator3 development libraries'
 fi
 prepare_work
 build_stage 0 ''
