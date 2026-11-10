@@ -17,6 +17,7 @@ type namespaceRecord struct {
 	Before        []model.Entry            `json:"before"`
 	Sealed        map[model.EntryID]uint64 `json:"sealed,omitempty"`
 	ActionPending bool                     `json:"action_pending,omitempty"`
+	ResultKind    model.Kind               `json:"result_kind,omitempty"`
 }
 
 func under(p, root string) bool { return p == root || (root != "" && strings.HasPrefix(p, root+"/")) }
@@ -94,7 +95,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 			if op.Kind == "replace" && !op.DstExists {
 				return ErrNotFound
 			}
-			if op.Kind == "replace" && (src.Kind == model.KindFolder || dst.Kind == model.KindFolder || src.Kind != dst.Kind) {
+			if op.Kind == "replace" && (src.Kind == model.KindFolder || dst.Kind == model.KindFolder || (src.Kind != dst.Kind && (src.Token != "" || src.RemoteCheckpoint != ""))) {
 				return model.ErrUnsupportedContent
 			}
 			parent := path.Dir(op.Dst)
@@ -248,6 +249,15 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 			if src.Local == "" {
 				return errors.New("replacement source is not materialized")
 			}
+			if dst.Kind == model.KindDocx {
+				size, er := s.blobSize(r.Op.Input)
+				if er != nil {
+					return er
+				}
+				if size > 10<<20 {
+					return model.ErrUnsupportedContent
+				}
+			}
 			if er = supersedeQueued(tx, src.ID); er != nil {
 				return er
 			}
@@ -285,6 +295,18 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 				e.Remote = r.Op.Dst + strings.TrimPrefix(e.Remote, r.Op.Src)
 				if e.ID == r.Op.SrcID {
 					e.CloudName = path.Base(r.Op.Dst)
+					if r.ResultKind != "" {
+						if r.ResultKind == model.KindDocx && e.Local != "" {
+							size, er := s.blobSize(e.Local)
+							if er != nil {
+								return er
+							}
+							if size > 10<<20 {
+								return model.ErrUnsupportedContent
+							}
+						}
+						e.Kind = r.ResultKind
+					}
 				}
 				if er = tx.Bucket([]byte("paths")).Put([]byte(e.Remote), []byte(e.ID)); er != nil {
 					return er
