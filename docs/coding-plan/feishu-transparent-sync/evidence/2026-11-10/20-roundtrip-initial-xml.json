@@ -1,0 +1,30 @@
+{
+  "label": "20-roundtrip-initial-xml",
+  "timestamp": "2026-11-10T05:54:03.484914+00:00",
+  "argv": [
+    "docs",
+    "+fetch",
+    "--as",
+    "user",
+    "--doc",
+    "MOlHdSGp2oDNTZxqqPucRwmxnug",
+    "--doc-format",
+    "xml",
+    "--detail",
+    "full"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "content": "<title id=\"MOlHdSGp2oDNTZxqqPucRwmxnug\">DriveBridge-Markdown往返验证</title><h1 id=\"doxcnnZOX8KRqz6oTX7V5U2uR6E\">Markdown 验证</h1><p id=\"doxcnJbNQdR1wT5DdE07XMVnZHg\">中文段落：版本为 v1。</p><h2 id=\"doxcnDBGZlIeHVgwkoYHvsXmsBb\">列表</h2><ul><li id=\"doxcnUGZ6DD9AB9JlDiiSHhdVEc\">第一项</li><li id=\"doxcnpWGTe2wFMqbxmiAFasK5hL\">第二项</li></ul><h2 id=\"doxcnnBid41GIzRTlmqoUFBskgb\">代码</h2><pre id=\"doxcnzhsihe6Hhq4koB8b0Mehgc\" caption=\"&#xA;\" lang=\"go\" wrap=\"false\"><code>fmt.Println(\"a[b] &lt;tag&gt; C:\\tmp\")</code></pre><h2 id=\"doxcnkOJswYsJQnAqaqC0RFy5Nc\">表格</h2><table id=\"doxcnLRJ6jQNgbqzEW5AZf1Xo4e\"><colgroup><col width=\"120\"/><col width=\"98\"/></colgroup><thead><tr><th vertical-align=\"top\"><p id=\"doxcnd3wgJWqQrAr92VhXdya3IK\">名称</p></th><th vertical-align=\"top\"><p id=\"doxcnhoAYHHXA4qwu1zsJSkifMg\">值</p></th></tr></thead><tbody><tr><td vertical-align=\"top\"><p id=\"doxcnTFGjATTlWKBj0T03DUxz3b\">alpha</p></td><td vertical-align=\"top\"><p id=\"doxcnxPpLLIPlFvgNSapxD7rA0t\">1</p></td></tr><tr><td vertical-align=\"top\"><p id=\"doxcn0EodmCLrVhFxe07vOT2M2g\">beta</p></td><td vertical-align=\"top\"><p id=\"doxcn9FQWtxQuUALzP1trYwbzMb\">2</p></td></tr></tbody></table><h2 id=\"doxcnKraApBuTm9fsUxDYzxLhsB\">链接</h2><p id=\"doxcnkyA1C5Vx5m5bUCoKCxezwg\"><a href=\"https://www.feishu.cn/\">飞书</a></p><h2 id=\"doxcnq7dQRAG6hiYAHJFzjycD4g\">字面量</h2><p id=\"doxcnxyQkf41Os5RM90Tg1191Vd\">*星号*、x_y、a[b]、&lt;tag&gt;、C:\\Users\\test。</p>",
+        "document_id": "MOlHdSGp2oDNTZxqqPucRwmxnug",
+        "revision_id": 3
+      }
+    }
+  },
+  "stderr": ""
+}

@@ -1,0 +1,35 @@
+{
+  "label": "28-roundtrip-targeted-edit",
+  "timestamp": "2026-11-10T05:54:46.337013+00:00",
+  "argv": [
+    "docs",
+    "+update",
+    "--as",
+    "user",
+    "--doc",
+    "MOlHdSGp2oDNTZxqqPucRwmxnug",
+    "--command",
+    "block_replace",
+    "--block-id",
+    "doxcnJbNQdR1wT5DdE07XMVnZHg",
+    "--content",
+    "<p>中文段落：版本为 v2。</p>",
+    "--revision-id",
+    "4"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "revision_id": 5,
+        "url": "https://pcnm0xjfs021.feishu.cn/docx/MOlHdSGp2oDNTZxqqPucRwmxnug"
+      },
+      "result": "success",
+      "warnings": []
+    }
+  },
+  "stderr": ""
+}

@@ -1,0 +1,26 @@
+{
+  "label": "24-download-overwritten",
+  "timestamp": "2026-11-10T05:54:24.144082+00:00",
+  "argv": [
+    "drive",
+    "+download",
+    "--as",
+    "user",
+    "--file-token",
+    "FfljbLVAmoYpLAxqr9ScIVAen8e",
+    "--output",
+    "overwrite-readback.txt",
+    "--json"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "saved_path": "/private/tmp/drivebridge-feishu-validation/overwrite-readback.txt",
+      "size_bytes": 81
+    }
+  },
+  "stderr": ""
+}

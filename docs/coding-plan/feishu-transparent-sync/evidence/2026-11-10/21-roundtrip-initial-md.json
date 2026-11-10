@@ -1,0 +1,33 @@
+{
+  "label": "21-roundtrip-initial-md",
+  "timestamp": "2026-11-10T05:54:04.310926+00:00",
+  "argv": [
+    "docs",
+    "+fetch",
+    "--as",
+    "user",
+    "--doc",
+    "MOlHdSGp2oDNTZxqqPucRwmxnug",
+    "--doc-format",
+    "markdown",
+    "--detail",
+    "full"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "content": "<title>DriveBridge-Markdown往返验证</title>\n\n# Markdown 验证\n\n中文段落：版本为 v1。\n\n## 列表\n\n- 第一项\n- 第二项\n\n## 代码\n\n```go\nfmt.Println(\"a[b] <tag> C:\\tmp\")\n```\n\n## 表格\n\n| 名称 | 值 |\n|-|-|\n| alpha | 1 |\n| beta | 2 |\n\n## 链接\n\n[飞书](https://www.feishu.cn/)\n\n## 字面量\n\n\\*星号\\*、x_y、a[b]、<tag>、C:\\Users\\test。",
+        "document_id": "MOlHdSGp2oDNTZxqqPucRwmxnug",
+        "revision_id": 3
+      },
+      "warnings": [
+        "--detail full is only supported with --doc-format xml; returning markdown output and ignoring the unsupported detail option"
+      ]
+    }
+  },
+  "stderr": ""
+}

@@ -1,0 +1,31 @@
+{
+  "label": "22-upload-file",
+  "timestamp": "2026-11-10T05:54:20.702765+00:00",
+  "argv": [
+    "drive",
+    "+upload",
+    "--as",
+    "user",
+    "--folder-token",
+    "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+    "--file",
+    "overwrite-test.txt",
+    "--name",
+    "DriveBridge-普通文件覆盖验证.txt",
+    "--json"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "file_name": "DriveBridge-普通文件覆盖验证.txt",
+      "file_token": "FfljbLVAmoYpLAxqr9ScIVAen8e",
+      "size": 45,
+      "url": "https://pcnm0xjfs021.feishu.cn/file/FfljbLVAmoYpLAxqr9ScIVAen8e",
+      "version": "7706417122722352147"
+    }
+  },
+  "stderr": ""
+}

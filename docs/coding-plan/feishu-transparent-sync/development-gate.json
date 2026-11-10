@@ -1,0 +1,58 @@
+{
+  "kind": "gate",
+  "work_id": "feishu-transparent-sync",
+  "stage": "development",
+  "checks": [
+    {
+      "id": "1",
+      "score": 10,
+      "evidence": "design.md v1.1 覆盖 R-01 至 R-13；R-10 的尽力同步边界已由用户在真实实验后确认。"
+    },
+    {
+      "id": "2",
+      "score": 10,
+      "evidence": "已读取 cmd/all、backend/feishu、mountlib、vfs/cache、read/write handles、平台包和原生 GUI 实际入口。"
+    },
+    {
+      "id": "3",
+      "score": 10,
+      "evidence": "开发文档按配置/CLI契约、存储、codec、overlay、VFS、同步、认证、manager、UI、迁移、打包、验收拆任务，每项明确需求 ID。"
+    },
+    {
+      "id": "4",
+      "score": 10,
+      "evidence": "低层lib/larkcli、原生backend与内部托管overlay分开；VFS只承担可显式启用的本机发布屏障。"
+    },
+    {
+      "id": "5",
+      "score": 10,
+      "evidence": "规范模型见design.md 5.2；store、cloud、codec、manager和冲突提交的共享签名在开发文档统一定义。"
+    },
+    {
+      "id": "6",
+      "score": 10,
+      "evidence": "覆盖上传/分页已有、size初始0、VFS清Dirty、元数据size_bytes和Markdown重导入损失均映射到具体任务，不从零重造已有能力。"
+    },
+    {
+      "id": "7",
+      "score": 10,
+      "evidence": "模型/配置→runner/store→codec/overlay/VFS→引擎→auth/manager/UI→迁移/交付，模块依赖无回环。"
+    },
+    {
+      "id": "8",
+      "score": 10,
+      "evidence": "明确私有动态路径、profile/mount隔离、fsync+事务、不可变blob、双checkpoint、未知结果、GC引用及显式迁移。"
+    },
+    {
+      "id": "9",
+      "score": 5,
+      "evidence": "真实接口样本已取得；故障、三平台驱动、签名和安装环境尚未运行。文档规定实际运行作为交付门槛，环境缺失时禁止称该平台通过。"
+    },
+    {
+      "id": "10",
+      "score": 10,
+      "evidence": "每任务给出验证命令和预期；最终要求逐平台挂载/升级/数据恢复证据、任务复核及风险披露；不自动开始编码。"
+    }
+  ],
+  "critical_unknowns": []
+}

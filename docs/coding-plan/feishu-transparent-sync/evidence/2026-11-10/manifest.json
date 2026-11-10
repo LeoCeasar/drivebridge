@@ -1,0 +1,28 @@
+{
+  "cli_version": "1.0.99",
+  "cli_sha256": "a8f652c2a62577a152467a983ec60548570fb0a08715e95fa3f579438c81885b",
+  "parent_folder": "PTYjfSaKwlFBO5d391ScWpWQnrf",
+  "test_folder": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+  "documents": {
+    "conflict": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+    "roundtrip": "MOlHdSGp2oDNTZxqqPucRwmxnug",
+    "reimport": "LxYGdFAluoFEIYxvlPGcersXnLc"
+  },
+  "created_files": [
+    "FfljbLVAmoYpLAxqr9ScIVAen8e"
+  ],
+  "ordinary_file": {
+    "token": "FfljbLVAmoYpLAxqr9ScIVAen8e",
+    "first_sha256": "740dbca2270da147a9410283990efe8f099a36ae19a0af5ae3bdf2f5b5e6ff65",
+    "returned_token": "FfljbLVAmoYpLAxqr9ScIVAen8e",
+    "second_sha256": "70fbce145e5d54f7cc397c34d37465c9048a8d95f0b73ab3a44230edc4dd1cee",
+    "size": 81
+  },
+  "date": "2026-11-10",
+  "platform": "darwin/arm64",
+  "actor": "user identity on a separately configured validation profile",
+  "authorization": "user supplied folder and completed browser configuration and user authorization",
+  "resources_retained": true,
+  "product_code_modified": false,
+  "scope_limit": "Only synthetic resources created during this experiment were modified."
+}

@@ -1,0 +1,24 @@
+{
+  "label": "08-future-version",
+  "timestamp": "2026-11-10T05:51:55.360256+00:00",
+  "argv": [
+    "docs",
+    "+update",
+    "--as",
+    "user",
+    "--doc",
+    "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+    "--command",
+    "append",
+    "--content",
+    "<p>不应出现的未来版本写入。</p>",
+    "--revision-id",
+    "999999"
+  ],
+  "stdin": null,
+  "exit_code": 1,
+  "response": {
+    "non_json_output": ""
+  },
+  "stderr": "{\n  \"ok\": false,\n  \"identity\": \"user\",\n  \"error\": {\n    \"type\": \"api\",\n    \"subtype\": \"unknown\",\n    \"code\": 4000002,\n    \"message\": \"Invalid request parameters: the document version may be stale, block_id may be malformed, or references a non-existent block. Re-fetch the document structure (via the export API) and retry with the latest version and block_id\",\n    \"log_id\": \"20261110135155386DBB95B2D2ED12DC87\",\n    \"troubleshooter\": \"排查建议查看(Troubleshooting suggestions): https://open.feishu.cn/search?from=openapi&log_id=20261110135155386DBB95B2D2ED12DC87&code=4000002&method_id=7624173001570831314\"\n  }\n}\n"
+}

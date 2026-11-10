@@ -1,0 +1,17 @@
+{
+  "checks": {
+    "docs_ai_stale_version_accepted": true,
+    "native_stale_version_accepted": true,
+    "different_paragraphs_preserved": true,
+    "historical_revision_readable": true,
+    "unaffected_blocks_identical_after_local_patch": true,
+    "literal_angle_tag_lost_on_markdown_reimport": true,
+    "reimport_returned_warning": true,
+    "ordinary_file_verified": true
+  },
+  "unaffected_blocks": {
+    "pre": true,
+    "table": true,
+    "callout": true
+  }
+}

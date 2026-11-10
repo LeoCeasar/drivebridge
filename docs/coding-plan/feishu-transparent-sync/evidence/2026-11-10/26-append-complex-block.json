@@ -1,0 +1,33 @@
+{
+  "label": "26-append-complex-block",
+  "timestamp": "2026-11-10T05:54:44.672893+00:00",
+  "argv": [
+    "docs",
+    "+update",
+    "--as",
+    "user",
+    "--doc",
+    "MOlHdSGp2oDNTZxqqPucRwmxnug",
+    "--command",
+    "append",
+    "--content",
+    "<callout emoji=\"💡\"><p>云端高亮保留样本。</p></callout>",
+    "--revision-id",
+    "3"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "revision_id": 4,
+        "url": "https://pcnm0xjfs021.feishu.cn/docx/MOlHdSGp2oDNTZxqqPucRwmxnug"
+      },
+      "result": "success",
+      "warnings": []
+    }
+  },
+  "stderr": ""
+}

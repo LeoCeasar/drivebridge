@@ -1,0 +1,30 @@
+{
+  "label": "32-reimport-xml",
+  "timestamp": "2026-11-10T05:54:51.857311+00:00",
+  "argv": [
+    "docs",
+    "+fetch",
+    "--as",
+    "user",
+    "--doc",
+    "LxYGdFAluoFEIYxvlPGcersXnLc",
+    "--doc-format",
+    "xml",
+    "--detail",
+    "full"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "content": "<title id=\"LxYGdFAluoFEIYxvlPGcersXnLc\">DriveBridge-Markdown重导入验证</title><h1 id=\"doxcnk3pJKCfP7g33Ir0hDiplNd\">Markdown 验证</h1><p id=\"doxcnEUgvluKHt43qOvoCD6vtPb\">中文段落：版本为 v2。</p><h2 id=\"doxcnnRuFRuyYKmFLxUlDpY7uMb\">列表</h2><ul><li id=\"doxcnFJLBqYRFvUO3rb4gw8gfrf\">第一项</li><li id=\"doxcnSV1qn7F3thgtBEdYvJBSPg\">第二项</li></ul><h2 id=\"doxcnedPHkO7qWjwFHMHatF5Hif\">代码</h2><pre id=\"doxcnzzQx3UfcUbN0NyQR51R8ad\" caption=\"&#xA;\" lang=\"go\" wrap=\"false\"><code>fmt.Println(\"a[b] &lt;tag&gt; C:\\tmp\")</code></pre><h2 id=\"doxcnwBjiEj7jpS8XgNS9m54rCh\">表格</h2><table id=\"doxcnhRtfGQNTsHcQ5QLhmvWSOc\"><colgroup><col width=\"120\"/><col width=\"98\"/></colgroup><thead><tr><th vertical-align=\"top\"><p id=\"doxcnOTtksKOPiRzdvYnjapjJUe\">名称</p></th><th vertical-align=\"top\"><p id=\"doxcnK39TFf4jCRW31Dnd2oE7Nf\">值</p></th></tr></thead><tbody><tr><td vertical-align=\"top\"><p id=\"doxcnL7j0sifTEQ8muUVotnBiNF\">alpha</p></td><td vertical-align=\"top\"><p id=\"doxcnYA2KzPFFcb5mVYsrfE77Df\">1</p></td></tr><tr><td vertical-align=\"top\"><p id=\"doxcndOLTSZjEIwOPLj6nPhsdue\">beta</p></td><td vertical-align=\"top\"><p id=\"doxcnjWWcZ734anynEhPx3Giymh\">2</p></td></tr></tbody></table><h2 id=\"doxcnKoVgBpPPV9MdvTzBFs8Uqc\">链接</h2><p id=\"doxcnDQN5M4AWaZtPvLOyVMyokh\"><a href=\"https://www.feishu.cn/\">飞书</a></p><h2 id=\"doxcnjwCp44pkpnskA0jmjyxQiM\">字面量</h2><p id=\"doxcnd7WlGcEEIow7QLqUAwcLze\">*星号*、x_y、a[b]、、C:\\Users\\test。</p><callout id=\"doxcnZXe3EqMmR5ayd2OT0DvdKg\" background-color=\"rgb(255,245,235)\" border-color=\"rgb(255,186,107)\" emoji=\"💡\"><p id=\"doxcniXSVppM05Dkw7Nix6okpDg\">云端高亮保留样本。</p></callout>",
+        "document_id": "LxYGdFAluoFEIYxvlPGcersXnLc",
+        "revision_id": 3
+      }
+    }
+  },
+  "stderr": ""
+}

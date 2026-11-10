@@ -1,0 +1,45 @@
+{
+  "label": "34-file-version-metadata",
+  "timestamp": "2026-11-10T06:03:34.248182+00:00",
+  "argv": [
+    "drive",
+    "+version-history",
+    "--as",
+    "user",
+    "--file-token",
+    "FfljbLVAmoYpLAxqr9ScIVAen8e",
+    "--limit",
+    "2",
+    "--json"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "has_more": false,
+      "versions": [
+        {
+          "action_type": "upload",
+          "edited_at": "1794290061800",
+          "is_deleted": false,
+          "name": "DriveBridge-普通文件覆盖验证.txt",
+          "size_bytes": 81,
+          "tag": 2,
+          "version": "7706417134590577662"
+        },
+        {
+          "action_type": "upload",
+          "edited_at": "1794290059026",
+          "is_deleted": false,
+          "name": "DriveBridge-普通文件覆盖验证.txt",
+          "size_bytes": 45,
+          "tag": 1,
+          "version": "7706417122722352147"
+        }
+      ]
+    }
+  },
+  "stderr": ""
+}

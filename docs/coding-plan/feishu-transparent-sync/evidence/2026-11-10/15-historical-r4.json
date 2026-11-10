@@ -1,0 +1,32 @@
+{
+  "label": "15-historical-r4",
+  "timestamp": "2026-11-10T05:52:59.075514+00:00",
+  "argv": [
+    "docs",
+    "+fetch",
+    "--as",
+    "user",
+    "--doc",
+    "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+    "--doc-format",
+    "xml",
+    "--detail",
+    "full",
+    "--revision-id",
+    "4"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "content": "<title id=\"JnT5dqUl3orOi1xVIkWcOYBbnOb\">DriveBridge-并发版本验证</title><h1 id=\"doxcnoHg8vgbuiYjrcaLpAaD82X\">并发验证</h1><p id=\"doxcnvfnMPsnPkXWLxOs56LlKpe\">预算为 120 万。</p><p id=\"doxcnYTtMkK0CFvKAXvcVzu8bag\">这是独立章节。</p>",
+        "document_id": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+        "revision_id": 4
+      }
+    }
+  },
+  "stderr": ""
+}

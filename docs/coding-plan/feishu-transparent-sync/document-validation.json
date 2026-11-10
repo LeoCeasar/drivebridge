@@ -1,0 +1,35 @@
+{
+  "kind": "document-validation",
+  "work_id": "feishu-transparent-sync",
+  "date": "2026-11-10",
+  "design_sha256": "4ea2d2034e5096cef03d891928d0cb2f8b0d60716a9f1fd3264c5f8cead338eb",
+  "development_sha256": "9919bbecf5b688d09ab54a36bf7df4e4142c48c6f40673f2ad31094612b0a86d",
+  "review_mode": "same-model fresh-context document review plus author source verification",
+  "review_findings_closed": 4,
+  "checks": [
+    {
+      "check": "design gate require-ready",
+      "exit_code": 0
+    },
+    {
+      "check": "development gate require-ready",
+      "exit_code": 0
+    },
+    {
+      "check": "local links, JSON, Go snippet syntax, whitespace, 13 task boundaries",
+      "exit_code": 0
+    },
+    {
+      "check": "handoff metadata and actual design digest binding",
+      "exit_code": 0
+    }
+  ],
+  "product_code_changed": false,
+  "new_product_tests_run": false,
+  "unverified_release_conditions": [
+    "native mounts and GUI on all promised OS/architectures",
+    "failure injection and crash recovery",
+    "large/empty file capability",
+    "signed installers and upgrade preservation"
+  ]
+}

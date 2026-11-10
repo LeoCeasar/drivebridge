@@ -1,0 +1,71 @@
+{
+  "kind": "gate",
+  "work_id": "feishu-transparent-sync",
+  "stage": "design",
+  "checks": [
+    {
+      "id": "1",
+      "score": 10,
+      "evidence": "R-01 至 R-10：用户确认本地透明编辑、md 优先、其他文件覆盖、保存后同步、冲突 diff，以及实测后的尽力检测/恢复边界。"
+    },
+    {
+      "id": "2",
+      "score": 10,
+      "evidence": "本地入口、feishu、VFS/cache、mountlib、Web GUI 与打包已读取；基线 eafd1257d255e00f38aed058eaf24afd2d3cb4f5。"
+    },
+    {
+      "id": "3",
+      "score": 10,
+      "evidence": "明确普通 md 与在线文档投影、VFS 本机提交与云端确认、局部补丁与原子条件写的区别；语法仅 CommonMark 核心和简单 GFM 表格。"
+    },
+    {
+      "id": "4",
+      "score": 10,
+      "evidence": "首版不做逐键实时编辑、Office 内容合并、AI 语义猜测或既有普通 md 的自动转换；用户确认两接口的检查后写入竞态仍可能覆盖。"
+    },
+    {
+      "id": "5",
+      "score": 10,
+      "evidence": "工程决定：托管 overlay 的 fs.Object.Update 仅持久提交本机不可变快照，独立引擎负责云端；VFS 增加显式启用的空闲文件发布屏障；原生 feishu 命令仍直连，不改变其上传成功含义。"
+    },
+    {
+      "id": "6",
+      "score": 10,
+      "evidence": "工程决定：代次、LocalCheckpoint/RemoteCheckpoint 双基线、上传结果不明确状态、合并冲突和版本化人工解决；外部内容仅在无句柄、VFS cache clean、CAS 代次匹配时发布。"
+    },
+    {
+      "id": "7",
+      "score": 10,
+      "evidence": "固定 CLI 1.0.99，已实测两个接口接受过期写入、近期历史可读、小文件同 Token 覆盖、分页聚合；追加真实 +version-history 响应包含 size_bytes，可作大小元数据来源。未测的大文件和超时在开发验收中强制验证，不假称通过。"
+    },
+    {
+      "id": "8",
+      "score": 10,
+      "evidence": "工程决定：按系统用户/profile/mount UUID 隔离；私有 bbolt 与 fsync 后不可变 blob；官方 CLI 管理授权，产品配置不存密钥；未确认、冲突和恢复引用的数据不参与清理。"
+    },
+    {
+      "id": "9",
+      "score": 5,
+      "evidence": "三平台交付路径、依赖检查、旧配置显式导入、schema 备份迁移和回滚只读策略可以定义；尚无三个平台的运行及签名证据，签名凭据和实际环境不妨碍写任务，但阻塞对应产物发布。"
+    },
+    {
+      "id": "10",
+      "score": 10,
+      "evidence": "真实接口反例已纳入已确认边界；所有能力映射到单位/故障注入/原生挂载/真实接口/升级验收。结果须明确已执行与计划执行，发布不能用交叉编译代替实际挂载。"
+    }
+  ],
+  "critical_unknowns": [],
+  "accepted_risks": [
+    "用户已明确接受飞书网页与本地同段并发时仍可能覆盖；冲突 UI 只覆盖已检测冲突，历史恢复不保证任意离线时长。"
+  ],
+  "builder_decisions": {
+    "local_commit": "内置托管 overlay 先落盘 immutable blob 和 journal；本机已保存与云端已同步使用不同状态。",
+    "vfs_publication": "显式启用的 TryExternalUpdate 本地发布屏障；打开文件、Dirty cache、namespace 操作或代次不匹配时延期；网络操作始终在屏障外。",
+    "baseline": "单文件最多一个网络作业；确认旧代次不清除新代次；保存作业输入本地快照及实际远端回读两个 checkpoint。",
+    "markdown": "goldmark v1.8.7 解析源字节范围；自有 XML 安全序列化及侧车映射；复杂块只读保留、模糊匹配转冲突，禁止官方 Markdown 原样重导入。",
+    "unknown_upload": "请求结果不明确时进入 awaiting_verification，先核验不盲重试；创建使用持久 operation UUID 和临时远端名称识别，匹配不唯一则暂停。",
+    "limits": "Markdown 可编辑上限10MiB；缓存预算5GiB仅清理可安全淘汰数据；默认写回2s、活动文档轮询5s、目录刷新30s、每profile并发2及可配置限流退避。",
+    "ui": "嵌入本机浏览器三方diff页与系统弹窗；离线本机可合并并排队，提交时校验本地/远端输入版本；无桌面保留冲突并提供CLI入口。",
+    "compatibility": "不修改Rclone原命令语义；托管挂载与raw feishu明确分开；不自动转换既有普通.md；所有安装包不携带实验账号、路径或目录。"
+  }
+}

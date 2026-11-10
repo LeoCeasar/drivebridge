@@ -1,0 +1,36 @@
+{
+  "label": "31-create-reimport-doc",
+  "timestamp": "2026-11-10T05:54:51.091786+00:00",
+  "argv": [
+    "docs",
+    "+create",
+    "--as",
+    "user",
+    "--parent-token",
+    "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+    "--title",
+    "DriveBridge-Markdown重导入验证",
+    "--doc-format",
+    "markdown",
+    "--content",
+    "-"
+  ],
+  "stdin": "<title>DriveBridge-Markdown往返验证</title>\n\n# Markdown 验证\n\n中文段落：版本为 v2。\n\n## 列表\n\n- 第一项\n- 第二项\n\n## 代码\n\n```go\nfmt.Println(\"a[b] <tag> C:\\tmp\")\n```\n\n## 表格\n\n| 名称 | 值 |\n|-|-|\n| alpha | 1 |\n| beta | 2 |\n\n## 链接\n\n[飞书](https://www.feishu.cn/)\n\n## 字面量\n\n\\*星号\\*、x_y、a[b]、<tag>、C:\\Users\\test。\n\n<callout emoji=\"💡\">\n云端高亮保留样本。\n</callout>",
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "document_id": "LxYGdFAluoFEIYxvlPGcersXnLc",
+        "revision_id": 3,
+        "url": "https://pcnm0xjfs021.feishu.cn/docx/LxYGdFAluoFEIYxvlPGcersXnLc"
+      },
+      "warnings": [
+        "degrade_code=4010,msg=Unsupported tag <tag> was removed; inner content was retained. Use only supported DocxXML tags or a configured tag alias",
+        "degrade_code=1017,msg=Duplicate document title was filtered: 1 duplicate <title> tag was filtered; the first <title> was kept. Keep only one document title; when using --title, do not also generate another <title> in content"
+      ]
+    }
+  },
+  "stderr": ""
+}

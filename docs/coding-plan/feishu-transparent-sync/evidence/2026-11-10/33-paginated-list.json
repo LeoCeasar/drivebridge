@@ -1,0 +1,67 @@
+{
+  "label": "33-paginated-list",
+  "timestamp": "2026-11-10T05:55:28.037390+00:00",
+  "argv": [
+    "drive",
+    "files",
+    "list",
+    "--as",
+    "user",
+    "--folder-token",
+    "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+    "--page-size",
+    "1",
+    "--page-all",
+    "--page-limit",
+    "0",
+    "--json"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "files": [
+        {
+          "created_time": "1794290088",
+          "modified_time": "1794290090",
+          "name": "DriveBridge-Markdown重导入验证",
+          "parent_token": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+          "token": "LxYGdFAluoFEIYxvlPGcersXnLc",
+          "type": "docx",
+          "url": "https://pcnm0xjfs021.feishu.cn/docx/LxYGdFAluoFEIYxvlPGcersXnLc"
+        },
+        {
+          "created_time": "1794290040",
+          "modified_time": "1794290086",
+          "name": "DriveBridge-Markdown往返验证",
+          "parent_token": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+          "token": "MOlHdSGp2oDNTZxqqPucRwmxnug",
+          "type": "docx",
+          "url": "https://pcnm0xjfs021.feishu.cn/docx/MOlHdSGp2oDNTZxqqPucRwmxnug"
+        },
+        {
+          "created_time": "1794290058",
+          "modified_time": "1794290061",
+          "name": "DriveBridge-普通文件覆盖验证.txt",
+          "parent_token": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+          "token": "FfljbLVAmoYpLAxqr9ScIVAen8e",
+          "type": "file",
+          "url": "https://pcnm0xjfs021.feishu.cn/file/FfljbLVAmoYpLAxqr9ScIVAen8e"
+        },
+        {
+          "created_time": "1794289876",
+          "modified_time": "1794290038",
+          "name": "DriveBridge-并发版本验证",
+          "parent_token": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+          "token": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+          "type": "docx",
+          "url": "https://pcnm0xjfs021.feishu.cn/docx/JnT5dqUl3orOi1xVIkWcOYBbnOb"
+        }
+      ],
+      "has_more": false
+    }
+  },
+  "stderr": "[page 1] fetching...\n[page 2] fetching...\n[page 3] fetching...\n[page 4] fetching...\n[pagination] merged 4 pages, 4 total items\n"
+}

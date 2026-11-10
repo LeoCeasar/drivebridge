@@ -1,0 +1,32 @@
+{
+  "label": "02-create-conflict-doc",
+  "timestamp": "2026-11-10T05:51:19.032084+00:00",
+  "argv": [
+    "docs",
+    "+create",
+    "--as",
+    "user",
+    "--parent-token",
+    "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+    "--title",
+    "DriveBridge-并发版本验证",
+    "--doc-format",
+    "markdown",
+    "--content",
+    "-"
+  ],
+  "stdin": "# 并发验证\n\n预算为 100 万。\n\n这是独立章节。\n",
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "document_id": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+        "revision_id": 3,
+        "url": "https://pcnm0xjfs021.feishu.cn/docx/JnT5dqUl3orOi1xVIkWcOYBbnOb"
+      }
+    }
+  },
+  "stderr": ""
+}

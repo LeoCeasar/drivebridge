@@ -1,0 +1,29 @@
+{
+  "label": "01-create-folder",
+  "timestamp": "2026-11-10T05:51:15.532094+00:00",
+  "argv": [
+    "drive",
+    "+create-folder",
+    "--as",
+    "user",
+    "--folder-token",
+    "PTYjfSaKwlFBO5d391ScWpWQnrf",
+    "--name",
+    "DriveBridge-接口验证-20261110",
+    "--json"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "created": true,
+      "folder_token": "NpsFflI2RlYxjrdfkeWcHI7Xn7g",
+      "name": "DriveBridge-接口验证-20261110",
+      "parent_folder_token": "PTYjfSaKwlFBO5d391ScWpWQnrf",
+      "url": "https://pcnm0xjfs021.feishu.cn/drive/folder/NpsFflI2RlYxjrdfkeWcHI7Xn7g"
+    }
+  },
+  "stderr": ""
+}

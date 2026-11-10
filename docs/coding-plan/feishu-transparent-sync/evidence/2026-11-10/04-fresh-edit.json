@@ -1,0 +1,35 @@
+{
+  "label": "04-fresh-edit",
+  "timestamp": "2026-11-10T05:51:52.181240+00:00",
+  "argv": [
+    "docs",
+    "+update",
+    "--as",
+    "user",
+    "--doc",
+    "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+    "--command",
+    "str_replace",
+    "--pattern",
+    "预算为 100 万。",
+    "--content",
+    "预算为 120 万。",
+    "--revision-id",
+    "3"
+  ],
+  "stdin": null,
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "document": {
+        "revision_id": 4,
+        "url": "https://pcnm0xjfs021.feishu.cn/docx/JnT5dqUl3orOi1xVIkWcOYBbnOb"
+      },
+      "result": "success",
+      "warnings": []
+    }
+  },
+  "stderr": ""
+}

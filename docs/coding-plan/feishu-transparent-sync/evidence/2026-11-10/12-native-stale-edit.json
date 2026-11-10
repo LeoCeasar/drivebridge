@@ -1,0 +1,51 @@
+{
+  "label": "12-native-stale-edit",
+  "timestamp": "2026-11-10T05:52:56.769067+00:00",
+  "argv": [
+    "api",
+    "PATCH",
+    "/open-apis/docx/v1/documents/JnT5dqUl3orOi1xVIkWcOYBbnOb/blocks/doxcnIXLVCliyXAhpclKNAjkLdg",
+    "--as",
+    "user",
+    "--params",
+    "{\"document_revision_id\": 5, \"client_token\": \"f1064c83-64fc-4d22-93e0-8ef981f0b993\"}",
+    "--data",
+    "-"
+  ],
+  "stdin": "{\"update_text_elements\": {\"elements\": [{\"text_run\": {\"content\": \"预算为 150 万。\"}}]}}",
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "block": {
+        "block_id": "doxcnIXLVCliyXAhpclKNAjkLdg",
+        "block_type": 2,
+        "parent_id": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+        "text": {
+          "elements": [
+            {
+              "text_run": {
+                "content": "预算为 150 万。",
+                "text_element_style": {
+                  "bold": false,
+                  "inline_code": false,
+                  "italic": false,
+                  "strikethrough": false,
+                  "underline": false
+                }
+              }
+            }
+          ],
+          "style": {
+            "align": 1,
+            "folded": false
+          }
+        }
+      },
+      "client_token": "f1064c83-64fc-4d22-93e0-8ef981f0b993",
+      "document_revision_id": 7
+    }
+  },
+  "stderr": ""
+}

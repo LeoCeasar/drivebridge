@@ -1,0 +1,51 @@
+{
+  "label": "16-native-newer-budget",
+  "timestamp": "2026-11-10T05:53:58.025973+00:00",
+  "argv": [
+    "api",
+    "PATCH",
+    "/open-apis/docx/v1/documents/JnT5dqUl3orOi1xVIkWcOYBbnOb/blocks/doxcnIXLVCliyXAhpclKNAjkLdg",
+    "--as",
+    "user",
+    "--params",
+    "{\"document_revision_id\": 7, \"client_token\": \"5627041b-2cdd-449b-967f-290f55a6855a\"}",
+    "--data",
+    "-"
+  ],
+  "stdin": "{\"update_text_elements\": {\"elements\": [{\"text_run\": {\"content\": \"预算为 160 万。\"}}]}}",
+  "exit_code": 0,
+  "response": {
+    "ok": true,
+    "identity": "user",
+    "data": {
+      "block": {
+        "block_id": "doxcnIXLVCliyXAhpclKNAjkLdg",
+        "block_type": 2,
+        "parent_id": "JnT5dqUl3orOi1xVIkWcOYBbnOb",
+        "text": {
+          "elements": [
+            {
+              "text_run": {
+                "content": "预算为 160 万。",
+                "text_element_style": {
+                  "bold": false,
+                  "inline_code": false,
+                  "italic": false,
+                  "strikethrough": false,
+                  "underline": false
+                }
+              }
+            }
+          ],
+          "style": {
+            "align": 1,
+            "folded": false
+          }
+        }
+      },
+      "client_token": "5627041b-2cdd-449b-967f-290f55a6855a",
+      "document_revision_id": 8
+    }
+  },
+  "stderr": ""
+}
