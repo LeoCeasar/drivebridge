@@ -1,0 +1,130 @@
+{
+  "title": "DriveBridge 操作手册与实机验证",
+  "date": "2026-11-10",
+  "platform": "macOS 26.5.1 / Apple Silicon",
+  "version": "0.1.0 开发版",
+  "source_head": "4e2845c11",
+  "overall": "partial",
+  "summary": "macOS 安装和产品账号授权已通过。真实挂载失败：默认内核后端不可用，FSKit 只读诊断也确认系统扩展未启用。已打开系统设置并等待用户启用；test 文件同步尚未执行。",
+  "steps": [
+    {
+      "id": "install",
+      "title": "安装驱动与 DriveBridge",
+      "status": "verified",
+      "body": "从 macFUSE 官方网站下载驱动，打开镜像中的 Install macFUSE。完成许可和系统授权后，再安装带挂载引擎的 DriveBridge 桌面包。",
+      "observed": "macFUSE 已由用户安装，driver 与 fuse.h 已确认存在。修复安装校验传递后，完整桌面 pkg 通过系统 Installer 安装到当前用户 ~/Applications/DriveBridge，界面明确显示安装成功；退出后短期安装凭据已清理。本轮为 unsigned 开发测试包，未验收正式签名和升级。",
+      "screenshots": [
+        {
+          "src": "assets/01-macfuse-official.png",
+          "caption": "本轮实拍：macFUSE 官方下载页面。"
+        },
+        {
+          "src": "assets/02-macfuse-image.png",
+          "caption": "本轮实拍：官方驱动镜像中的安装入口。"
+        },
+        {
+          "src": "assets/03-macfuse-installer.png",
+          "caption": "本轮实拍：安装欢迎页。到达此页不代表驱动已安装。"
+        },
+        {
+          "src": "assets/04-drivebridge-installer.png",
+          "caption": "本轮实拍：完整 DriveBridge 桌面包安装向导。"
+        },
+        {
+          "src": "assets/05-current-user-install.png",
+          "caption": "本轮实拍：安装器选择当前用户主目录作为安装范围。"
+        },
+        {
+          "src": "assets/06-installation-failed.png",
+          "caption": "本轮实拍：安装保护检查未通过，安装失败；不记为已安装。"
+        },
+        {
+          "src": "assets/07-installation-success.png",
+          "caption": "修复后本轮实拍：系统安装器明确显示安装成功。"
+        },
+        {
+          "src": "assets/10-setupfix-install-success.png",
+          "caption": "本轮实拍：包含首次配置修复的完整桌面包再次安装成功。"
+        }
+      ],
+      "checks": [
+        "完整包 desktop=true、mount=true，cmount 引擎",
+        "DMG 校验通过，32 项打包测试通过",
+        "Computer Use 实际安装成功；退出后私有安装 descriptor 已清理",
+        "正式签名、公证与带待上传数据的升级尚未验证"
+      ]
+    },
+    {
+      "id": "first-open",
+      "title": "打开软件与托盘",
+      "status": "partial",
+      "body": "安装后打开 DriveBridge，在菜单栏点击图标查看菜单并打开管理页。",
+      "observed": "Finder 双击已安装 .app 后，独立原生桌面进程启动，desktop status 确认 running=true。Computer Use 无法定位没有窗口的菜单栏程序，因此未声称托盘可见性已验证；通过产品 desktop start 打开真实本机管理页，并由 Computer Use 检查。",
+      "screenshot": "assets/08-manager-first-open.png",
+      "caption": "本轮实拍：已安装程序的真实本机管理页，账号配置为空。"
+    },
+    {
+      "id": "login",
+      "title": "登录飞书账号",
+      "status": "verified",
+      "body": "在本机管理页添加账号，打开飞书官方授权页；用户完成登录与授权后返回应用核验。",
+      "observed": "首次配置顺序修复后新增账号成功。通过官方页面选择已有飞书 CLI 应用，完成应用配置；再次发起用户授权，授权页明确为此前已授予权限的重用。返回管理页完成身份核验后，账号显示已授权。没有复制此前验证工具的凭据，未记录授权码或二维码。",
+      "screenshot": "assets/09-first-account-error.png",
+      "caption": "本轮实拍：首次添加账号失败；这是配置初始化缺陷，尚未进入飞书授权。",
+      "screenshots": [
+        {
+          "src": "assets/11-account-created.png",
+          "caption": "修复后本轮实拍：本机账号已成功创建并持久保存，尚待授权。"
+        },
+        {
+          "src": "assets/12-account-authorized.png",
+          "caption": "本轮实拍：产品账号完成官方用户授权并经本机服务核验，显示已授权。"
+        }
+      ]
+    },
+    {
+      "id": "mount",
+      "title": "挂载共享文件夹",
+      "status": "blocked",
+      "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
+      "observed": "测试目录映射与本机挂载配置保存成功。首次真实挂载失败，worker 日志为 macFUSE file system unavailable。独立本地合成文件的只读 FSKit 诊断返回 File system extension not enabled；Computer Use 看到系统设置中的 macFUSE 与 macFUSE (local) 两项均关闭。已请用户启用，尚未收到确认。每挂载 FSKit 配置选项已实现并测试，完整桌面候选包已构建，尚未替换当前安装；尚未通过真实挂载。",
+      "screenshot": "assets/13-fskit-extensions-off.png",
+      "caption": "本轮实拍：系统设置中的两项 FSKit 扩展均关闭，驱动安装完成仍不足以通过真实挂载。",
+      "checks": [
+        "共享目录映射和挂载配置已保存",
+        "产品默认挂载实际失败",
+        "FSKit 只读本地诊断实际失败：系统扩展未启用",
+        "等待用户完成系统运行授权；未写入挂载目录"
+      ]
+    },
+    {
+      "id": "upload",
+      "title": "在 test 目录上传与同步",
+      "status": "pending",
+      "body": "在独立 test 目录创建本轮专用 Markdown 和普通文件，等待上传，再到飞书核对名称、正文、大小。",
+      "observed": "已通过 Computer Use 在用户提供的 test 目录中创建独立验收子目录 DriveBridge-E2E-20261110-2323。两个合成文本样例已在本地准备，尚未放入挂载目录或上传；未修改业务文档。"
+    },
+    {
+      "id": "bidirectional",
+      "title": "验证双向更新",
+      "status": "pending",
+      "body": "分别修改测试文件的本地和云端内容，核对最终内容及同步确认状态。",
+      "observed": "尚未执行本轮双向同步。"
+    },
+    {
+      "id": "conflict",
+      "title": "处理多个文件冲突",
+      "status": "pending",
+      "body": "只对测试文件制造双方变更，在网页 diff 中逐文件编辑草稿并提交已选文件，核对每个文件的独立结果。",
+      "observed": "多文件合并界面已合入并通过定向测试，但未进行本轮真实云端冲突验证。"
+    },
+    {
+      "id": "stop",
+      "title": "安全停止与恢复",
+      "status": "pending",
+      "body": "检查待上传、冲突和未确认状态，再安全停止；重启后检查测试文件及队列是否保留。",
+      "observed": "尚未进行本轮真实挂载的停机和恢复验证。"
+    }
+  ],
+  "candidate_source_head": "6798f1933"
+}

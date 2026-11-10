@@ -20,6 +20,8 @@
 
 未知上传结果、云端待核验、本机待发布、VFS 待保存和冲突都会阻止显示“已同步”。文件夹没挂载、进程失联或状态不可读时同样不会显示成功。后台仅恢复明确启用的挂载；CLI/管理页主动停止会持久记录，桌面轮询不会把它立即重新拉起。
 
+macOS 支持按挂载保存 `macos_backend`：留空保持 macFUSE 默认行为，`fskit` 使用用户空间后端。管理页的 macOS 挂载方式选项与 CLI `feishu mount add ... --macos-backend fskit` 共用配置。FSKit 需要兼容的 macOS/macFUSE，并在系统设置“通用 → 登录项与扩展 → 文件系统扩展”启用 macFUSE 扩展。安装了驱动但扩展关闭时，真实挂载仍会失败；切换后端不会自动绕过系统授权。
+
 ## CLI 控制桌面程序
 
 ```sh
@@ -62,4 +64,6 @@ macOS 当前安装布局为一个 DriveBridge 目录，其中 `.app` 与 `bin/dr
 
 纯 CLI 构建不导入原生图形库。安装脚本使用 `--desktop`（Unix）或 `-Desktop`（Windows）增加桌面程序，不能与 CLI-only 测试模式混用。打包会执行只读的 `desktop capabilities`，拒绝没有编入原生托盘的二进制。
 
-完整构建参数、依赖、签名与安装保护见 [打包说明](../packaging/drivebridge/README.md)。Windows/Linux 原生安装与自启动、macOS 完整挂载包和签名仍待实际平台验收。Linux 系统级 deb/rpm 更新及部分卸载路径仍受既有多用户/安装生命周期保护限制；不能用桌面壳绕过这些条件。升级过程中不会清理待上传、未知结果、冲突或恢复数据。
+完整构建参数、依赖、签名与安装保护见 [打包说明](../packaging/drivebridge/README.md)。macOS Apple Silicon 完整桌面挂载包已构建，当前用户 pkg 安装已通过实机验证；真实挂载、托盘可见性、登录自启动、签名及升级仍按操作手册的实际记录验收。Windows/Linux 原生安装与自启动仍待对应平台验证。Linux 系统级 deb/rpm 更新及部分卸载路径仍受既有多用户/安装生命周期保护限制；不能用桌面壳绕过这些条件。升级过程中不会清理待上传、未知结果、冲突或恢复数据。
+
+本轮实机步骤、截图和未通过项见 [操作手册](manual/操作手册.html) 及 [验证记录](manual/验证记录.json)。
