@@ -283,6 +283,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/pkg/xattr v0.4.12
 	github.com/pquerna/otp v1.5.0
+	github.com/yuin/goldmark v1.8.7
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
 	golang.org/x/term v0.43.0
 )
