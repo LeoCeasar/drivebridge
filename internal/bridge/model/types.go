@@ -122,14 +122,16 @@ type Entry struct {
 }
 
 type Snapshot struct {
-	ID       SnapshotID `json:"id"`
-	Token    string     `json:"token"`
-	Revision string     `json:"revision"`
-	XML      BlobID     `json:"xml"`
-	Markdown BlobID     `json:"markdown"`
-	BlockMap BlobID     `json:"block_map"`
-	Size     int64      `json:"size"`
-	ModTime  time.Time  `json:"mod_time"`
+	FileData     BlobID        `json:"file_data,omitempty"`
+	FileIdentity *FileIdentity `json:"file_identity,omitempty"`
+	ID           SnapshotID    `json:"id"`
+	Token        string        `json:"token"`
+	Revision     string        `json:"revision"`
+	XML          BlobID        `json:"xml"`
+	Markdown     BlobID        `json:"markdown"`
+	BlockMap     BlobID        `json:"block_map"`
+	Size         int64         `json:"size"`
+	ModTime      time.Time     `json:"mod_time"`
 }
 
 type Job struct {

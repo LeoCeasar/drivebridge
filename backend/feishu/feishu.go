@@ -4,15 +4,10 @@ package feishu
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"path"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +16,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/lib/larkcli"
 	"github.com/rclone/rclone/lib/readers"
 )
 
@@ -84,83 +80,27 @@ type Fs struct {
 	features *fs.Features
 	cli      *cliClient
 
-	mu       sync.Mutex
-	dirCache map[string]string
+	mu           sync.Mutex
+	dirCache     map[string]string
+	observations []*larkcli.FileObservation
 }
 
 // Object describes a Feishu Drive file.
 type Object struct {
-	fs       *Fs
-	remote   string
-	token    string
-	fileType string
-	url      string
-	size     int64
-	modTime  time.Time
-	virtual  bool
-	content  []byte
+	fs          *Fs
+	remote      string
+	token       string
+	fileType    string
+	url         string
+	size        int64
+	modTime     time.Time
+	virtual     bool
+	content     []byte
+	mu          sync.Mutex
+	observation *larkcli.FileObservation
 }
 
-type cliClient struct {
-	command string
-	tempDir string
-}
-
-type commandResult struct {
-	OK    bool            `json:"ok"`
-	Data  json.RawMessage `json:"data"`
-	Error *cliError       `json:"error"`
-}
-
-type cliError struct {
-	Type    string `json:"type"`
-	Subtype string `json:"subtype"`
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (e *cliError) Error() string {
-	if e == nil {
-		return ""
-	}
-	if e.Code != 0 {
-		return fmt.Sprintf("%s/%s %d: %s", e.Type, e.Subtype, e.Code, e.Message)
-	}
-	return fmt.Sprintf("%s/%s: %s", e.Type, e.Subtype, e.Message)
-}
-
-type listData struct {
-	Files         []driveItem `json:"files"`
-	HasMore       bool        `json:"has_more"`
-	NextPageToken string      `json:"next_page_token"`
-}
-
-type driveItem struct {
-	Name         string `json:"name"`
-	Token        string `json:"token"`
-	Type         string `json:"type"`
-	CreatedTime  string `json:"created_time"`
-	ModifiedTime string `json:"modified_time"`
-	ParentToken  string `json:"parent_token"`
-	URL          string `json:"url"`
-}
-
-type createFolderData struct {
-	FolderToken string `json:"folder_token"`
-	Token       string `json:"token"`
-}
-
-type uploadData struct {
-	FileToken string `json:"file_token"`
-	Token     string `json:"token"`
-	Size      int64  `json:"size"`
-	URL       string `json:"url"`
-}
-
-type downloadData struct {
-	SavedPath string `json:"saved_path"`
-	SizeBytes int64  `json:"size_bytes"`
-}
+type driveItem larkcli.DriveItem
 
 func parsePath(root string) string {
 	return strings.Trim(root, "/")
@@ -168,6 +108,18 @@ func parsePath(root string) string {
 
 // NewFs constructs an Fs from the path.
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
+	return newFs(ctx, name, root, m, nil)
+}
+
+// NewFsWithRunner allows the product worker to reuse the native adapter with a
+// bound managed runner. Nil is rejected rather than silently falling back.
+func NewFsWithRunner(ctx context.Context, name, root string, m configmap.Mapper, runner *larkcli.Runner) (fs.Fs, error) {
+	if _, ok := runner.ManagedIdentity(); !ok {
+		return nil, larkcli.ErrIdentity
+	}
+	return newFs(ctx, name, root, m, runner)
+}
+func newFs(ctx context.Context, name, root string, m configmap.Mapper, runner *larkcli.Runner) (fs.Fs, error) {
 	opt := new(Options)
 	if err := configstruct.Set(m, opt); err != nil {
 		return nil, err
@@ -176,12 +128,15 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		opt.Command = defaultCommand
 	}
 
+	if runner == nil {
+		runner = larkcli.NewDirect(opt.Command)
+	}
 	root = parsePath(root)
 	f := &Fs{
 		name:     name,
 		root:     root,
 		opt:      *opt,
-		cli:      &cliClient{command: opt.Command, tempDir: opt.TempDir},
+		cli:      &cliClient{drive: larkcli.NewDrive(runner, opt.TempDir)},
 		dirCache: map[string]string{"": opt.RootFolderToken},
 	}
 	f.features = (&fs.Features{
@@ -351,6 +306,11 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !obj.virtual {
+		if err := obj.materialize(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return obj, nil
 }
 
@@ -361,7 +321,7 @@ func (f *Fs) newObject(remote string, item driveItem, virtual bool) *Object {
 		token:    item.Token,
 		fileType: item.Type,
 		url:      item.URL,
-		size:     0,
+		size:     -1,
 		modTime:  item.modTime(),
 		virtual:  virtual,
 	}
@@ -473,12 +433,9 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	return "", hash.ErrUnsupported
 }
 
-func (o *Object) Size() int64 { return o.size }
+func (o *Object) Size() int64 { o.mu.Lock(); defer o.mu.Unlock(); return o.size }
 
 func (o *Object) ModTime(ctx context.Context) time.Time {
-	if o.modTime.IsZero() {
-		return time.Now()
-	}
 	return o.modTime
 }
 
@@ -492,12 +449,14 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	if o.virtual {
 		return openBytes(o.content, options...), nil
 	}
-	file, err := o.fs.cli.download(ctx, o.token)
-	if err != nil {
+	if err := o.materialize(ctx); err != nil {
 		return nil, err
 	}
-	if info, statErr := file.Stat(); statErr == nil {
-		o.size = info.Size()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	file, err := o.observation.Open()
+	if err != nil {
+		return nil, err
 	}
 	return applyRange(file, o.size, options...), nil
 }
@@ -515,6 +474,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	if err != nil {
 		return err
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	// Keep an already-open captured observation alive until Fs shutdown; future
+	// opens bind a new observation after a successful synchronous upload.
+	o.observation = nil
 	o.token = token
 	o.fileType = "file"
 	o.url = url
@@ -525,6 +489,9 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
+	if o.virtual {
+		return fs.ErrorPermissionDenied
+	}
 	if err := o.fs.cli.delete(ctx, o.token, o.deleteType()); err != nil {
 		return err
 	}
@@ -548,210 +515,6 @@ func (o *Object) MimeType(ctx context.Context) string {
 }
 
 func (o *Object) ID() string { return o.token }
-
-func (c *cliClient) list(ctx context.Context, folderToken string) ([]driveItem, error) {
-	var out listData
-	args := []string{"drive", "files", "list", "--as", "user", "--json"}
-	if folderToken != "" {
-		args = append(args, "--folder-token", folderToken, "--page-all")
-	}
-	if err := c.runData(ctx, "", args, &out); err != nil {
-		return nil, err
-	}
-	return out.Files, nil
-}
-
-func (c *cliClient) createFolder(ctx context.Context, parentToken, name string) (string, error) {
-	var out createFolderData
-	args := []string{"drive", "+create-folder", "--as", "user", "--name", name, "--json"}
-	if parentToken != "" {
-		args = append(args, "--folder-token", parentToken)
-	}
-	if err := c.runData(ctx, "", args, &out); err != nil {
-		return "", err
-	}
-	if out.FolderToken != "" {
-		return out.FolderToken, nil
-	}
-	if out.Token != "" {
-		return out.Token, nil
-	}
-	return "", errors.New("lark-cli create-folder did not return folder token")
-}
-
-func (c *cliClient) upload(ctx context.Context, parentToken, fileToken, name string, in io.Reader) (token string, size int64, url string, err error) {
-	dir, err := c.makeTempDir()
-	if err != nil {
-		return "", 0, "", err
-	}
-	defer os.RemoveAll(dir)
-
-	tmp, err := os.CreateTemp(dir, "upload-*")
-	if err != nil {
-		return "", 0, "", err
-	}
-	size, err = io.Copy(tmp, in)
-	closeErr := tmp.Close()
-	if err != nil {
-		return "", 0, "", err
-	}
-	if closeErr != nil {
-		return "", 0, "", closeErr
-	}
-
-	var out uploadData
-	args := []string{"drive", "+upload", "--as", "user", "--file", filepath.Base(tmp.Name()), "--name", name, "--json"}
-	if fileToken != "" {
-		args = append(args, "--file-token", fileToken)
-	} else if parentToken != "" {
-		args = append(args, "--folder-token", parentToken)
-	}
-	if err := c.runData(ctx, dir, args, &out); err != nil {
-		return "", 0, "", err
-	}
-	token = out.FileToken
-	if token == "" {
-		token = out.Token
-	}
-	if token == "" {
-		return "", 0, "", errors.New("lark-cli upload did not return file token")
-	}
-	if out.Size > 0 || size == 0 {
-		size = out.Size
-	}
-	return token, size, out.URL, nil
-}
-
-func (c *cliClient) download(ctx context.Context, fileToken string) (*tempFile, error) {
-	dir, err := c.makeTempDir()
-	if err != nil {
-		return nil, err
-	}
-	name := "download"
-	var out downloadData
-	args := []string{"drive", "+download", "--as", "user", "--file-token", fileToken, "--output", name, "--overwrite", "--json"}
-	if err := c.runData(ctx, dir, args, &out); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
-	}
-	p := filepath.Join(dir, name)
-	if out.SavedPath != "" {
-		p = out.SavedPath
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(dir, p)
-		}
-	}
-	file, err := os.Open(p)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
-	}
-	return &tempFile{File: file, dir: dir}, nil
-}
-
-func (c *cliClient) delete(ctx context.Context, token, typ string) error {
-	args := []string{"drive", "+delete", "--as", "user", "--file-token", token, "--type", typ, "--yes", "--json"}
-	return c.runData(ctx, "", args, nil)
-}
-
-func (c *cliClient) move(ctx context.Context, token, typ, folderToken string) error {
-	args := []string{"drive", "+move", "--as", "user", "--file-token", token, "--type", typ, "--json"}
-	if folderToken != "" {
-		args = append(args, "--folder-token", folderToken)
-	}
-	return c.runData(ctx, "", args, nil)
-}
-
-func (c *cliClient) rename(ctx context.Context, token, typ, newTitle string) error {
-	data, err := json.Marshal(map[string]string{"new_title": newTitle})
-	if err != nil {
-		return err
-	}
-	args := []string{"drive", "files", "patch", "--as", "user", "--file-token", token, "--type", typ, "--data", string(data), "--json"}
-	return c.runData(ctx, "", args, nil)
-}
-
-func (c *cliClient) runData(ctx context.Context, workDir string, args []string, data any) error {
-	fs.Debugf(nil, "Running lark-cli %s", strings.Join(args, " "))
-	var result commandResult
-	if err := c.runJSON(ctx, workDir, args, &result); err != nil {
-		return err
-	}
-	if !result.OK {
-		if result.Error != nil {
-			return result.Error
-		}
-		return errors.New("lark-cli returned ok=false")
-	}
-	if data != nil && len(result.Data) != 0 {
-		if err := json.Unmarshal(result.Data, data); err != nil {
-			return fmt.Errorf("failed to parse lark-cli data: %w", err)
-		}
-	}
-	return nil
-}
-
-func (c *cliClient) runJSON(ctx context.Context, workDir string, args []string, out any) error {
-	cmd := exec.CommandContext(ctx, c.command, args...)
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		if stdout.Len() != 0 {
-			var result commandResult
-			if json.Unmarshal(stdout.Bytes(), &result) == nil && result.Error != nil {
-				return result.Error
-			}
-		}
-		return fmt.Errorf("lark-cli %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	if stdout.Len() == 0 {
-		return errors.New("lark-cli returned empty stdout")
-	}
-	if err := json.Unmarshal(stdout.Bytes(), out); err != nil {
-		return fmt.Errorf("failed to parse lark-cli JSON from %q: %w", strings.Join(args, " "), err)
-	}
-	return nil
-}
-
-func (c *cliClient) makeTempDir() (string, error) {
-	base := c.tempDir
-	if base == "" {
-		base = os.TempDir()
-	}
-	return os.MkdirTemp(base, "rclone-feishu-*")
-}
-
-func (item driveItem) modTime() time.Time {
-	for _, value := range []string{item.ModifiedTime, item.CreatedTime} {
-		if value == "" {
-			continue
-		}
-		seconds, err := strconv.ParseInt(value, 10, 64)
-		if err == nil {
-			return time.Unix(seconds, 0)
-		}
-	}
-	return time.Now()
-}
-
-type tempFile struct {
-	*os.File
-	dir string
-}
-
-func (f *tempFile) Close() error {
-	err := f.File.Close()
-	removeErr := os.RemoveAll(f.dir)
-	if err != nil {
-		return err
-	}
-	return removeErr
-}
 
 func openBytes(b []byte, options ...fs.OpenOption) io.ReadCloser {
 	return applyRange(&bytesReadCloser{Reader: bytes.NewReader(b)}, int64(len(b)), options...)

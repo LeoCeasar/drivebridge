@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/object"
+	"github.com/rclone/rclone/lib/larkcli"
 )
 
 func TestDriveItemModTime(t *testing.T) {
@@ -143,4 +145,75 @@ func cleanupLive(ctx context.Context, fsys fs.Fs, remote string) error {
 		return err
 	}
 	return obj.Remove(ctx)
+}
+
+func TestVirtualURLCannotRemove(t *testing.T) {
+	f := &Fs{name: "test", opt: Options{DocsAsURL: true}}
+	o := f.newURLObject("doc.url", driveItem{Name: "doc", Token: "doc", Type: "docx", URL: "https://example.invalid/doc"})
+	if err := o.Remove(context.Background()); err != fs.ErrorPermissionDenied {
+		t.Fatalf("Remove=%v", err)
+	}
+}
+func TestListFileSizeUnknown(t *testing.T) {
+	f := &Fs{name: "test"}
+	o := f.newObject("file", driveItem{Name: "file", Token: "file", Type: "file"}, false)
+	if o.Size() != -1 {
+		t.Fatalf("unknown size fabricated as %d", o.Size())
+	}
+	if !o.ModTime(context.Background()).IsZero() {
+		t.Fatal("missing timestamp synthesized")
+	}
+}
+
+func TestNativeObservationBindsSizeAndRepeatedOpen(t *testing.T) {
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "downloads")
+	script := filepath.Join(dir, "cli")
+	body := "#!/bin/sh\ncase \"$*\" in\n*+download*) printf 'snapshot' > download; printf x >> '" + counter + "'; printf '%s' '{\"ok\":true,\"identity\":\"user\",\"data\":{\"saved_path\":\"download\",\"size_bytes\":8}}';;\n*) printf '%s' '{\"ok\":true,\"identity\":\"user\",\"data\":{\"files\":[{\"token\":\"file\",\"name\":\"file.txt\",\"type\":\"file\"}],\"has_more\":false}}';;\nesac\n"
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fsys, err := NewFs(context.Background(), "test", "", configmap.Simple{"command": script, "root_folder_token": "folder", "temp_dir": dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fsys.(*Fs)
+	defer f.Shutdown(context.Background())
+	entries, err := f.List(context.Background(), "")
+	if err != nil || entries[0].Size() != -1 {
+		t.Fatal(entries, err)
+	}
+	if _, err = os.Stat(counter); !os.IsNotExist(err) {
+		t.Fatal("list downloaded content")
+	}
+	obj, err := f.NewObject(context.Background(), "file.txt")
+	if err != nil || obj.Size() != 8 {
+		t.Fatal(obj, err)
+	}
+	for i := 0; i < 2; i++ {
+		rc, err := obj.Open(context.Background(), &fs.RangeOption{Start: 1, End: 3})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil || string(b) != "nap" {
+			t.Fatal(string(b), err)
+		}
+	}
+	b, _ := os.ReadFile(counter)
+	if string(b) != "x" {
+		t.Fatalf("download count=%q", b)
+	}
+}
+func TestNativeManagedRunnerCannotDowngrade(t *testing.T) {
+	if _, err := NewFsWithRunner(context.Background(), "test", "", configmap.Simple{}, nil); err == nil {
+		t.Fatal("nil managed runner became direct")
+	}
+}
+
+func TestNativeWorkerRejectsDirectRunner(t *testing.T) {
+	if _, err := NewFsWithRunner(context.Background(), "test", "", configmap.Simple{}, larkcli.NewDirect("unused")); err == nil {
+		t.Fatal("direct runner accepted for worker")
+	}
 }

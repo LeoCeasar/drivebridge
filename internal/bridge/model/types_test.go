@@ -2,7 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestOperationJSONCompatibility(t *testing.T) {
@@ -45,5 +47,32 @@ func TestJobJournalOperationIDsJSON(t *testing.T) {
 	}
 	if len(job.OperationIDs) != 2 || job.OperationIDs[0] != "journal-1" {
 		t.Fatalf("journal operation references lost: %+v", job)
+	}
+}
+
+func TestFileIdentityVariantsAndSnapshotJSON(t *testing.T) {
+	now := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	identity := FileIdentity{Kind: FileIdentityObservation, ObservationID: "d85a2826-5529-4d08-b50f-c5731d430739", SHA256: strings.Repeat("a", 64), StartedAt: now, CompletedAt: now.Add(time.Second)}
+	if err := identity.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s := Snapshot{FileData: "blob", FileIdentity: &identity, Size: 7}
+	data, _ := json.Marshal(s)
+	var got Snapshot
+	if err := json.Unmarshal(data, &got); err != nil || got.FileData != "blob" || got.FileIdentity == nil || got.FileIdentity.ObservationID != identity.ObservationID {
+		t.Fatalf("%s %v", data, err)
+	}
+	for _, mutate := range []func(*FileIdentity){func(x *FileIdentity) { x.Version = "42" }, func(x *FileIdentity) { x.ObservationID = "bad" }, func(x *FileIdentity) { x.SHA256 = "" }, func(x *FileIdentity) { x.CompletedAt = now.Add(-time.Second) }} {
+		x := identity
+		mutate(&x)
+		if x.Validate() == nil {
+			t.Fatalf("accepted %+v", x)
+		}
+	}
+	identity.Kind = FileIdentityServerVersion
+	identity.ObservationID = ""
+	identity.Version = "actual-version"
+	if err := identity.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
