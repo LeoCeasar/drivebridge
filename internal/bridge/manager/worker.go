@@ -16,6 +16,7 @@ import (
 
 type mountRuntime interface {
 	Activity() (int, int, int)
+	StopActivity() (int, int, int)
 	CachePending() bool
 	Pause() (func(), error)
 	Unmount() error
@@ -222,7 +223,7 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 		if err != nil {
 			return err
 		}
-		readers, writers, reservations := services.runtime.Activity()
+		readers, writers, reservations := services.runtime.StopActivity()
 		publications, pubErr := services.store.PendingPublications(ctx)
 		names, nsErr := services.store.NamespaceActions(ctx)
 		creates, crErr := services.store.PendingCreates(ctx)

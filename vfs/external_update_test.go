@@ -88,7 +88,7 @@ func TestManagedHandleLifetimeAndFailedOpen(t *testing.T) {
 	require.NoError(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }))
 	h, e := v.root.Open(os.O_RDONLY)
 	require.NoError(t, e)
-	require.ErrorIs(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }), ErrExternalUpdateBusy)
+	require.NoError(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }))
 	require.NoError(t, h.Release())
 	require.NoError(t, h.Release())
 	require.NoError(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }))

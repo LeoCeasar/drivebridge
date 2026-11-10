@@ -35,7 +35,7 @@ func (m *managedState) reserveRename(src, dst string) (*reservation, error) {
 	}
 	src, dst = managedPath(src), managedPath(dst)
 	for a := range m.handles {
-		if related(a.path, dst) || (a.write && related(a.path, src)) {
+		if a.blocks(dst, true) || a.blocks(src, false) {
 			return nil, ErrExternalUpdateBusy
 		}
 	}

@@ -2,9 +2,11 @@ package vfs
 
 import (
 	"context"
+	"io"
 	"os"
 	"path"
 	"testing"
+	"time"
 
 	"github.com/rclone/rclone/fs"
 	"github.com/stretchr/testify/require"
@@ -62,17 +64,26 @@ func TestManagedCreateStillRejectsExactFileHandleAndExternalReservation(t *testi
 	require.NoError(t, <-done)
 }
 
-func TestManagedParentDirectoryReaderRetainsPublicationAndRenameBarriers(t *testing.T) {
-	v, object := managedTestVFS(t)
+func TestManagedParentDirectoryReaderAllowsChildPublicationRenameAndRemove(t *testing.T) {
+	v, f, remote := newManagedFS(t, false)
 	reader, err := v.root.Open(os.O_RDONLY)
 	require.NoError(t, err)
 	defer reader.Release()
-	called := false
-	err = v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { called = true; return object, nil })
-	require.ErrorIs(t, err, ErrExternalUpdateBusy)
-	require.False(t, called, "ancestor directory enumeration still excludes external publication")
-	require.ErrorIs(t, v.Rename("file", "renamed"), ErrExternalUpdateBusy)
-	node, err := v.Stat("file")
+	_, err = reader.Readdir(-1)
 	require.NoError(t, err)
-	require.ErrorIs(t, node.Remove(), ErrExternalUpdateBusy)
+	// Model a completed cloud refresh publishing a new child into a directory
+	// Finder already enumerated and still holds open.
+	remote.WriteObject(context.Background(), "cloud-origin.txt", "synthetic cloud bytes", time.Now())
+	err = v.TryExternalUpdate(context.Background(), "cloud-origin.txt", func() (fs.Object, error) { return f.NewObject(context.Background(), "cloud-origin.txt") })
+	require.NoError(t, err)
+	h, err := v.Open("cloud-origin.txt")
+	require.NoError(t, err)
+	content, err := io.ReadAll(h)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic cloud bytes", string(content))
+	require.NoError(t, h.Release())
+	require.NoError(t, v.Rename("cloud-origin.txt", "renamed.txt"))
+	node, err := v.Stat("renamed.txt")
+	require.NoError(t, err)
+	require.NoError(t, node.Remove())
 }

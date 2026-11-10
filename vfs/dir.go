@@ -1045,7 +1045,7 @@ func (d *Dir) Open(flags int) (fd Handle, err error) {
 // Create makes a new file node
 func (d *Dir) Create(name string, flags int) (*File, error) {
 	if m := d.vfs.managed.Load(); m != nil {
-		r, e := m.reserveCreate(path.Join(d.Path(), name))
+		r, e := m.reserve([]string{path.Join(d.Path(), name)}, true)
 		if e != nil {
 			return nil, e
 		}
@@ -1083,7 +1083,7 @@ func (d *Dir) Create(name string, flags int) (*File, error) {
 // Mkdir creates a new directory
 func (d *Dir) Mkdir(name string) (*Dir, error) {
 	if m := d.vfs.managed.Load(); m != nil {
-		r, e := m.reserveCreate(path.Join(d.Path(), name))
+		r, e := m.reserve([]string{path.Join(d.Path(), name)}, true)
 		if e != nil {
 			return nil, e
 		}

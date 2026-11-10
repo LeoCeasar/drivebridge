@@ -81,21 +81,21 @@ func (a *admission) release() {
 	delete(a.m.handles, a)
 	a.m.mu.Unlock()
 }
+
+// Directory enumeration holds a snapshot, not every descendant's contents.
+// A strict ancestor directory reader can coexist with child changes; exact-path
+// and descendant handles retain their original exclusion semantics.
+func (a *admission) blocks(name string, readers bool) bool {
+	if a.directory && !a.write && a.path != name && (a.path == "" || strings.HasPrefix(name, a.path+"/")) {
+		return false
+	}
+	return related(name, a.path) && (readers || a.write)
+}
+
 func (m *managedState) reserve(paths []string, readers bool) (*reservation, error) {
 	return m.reserveWithPause(paths, readers, false)
 }
 func (m *managedState) reserveWithPause(paths []string, readers, allowPaused bool) (*reservation, error) {
-	return m.reservePaths(paths, readers, allowPaused, false)
-}
-
-// Local child creation can coexist with enumeration of its ancestors. It still
-// excludes exact-path handles, descendant handles, and all related reservations.
-// External publication and destructive namespace operations keep the full barrier.
-func (m *managedState) reserveCreate(name string) (*reservation, error) {
-	return m.reservePaths([]string{name}, true, false, true)
-}
-
-func (m *managedState) reservePaths(paths []string, readers, allowPaused, creatingChild bool) (*reservation, error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -109,10 +109,7 @@ func (m *managedState) reservePaths(paths []string, readers, allowPaused, creati
 	}
 	for _, p := range paths {
 		for a := range m.handles {
-			if creatingChild && a.directory && !a.write && a.path != p && (a.path == "" || strings.HasPrefix(p, a.path+"/")) {
-				continue
-			}
-			if related(p, a.path) && (readers || a.write) {
+			if a.blocks(p, readers) {
 				return nil, ErrExternalUpdateBusy
 			}
 		}
@@ -318,6 +315,17 @@ func (v *VFS) PauseManagedAdmission() (func(), error) {
 	return func() { once.Do(func() { m.mu.Lock(); m.paused--; m.mu.Unlock() }) }, nil
 }
 func (v *VFS) ManagedActivity() (readers, writers, reservations int) {
+	return v.managedActivity(true)
+}
+
+// ManagedStopActivity excludes directory enumeration from the pre-unmount drain.
+// File handles and namespace reservations still drain before normal OS unmount;
+// the caller must require that unmount to succeed before reporting a stop.
+func (v *VFS) ManagedStopActivity() (readers, writers, reservations int) {
+	return v.managedActivity(false)
+}
+
+func (v *VFS) managedActivity(includeDirectoryReaders bool) (readers, writers, reservations int) {
 	m := v.managed.Load()
 	if m == nil {
 		return
@@ -327,7 +335,7 @@ func (v *VFS) ManagedActivity() (readers, writers, reservations int) {
 	for a := range m.handles {
 		if a.write {
 			writers++
-		} else {
+		} else if includeDirectoryReaders || !a.directory {
 			readers++
 		}
 	}

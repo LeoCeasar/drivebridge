@@ -21,12 +21,19 @@ import (
 type fakeRuntime struct {
 	mu                             sync.Mutex
 	readers, writers, reservations int
+	unmountErr                     error
+	directoryReaders               int
 	pending                        bool
 	paused, unmounted              bool
 	done                           chan error
 }
 
 func (f *fakeRuntime) Activity() (int, int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.readers + f.directoryReaders, f.writers, f.reservations
+}
+func (f *fakeRuntime) StopActivity() (int, int, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.readers, f.writers, f.reservations
@@ -38,7 +45,13 @@ func (f *fakeRuntime) Pause() (func(), error) {
 	f.mu.Unlock()
 	return func() { f.mu.Lock(); f.paused = false; f.mu.Unlock() }, nil
 }
-func (f *fakeRuntime) Unmount() error               { f.mu.Lock(); f.unmounted = true; f.mu.Unlock(); return nil }
+func (f *fakeRuntime) Unmount() error {
+	f.mu.Lock()
+	f.unmounted = true
+	err := f.unmountErr
+	f.mu.Unlock()
+	return err
+}
 func (f *fakeRuntime) Close() error                 { return nil }
 func (f *fakeRuntime) Done() <-chan error           { return f.done }
 func (f *fakeRuntime) CachePaths() (string, string) { return "", "" }
