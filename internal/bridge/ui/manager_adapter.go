@@ -1,0 +1,131 @@
+package ui
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/rclone/rclone/internal/bridge/auth"
+	"github.com/rclone/rclone/internal/bridge/config"
+	"github.com/rclone/rclone/internal/bridge/manager"
+	"github.com/rclone/rclone/internal/bridge/model"
+)
+
+// ManagerBackend is the sole production UI adapter. It never opens worker databases.
+type ManagerBackend struct{ manager *manager.Manager }
+
+func NewManagerBackend(m *manager.Manager) (*ManagerBackend, error) {
+	if m == nil {
+		return nil, errors.New("missing manager")
+	}
+	return &ManagerBackend{manager: m}, nil
+}
+func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
+	c, err := b.manager.LoadConfig(ctx)
+	if err != nil {
+		return ConfigView{}, err
+	}
+	_, canRecover := any(b.manager).(auth.RecoveryGuard)
+	v := ConfigView{CanRecover: canRecover, Profiles: []ProfileView{}, Remotes: []RemoteView{}, Mounts: []MountView{}}
+	for _, p := range c.Profiles {
+		v.Profiles = append(v.Profiles, ProfileView{ID: p.ID, Name: p.Name, Brand: p.Brand, Authorized: p.AuthRef != "" && p.IdentityHash != ""})
+	}
+	for _, r := range c.Remotes {
+		v.Remotes = append(v.Remotes, RemoteView{ID: r.ID, Name: r.Name, ProfileID: r.ProfileID, FolderToken: r.FolderToken})
+	}
+	for _, m := range c.Mounts {
+		v.Mounts = append(v.Mounts, MountView{ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint})
+	}
+	return v, nil
+}
+func (b *ManagerBackend) Status(ctx context.Context) (StatusView, error) {
+	c, err := b.Config(ctx)
+	if err != nil {
+		return StatusView{}, err
+	}
+	v := StatusView{SchemaVersion: 1, Mounts: c.Mounts, Conflicts: []ConflictSummary{}}
+	for i, m := range v.Mounts {
+		status, err := b.manager.Status(ctx, m.ID)
+		if err != nil {
+			return v, err
+		}
+		v.Mounts[i].State = status
+		conflicts, err := b.manager.Conflicts(ctx, m.ID)
+		if err != nil {
+			return v, err
+		}
+		for _, c := range conflicts {
+			v.Conflicts = append(v.Conflicts, ConflictSummary{ID: c.Conflict.ID, MountID: m.ID, Name: c.Entry.Remote})
+		}
+	}
+	return v, nil
+}
+func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (ConfigView, error) {
+	var err error
+	switch r.Action {
+	case "profile":
+		_, err = b.manager.AddProfile(ctx, r.Name, r.Brand)
+	case "remote":
+		_, err = b.manager.AddRemote(ctx, r.Name, r.ProfileID, r.FolderToken)
+	case "mount":
+		mount := config.DefaultMount()
+		mount.Name = r.Name
+		mount.RemoteID = r.RemoteID
+		mount.Mountpoint = r.Mountpoint
+		_, err = b.manager.AddMount(ctx, mount)
+	default:
+		return ConfigView{}, errors.New("unknown configuration action")
+	}
+	if err != nil {
+		return ConfigView{}, err
+	}
+	return b.Config(ctx)
+}
+func (b *ManagerBackend) AuthStart(ctx context.Context, id model.ProfileID) (auth.AuthFlow, error) {
+	service, err := b.manager.Auth(ctx)
+	if err != nil {
+		return auth.AuthFlow{}, err
+	}
+	return service.Start(ctx, id)
+}
+func (b *ManagerBackend) AuthStartRecovery(ctx context.Context, id model.ProfileID) (auth.AuthFlow, error) {
+	service, err := b.manager.Auth(ctx)
+	if err != nil {
+		return auth.AuthFlow{}, err
+	}
+	return service.StartRecovery(ctx, id)
+}
+func (b *ManagerBackend) AuthComplete(ctx context.Context, id string) error {
+	service, err := b.manager.Auth(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = service.Complete(ctx, id)
+	return err
+}
+func (b *ManagerBackend) Conflict(ctx context.Context, id model.ConflictID) (ConflictInputs, error) {
+	v, err := b.manager.Conflict(ctx, id)
+	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL}, err
+}
+func (b *ManagerBackend) SaveDraft(ctx context.Context, id model.ConflictID, v []byte) error {
+	return b.manager.SaveDraft(ctx, id, v)
+}
+func (b *ManagerBackend) Resolve(ctx context.Context, r model.ResolveRequest) error {
+	return b.manager.ResolveConflict(ctx, r)
+}
+func (b *ManagerBackend) Mount(ctx context.Context, id model.MountID, action string) error {
+	switch action {
+	case "start":
+		_, err := b.manager.Start(ctx, id, true)
+		return err
+	case "stop":
+		return b.manager.Stop(ctx, id, 60*time.Second)
+	default:
+		return errors.New("unknown mount action")
+	}
+}
+func (b *ManagerBackend) ClaimConflictNotification(ctx context.Context, id model.ConflictID) (bool, error) {
+	return b.manager.ClaimConflictNotification(ctx, id)
+}
+
+var _ Backend = (*ManagerBackend)(nil)

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<div class="app-shell">
+<aside class="sidebar"><a class="brand" href="/" aria-label="DriveBridge 首页"><span class="brand-mark" aria-hidden="true">桥</span><span>DriveBridge<small>本机文件管理</small></span></a>
+<nav aria-label="主导航"><button class="nav-button active" data-view="workspace">文件与同步</button><button class="nav-button" data-view="settings">账号与目录</button></nav>
+<section class="conflict-nav"><div class="sidebar-heading">需要合并 <span id="conflict-count" class="count">0</span></div><div id="conflict-list"></div><p id="conflict-empty" class="quiet">没有待处理的冲突。</p></section>
+<div class="sidebar-foot"><span id="connection" class="connection">正在连接本机服务</span><p>关闭此页面不影响挂载。</p></div></aside>
+<main>
+<header class="topbar"><div><span id="page-label">文件与同步</span><span class="host-label">本机管理界面</span></div><button id="refresh" class="button small">刷新状态</button></header>
+<div id="message" class="message" role="status" aria-live="polite" hidden></div>
+<section id="workspace" class="page">
+<div class="page-heading"><div><h1>文件与同步</h1><p>查看本机保存和云端确认，处理需要你决定的差异。</p></div><button id="setup-shortcut" class="button">添加共享目录</button></div>
+<div class="table-wrap"><table class="mount-table"><thead><tr><th>挂载目录</th><th>本机保存</th><th>云端状态</th><th>待处理</th><th>操作</th></tr></thead><tbody id="mount-rows"></tbody></table><div id="mount-empty" class="empty-state"><h2>先连接一个共享目录</h2><p>添加飞书账号和共享文件夹后，选择它在本机显示的位置。</p><button id="start-setup" class="button primary">开始设置</button></div></div>
+<section id="merge" class="merge" hidden>
+<div class="merge-heading"><div><p class="section-label">文件合并</p><h2 id="merge-name"></h2><p id="merge-version" class="quiet"></p></div><div class="merge-actions"><span id="draft-state" class="draft-state" aria-live="polite">草稿未修改</span><button id="save-draft" class="button">保存草稿</button><button id="resolve" class="button primary">复核并提交</button></div></div>
+<p class="merge-hint">三份来源保持只读。在右侧编辑结果，或逐个差异选择内容。提交时会重新检查本地和云端版本。</p>
+<div class="four-panes"><section class="source-pane"><header><span>共同原版</span><small>上次确认的基线</small></header><pre id="base-text" tabindex="0"></pre></section><section class="source-pane"><header><span>本地内容</span><small>这次保存的内容</small></header><pre id="local-text" tabindex="0"></pre></section><section class="source-pane"><header><span>云端内容</span><small>冲突时取得的内容</small></header><pre id="remote-text" tabindex="0"></pre></section><section class="source-pane result-pane"><header><label for="merged-text">合并结果</label><small>可编辑</small></header><textarea id="merged-text" spellcheck="false" aria-label="合并结果"></textarea></section></div>
+<div class="diff-toolbar"><span id="hunk-count">差异</span><button id="reset-choices" class="text-button">保留草稿并重新选择差异</button></div><div id="hunk-list" class="hunk-list"></div>
+<div class="merge-footer"><span>本机保存成功与飞书确认是两个状态；并发修改仍可能发生。</span><button id="later" class="text-button">稍后处理</button></div>
+</section>
+</section>
+<section id="settings" class="page" hidden>
+<div class="page-heading"><div><h1>账号与目录</h1><p>设置保存在当前系统用户下，浏览器不会取得飞书凭据。</p></div></div>
+<div class="setup-grid"><section class="setup-section"><div class="step-title"><span>1</span><h2>添加并授权账号</h2></div><form id="profile-form"><label>账号名称<input name="name" placeholder="例如：工作飞书" required maxlength="100"></label><label>服务<select name="brand"><option value="feishu">飞书</option><option value="lark">Lark</option></select></label><button class="button">添加账号</button></form><div id="profiles" class="profile-list"></div><div id="auth-flow" class="auth-flow" hidden><p>在飞书授权页面完成登录，然后返回此处确认。</p><a id="auth-link" class="button primary" target="_blank" rel="noopener noreferrer">打开授权页面</a><button id="auth-complete" class="button">我已完成授权</button><p id="auth-state" class="quiet"></p></div></section>
+<section class="setup-section"><div class="step-title"><span>2</span><h2>选择共享文件夹</h2></div><form id="remote-form"><label>显示名称<input name="name" placeholder="例如：团队文档" required maxlength="100"></label><label>已授权账号<select name="profile_id" id="profile-select" required></select></label><label>共享文件夹标识<input name="folder_token" placeholder="飞书共享文件夹的 token" required autocomplete="off"></label><p class="field-help">使用该账号有权限访问的文件夹标识。目录权限由飞书决定。</p><button class="button">添加共享目录</button></form></section>
+<section class="setup-section"><div class="step-title"><span>3</span><h2>选择本机挂载位置</h2></div><form id="mount-form"><label>挂载名称<input name="name" placeholder="例如：团队文档" required maxlength="100"></label><label>共享目录<select name="remote_id" id="remote-select" required></select></label><label>本机路径或 Windows 盘符<input name="mountpoint" placeholder="完整目录路径，或 X:" required autocomplete="off"></label><p class="field-help">使用当前用户可访问的位置。首次挂载会检查可用驱动。</p><button class="button primary">保存挂载配置</button></form></section></div>
+</section>
+<div id="session-error" class="session-error" hidden><h1>请从本机重新打开</h1><p>此页面的本机会话已失效。请通过 DriveBridge 管理入口重新打开；已保存的草稿仍然保留。</p></div>
+</main></div>
+</body></html>
