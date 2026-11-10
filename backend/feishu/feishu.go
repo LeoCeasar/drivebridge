@@ -449,11 +449,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	if o.virtual {
 		return openBytes(o.content, options...), nil
 	}
-	if err := o.materialize(ctx); err != nil {
-		return nil, err
-	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if err := o.materializeLocked(ctx); err != nil {
+		return nil, err
+	}
 	file, err := o.observation.Open()
 	if err != nil {
 		return nil, err

@@ -21,6 +21,11 @@ func (item driveItem) modTime() time.Time {
 func (o *Object) materialize(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.materializeLocked(ctx)
+}
+
+// materializeLocked requires o.mu; Open retains it until reader and size bind.
+func (o *Object) materializeLocked(ctx context.Context) error {
 	if o.observation != nil {
 		return nil
 	}

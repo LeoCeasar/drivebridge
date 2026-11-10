@@ -49,7 +49,12 @@ type FileMeta struct {
 	Size           int64
 	ModTime        time.Time
 }
+
+// Candidate creation evidence may be returned alongside an error; retain both
+// and reconcile before adopting or confirming any returned identity.
 type Document struct {
+	Result                     string
+	Data                       json.RawMessage
 	Token, Revision, SourceURL string
 	XML                        []byte
 	ReferenceMap               json.RawMessage
@@ -108,7 +113,7 @@ func (c *Client) FileMeta(ctx context.Context, token string) (FileMeta, error) {
 	return FileMeta{m.Token, m.Version, m.Size, m.ModTime}, canonicalError(err)
 }
 func convertDoc(d larkcli.Document) Document {
-	return Document{Token: d.Token, Revision: d.Revision, SourceURL: d.SourceURL, XML: d.XML, ReferenceMap: d.ReferenceMap, Warnings: d.Warnings}
+	return Document{Result: d.Result, Data: d.Data, Token: d.Token, Revision: d.Revision, SourceURL: d.SourceURL, XML: d.XML, ReferenceMap: d.ReferenceMap, Warnings: d.Warnings}
 }
 func (c *Client) FetchDoc(ctx context.Context, token, revision string) (Document, error) {
 	d, err := c.docs.Fetch(ctx, token, revision)

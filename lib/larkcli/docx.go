@@ -11,7 +11,11 @@ type Docx struct{ runner *Runner }
 
 func NewDocx(r *Runner) *Docx { return &Docx{runner: r} }
 
+// Create may return candidate metadata/evidence with an error. Such data is
+// unconfirmed; callers must retain the error and reconcile before adoption.
 type Document struct {
+	Result                     string
+	Data                       json.RawMessage
 	Token, Revision, SourceURL string
 	XML                        []byte
 	ReferenceMap               json.RawMessage
@@ -87,16 +91,63 @@ func (d *Docx) Create(ctx context.Context, parent, title string, xml []byte) (Do
 	if title != "" {
 		args = append(args, "--title", title)
 	}
-	r, err := d.runner.Run(ctx, Request{Args: args, Stdin: xml})
-	if err != nil {
-		return Document{}, errors.Join(ErrUnknownResult, err)
+
+	r, runErr := d.runner.Run(ctx, Request{Args: args, Stdin: xml})
+	doc, metadataErr := creationEvidence(r)
+	if err := errors.Join(runErr, metadataErr); err != nil {
+		return doc, errors.Join(ErrUnknownResult, err)
 	}
-	if r.Result != "success" {
-		return Document{}, errors.Join(ErrUnknownResult, ErrProtocol)
+	// Create's observed success schema has no required result field. Runner still
+	// rejects any explicit null, failed, malformed or unknown result value.
+	return doc, nil
+}
+
+// creationEvidence preserves independently valid candidate fields even when a
+// different field or the process/envelope makes the overall outcome unknown.
+// Required identity/revision fields remain strict; missing values are not made up.
+func creationEvidence(r Response) (Document, error) {
+	doc := Document{Result: r.Result, Data: append(json.RawMessage(nil), r.Data...), Warnings: append([]string(nil), r.Warnings...)}
+	var outer struct {
+		Document json.RawMessage `json:"document"`
 	}
-	doc, err := decodeDocument(r.Data, false)
-	if err != nil {
-		return Document{}, errors.Join(ErrUnknownResult, err)
+	if singleJSON(r.Data, &outer) != nil {
+		return doc, ErrProtocol
+	}
+	var raw struct {
+		ID           json.RawMessage `json:"document_id"`
+		Revision     json.RawMessage `json:"revision_id"`
+		URL          json.RawMessage `json:"url"`
+		Content      json.RawMessage `json:"content"`
+		ReferenceMap json.RawMessage `json:"reference_map"`
+	}
+	if singleJSON(outer.Document, &raw) != nil {
+		return doc, ErrProtocol
+	}
+	var invalid bool
+	if json.Unmarshal(raw.ID, &doc.Token) != nil || doc.Token == "" {
+		doc.Token = ""
+		invalid = true
+	}
+	revision, err := strictInt(raw.Revision, false)
+	if err != nil || revision <= 0 {
+		invalid = true
+	} else {
+		doc.Revision = strconv.FormatInt(revision, 10)
+	}
+	if len(raw.URL) > 0 && json.Unmarshal(raw.URL, &doc.SourceURL) != nil {
+		invalid = true
+	}
+	if len(raw.Content) > 0 {
+		var content string
+		if json.Unmarshal(raw.Content, &content) != nil {
+			invalid = true
+		} else {
+			doc.XML = []byte(content)
+		}
+	}
+	doc.ReferenceMap = append(json.RawMessage(nil), raw.ReferenceMap...)
+	if invalid {
+		return doc, ErrProtocol
 	}
 	return doc, nil
 }

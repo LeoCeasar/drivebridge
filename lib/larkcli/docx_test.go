@@ -3,6 +3,7 @@ package larkcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -21,7 +22,17 @@ func handleDocxProcess(s string, args []string, emit func(string)) bool {
 		if string(b) != "<p>create</p>" || arg(args, "--content") != "-" {
 			os.Exit(2)
 		}
-		emit(`{"document":{"document_id":"newdoc","revision_id":1},"result":"success"}`)
+		emit(`{"document":{"document_id":"newdoc","revision_id":1,"url":"https://example.invalid/newdoc"}}`)
+
+	case "doc-create-partial":
+		fmt.Print(`{"ok":false,"identity":"user","data":{"result":"failed","warnings":["partial"]}}`)
+		os.Exit(1)
+	case "doc-create-identity":
+		fmt.Print(`{"ok":true,"identity":"tenant","data":{"document":{"document_id":"candidate","revision_id":3,"url":"https://example.invalid/candidate"},"warnings":["untrusted"]}}`)
+	case "doc-create-bad-warning":
+		emit(`{"document":{"document_id":"candidate","revision_id":3,"url":"https://example.invalid/candidate"},"warnings":7}`)
+	case "doc-create-bad-revision":
+		emit(`{"document":{"document_id":"candidate","revision_id":"bad"}}`)
 	case "doc-flat":
 		emit(`{"document_id":"doc","revision_id":3,"content":"bad"}`)
 	case "doc-missing":
@@ -48,7 +59,7 @@ func TestDocxNestedContentAndID(t *testing.T) {
 		t.Fatalf("%+v %v", doc, err)
 	}
 	created, err := NewDocx(NewDirect(testExecutable(t, "doc-create"))).Create(context.Background(), "folder", "title", []byte("<p>create</p>"))
-	if err != nil || created.Token != "newdoc" {
+	if err != nil || created.Token != "newdoc" || created.Revision != "1" || created.SourceURL != "https://example.invalid/newdoc" {
 		t.Fatalf("%+v %v", created, err)
 	}
 }
@@ -85,5 +96,41 @@ func TestDocxRequiredFieldTypes(t *testing.T) {
 		if _, err := decodeDocument([]byte(body), true); err == nil {
 			t.Fatal("required field accepted", body)
 		}
+	}
+}
+
+func TestDocxCreatePreservesEvidenceOnUnknown(t *testing.T) {
+	for _, scenario := range []string{"doc-create-partial", "doc-create-identity", "doc-create-bad-warning", "doc-create-bad-revision"} {
+		t.Run(scenario, func(t *testing.T) {
+			doc, err := NewDocx(NewDirect(testExecutable(t, scenario))).Create(context.Background(), "folder", "title", []byte("x"))
+			if !errors.Is(err, ErrUnknownResult) {
+				t.Fatal("unknown lost", err)
+			}
+			if len(doc.Data) == 0 {
+				t.Fatal("creation evidence lost")
+			}
+			if scenario == "doc-create-partial" {
+				if doc.Result != "failed" || len(doc.Warnings) != 1 || doc.Warnings[0] != "partial" || doc.Token != "" || doc.Revision != "" {
+					t.Fatal("partial evidence lost or fabricated", doc)
+				}
+			} else {
+				if doc.Token != "candidate" {
+					t.Fatal("valid identity discarded", doc)
+				}
+				if scenario == "doc-create-bad-revision" {
+					if doc.Revision != "" {
+						t.Fatal("invalid revision accepted")
+					}
+				} else if doc.Revision != "3" {
+					t.Fatal("valid revision discarded", doc)
+				}
+				if scenario != "doc-create-bad-revision" && doc.SourceURL != "https://example.invalid/candidate" {
+					t.Fatal("valid URL discarded")
+				}
+				if scenario == "doc-create-identity" && !errors.Is(err, ErrIdentity) {
+					t.Fatal("identity error discarded", err)
+				}
+			}
+		})
 	}
 }

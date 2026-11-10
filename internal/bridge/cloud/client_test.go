@@ -3,9 +3,12 @@ package cloud
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -114,5 +117,74 @@ func TestUnknownMutationAlsoPreservesIdentityChanged(t *testing.T) {
 	err := canonicalError(errors.Join(larkcli.ErrUnknownResult, larkcli.ErrIdentity))
 	if !errors.Is(err, model.ErrUnknownResult) || !errors.Is(err, model.ErrIdentityChanged) {
 		t.Fatal("one canonical error masked another", err)
+	}
+}
+
+func TestCreateDocPreservesPartialEvidence(t *testing.T) {
+	for _, scenario := range []string{"success", "partial", "bad-warning", "identity", "bad-revision", "null-result", "failed-result", "unknown-result"} {
+		t.Run(scenario, func(t *testing.T) {
+			data := `{"document":{"document_id":"created","revision_id":7,"url":"https://example.invalid/created"}}`
+			identity := "user"
+			ok := true
+			exit := 0
+			switch scenario {
+			case "partial":
+				data = `{"result":"failed","warnings":["recover creation"],"document":{"document_id":"candidate","revision_id":3}}`
+				ok = false
+				exit = 1
+			case "bad-warning":
+				data = `{"document":{"document_id":"created","revision_id":7},"warnings":7}`
+			case "identity":
+				identity = "tenant"
+			case "bad-revision":
+				data = `{"document":{"document_id":"created","revision_id":null}}`
+			case "null-result":
+				data = `{"result":null,"document":{"document_id":"created","revision_id":7}}`
+			case "failed-result":
+				data = `{"result":"failed","document":{"document_id":"created","revision_id":7}}`
+			case "unknown-result":
+				data = `{"result":"pending","document":{"document_id":"created","revision_id":7}}`
+			}
+			envelope := fmt.Sprintf(`{"ok":%t,"identity":%q,"data":%s}`, ok, identity, data)
+			script := filepath.Join(t.TempDir(), "cli")
+			if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\nprintf '%s' '"+envelope+"'\nexit "+strconv.Itoa(exit)+"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			c, err := New(managed(t, script), Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := c.CreateDoc(context.Background(), "parent", "title", []byte("<p>input</p>"))
+			if string(doc.Data) != data {
+				t.Fatal("creation outcome data changed")
+			}
+			if scenario == "success" {
+				if err != nil || doc.Token != "created" || doc.Revision != "7" || doc.SourceURL != "https://example.invalid/created" {
+					t.Fatalf("success rejected: token=%q revision=%q err=%v", doc.Token, doc.Revision, err)
+				}
+				return
+			}
+			if !errors.Is(err, model.ErrUnknownResult) || len(doc.Data) == 0 {
+				t.Fatal("unknown creation evidence discarded", err)
+			}
+			if scenario == "partial" {
+				if doc.Result != "failed" || len(doc.Warnings) != 1 || doc.Warnings[0] != "recover creation" || doc.Token != "candidate" || doc.Revision != "3" {
+					t.Fatal("partial outcome lost")
+				}
+			} else {
+				if doc.Token != "created" {
+					t.Fatal("candidate ID lost")
+				}
+				if scenario == "bad-revision" && doc.Revision != "" {
+					t.Fatal("invalid revision manufactured")
+				}
+				if scenario == "identity" && !errors.Is(err, model.ErrIdentityChanged) {
+					t.Fatal("identity failure lost", err)
+				}
+			}
+			if strings.Contains(err.Error(), "recover creation") || strings.Contains(err.Error(), "candidate") {
+				t.Fatal("raw evidence entered error log")
+			}
+		})
 	}
 }
