@@ -1,4 +1,4 @@
-<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"design","review_status":"pending"} -->
+<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"design","review_status":"passed"} -->
 # DriveBridge 飞书透明同步设计 v1.2
 
 日期：2026-11-10。继承 v1.1 的全部 R-01–R-13 与用户确认，并按[参考审核](audits/2026-11-10-reference-reuse/README.md)修订凭据、操作能力、元数据和分页契约。裁决、任务所有者及未执行的发布验证见 [implementation-decisions.md](implementation-decisions.md)。本文规定目标行为；产品尚未实现，v1.2 独立复核待完成。

@@ -1,4 +1,4 @@
-<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"pending","design_sha256":"dee67879ac1ca8760920f5c669f4e9b8747a6a82bd13717431cba89f757524af"} -->
+<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"passed","design_sha256":"d2ede903e0b5eba8ebb1c5af66d54dd94708710b82bb60cacce24ed14a83e7ee"} -->
 # DriveBridge 飞书透明同步开发文档 v1.2
 
 > 实施者：先读完整设计和本文。实际编码按 `superpowers:executing-plans` 逐任务执行；不得因任务写在文档中就视为已实现。每项步骤使用复选框留证据。

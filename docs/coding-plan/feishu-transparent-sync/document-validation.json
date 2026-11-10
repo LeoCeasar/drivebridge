@@ -3,10 +3,10 @@
   "work_id": "feishu-transparent-sync",
   "date": "2026-11-10",
   "version": "1.2",
-  "design_sha256": "dee67879ac1ca8760920f5c669f4e9b8747a6a82bd13717431cba89f757524af",
-  "development_sha256": "c30ee749890183995bac639d5d6de7eca0365d400d855259db57ee88257e4c7f",
-  "review_status": "pending",
-  "review_mode": "author self-check only; v1.2 independent review pending",
+  "design_sha256": "d2ede903e0b5eba8ebb1c5af66d54dd94708710b82bb60cacce24ed14a83e7ee",
+  "development_sha256": "8466ee13affc303280ef39a5f8dc8974f3600e1d1276d4b1221c3b1728bd66b9",
+  "review_status": "passed",
+  "review_mode": "same-model fresh-context; contracts_review; spec compliant and quality approved",
   "review_findings_closed": 0,
   "document_decisions_recorded": [
     "F01",
@@ -89,5 +89,7 @@
     "native mounts and GUI on all promised OS/architectures; close/fsync ENOSPC/EIO",
     "signed installers, actual installation, uninstall and upgrade preservation"
   ],
-  "historical_v1_1": "Prior passed/95 record is historical; not inherited by current v1.2. Reference audit artifacts are byte-identical historical evidence."
+  "historical_v1_1": "Prior passed/95 record is historical; not inherited by current v1.2. Reference audit artifacts are byte-identical historical evidence.",
+  "review_evidence": "review-v1.2.md",
+  "post_review_note": "Prior check results below belong to pre-approval Task0 snapshot. Independent review completed afterward; binding refreshed. require-ready still rejects unverified live gates; no new Goal created."
 }

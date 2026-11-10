@@ -1,6 +1,6 @@
 # v1.2 实施裁决与能力门槛
 
-日期：2026-11-10。状态：文档裁决完成，作者自查完成，独立复核 pending；产品能力未实现、未实测。本记录关联 [design.md](design.md) 和 [development.md](development.md)。用户已授权开始开发与多 agent，本次 Task 0 只修订文档。R-01–R-13、T01–T13 和公共方法签名保留；仅增加明确所有者的可选 Operation/能力字段。并发始终是 R-10 的尽力检测/合并/恢复，无服务端 CAS 或 exactly-once 承诺。
+日期：2026-11-10。状态：文档裁决完成，作者自查完成，独立文档复核已通过（见 review-v1.2.md）；产品能力未实现、未实测。本记录关联 [design.md](design.md) 和 [development.md](development.md)。用户已授权开始开发与多 agent，本次 Task 0 只修订文档。R-01–R-13、T01–T13 和公共方法签名保留；仅增加明确所有者的可选 Operation/能力字段。并发始终是 R-10 的尽力检测/合并/恢复，无服务端 CAS 或 exactly-once 承诺。
 
 ## 审核处置
 
@@ -36,4 +36,4 @@ T02 不依赖尚未实现的 T08：协调器接口在 lib/larkcli 定义，离�
 
 ## 证据与当前状态
 
-只运行本地文档格式/绑定/引用/范围检查；命令、退出码见 [document-validation.json](document-validation.json) 与执行账本 `.superpowers/sdd/development/task-0-report.md`。历史 v1.1 的 95 分和 passed 不再代表当前版本；新的 readiness/development-gate 明确保留未知，require-ready 预期拒绝。独立复核由主协调者安排，本 Task 0 不冒充已复核通过。
+只运行本地文档格式/绑定/引用/范围检查；命令、退出码见 [document-validation.json](document-validation.json) 与执行账本 `.superpowers/sdd/development/task-0-report.md`。历史 v1.1 的 95 分和 passed 不再代表当前版本；新的 readiness/development-gate 明确保留未知，require-ready 预期拒绝。主协调者已收到独立复核：Spec compliant / quality Approved；详见 review-v1.2.md。

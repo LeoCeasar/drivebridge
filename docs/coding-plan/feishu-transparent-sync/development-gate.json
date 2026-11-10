@@ -6,7 +6,7 @@
     {
       "id": "1",
       "score": 10,
-      "evidence": "v1.2 保留 R-01–R-13；按审核修订F01/F02/F03/F05并加入F04回归。独立复核 pending。"
+      "evidence": "v1.2 保留 R-01–R-13；按审核修订F01/F02/F03/F05并加入F04回归。独立文档复核已通过，见review-v1.2.md（真实能力仍待验证）。"
     },
     {
       "id": "2",
@@ -58,13 +58,14 @@
     "LV-01：真实共享凭据刷新、AppSecret/TAT/退出及外部CLI恢复验证未执行。",
     "LV-02：逐操作服务端能力和响应丢失核验未执行；未验证路线保持关闭。",
     "LV-03：当前head关联及已知版本下载遵循未证明；失败返回metadata_unknown。",
-    "v1.2 独立文档复核 pending；全部新增产品测试、真实分页和发布平台验收未执行。"
+    "全部新增产品测试、真实分页和发布平台验收未执行。"
   ],
   "version": "1.2",
-  "review_status": "pending",
+  "review_status": "passed",
   "historical_v1_1": {
     "score": 95,
     "disposition": "历史已通过的信息闭合度；v1.2 新证据下失效，不沿用 ready。"
   },
-  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。"
+  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。",
+  "review_evidence": "review-v1.2.md: independent same-model context review of02437a6ce; spec compliant and quality approved; live gates remain."
 }

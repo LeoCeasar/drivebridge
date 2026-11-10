@@ -58,7 +58,7 @@
     "LV-01：真实共享凭据刷新、AppSecret/TAT/退出及外部CLI恢复验证未执行。",
     "LV-02：逐操作服务端能力和响应丢失核验未执行；未验证路线保持关闭。",
     "LV-03：当前head关联及已知版本下载遵循未证明；失败返回metadata_unknown。",
-    "v1.2 独立文档复核 pending；全部新增产品测试、真实分页和发布平台验收未执行。"
+    "全部新增产品测试、真实分页和发布平台验收未执行。"
   ],
   "accepted_risks": [
     "用户已明确接受飞书网页与本地同段并发时仍可能覆盖；冲突 UI 只覆盖已检测冲突，历史恢复不保证任意离线时长。"
@@ -75,10 +75,11 @@
     "credentials": "业务profile隔离；相同验证身份复用auth root；实际AppID/AppID+OpenID共享域跨进程锁，不含brand；全部可能刷新child参与，外部CLI须显式恢复。"
   },
   "version": "1.2",
-  "review_status": "pending",
+  "review_status": "passed",
   "historical_v1_1": {
     "score": 95,
     "disposition": "历史已通过的信息闭合度；v1.2 新证据下失效，不沿用 ready。"
   },
-  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。"
+  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。",
+  "review_evidence": "review-v1.2.md: independent same-model context review of02437a6ce; spec compliant and quality approved; live gates remain."
 }
