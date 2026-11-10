@@ -502,3 +502,24 @@ func TestNoTextOrNoChangesReturnsUsableEmptyHunkList(t *testing.T) {
 		}
 	}
 }
+
+func TestDiffHunksExposeSourceLineRangesAndActualChanges(t *testing.T) {
+	hunks := diffHunks("标题😀\r\n第一行\n第二行\n末行", "标题😀\r\n第一行\n本地插入\n第二行\n末行", "标题😀\r\n第一行\n云端改写\n末行")
+	if len(hunks) != 1 {
+		t.Fatal(hunks)
+	}
+	b, _ := json.Marshal(hunks[0])
+	var h map[string]any
+	json.Unmarshal(b, &h)
+	if h["LocalStart"] != float64(2) || h["LocalEnd"] != float64(4) || h["RemoteStart"] != float64(2) || h["RemoteEnd"] != float64(3) {
+		t.Fatalf("missing precise source ranges: %s", b)
+	}
+	changes, ok := h["LocalChanges"].([]any)
+	if !ok || len(changes) != 1 {
+		t.Fatalf("unchanged local line should remain unhighlighted: %s", b)
+	}
+	change := changes[0].(map[string]any)
+	if change["Kind"] != "insert" || change["Start"] != float64(2) || change["End"] != float64(3) {
+		t.Fatal(change)
+	}
+}

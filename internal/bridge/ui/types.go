@@ -57,11 +57,23 @@ type ConflictInputs struct {
 	Text                       bool
 	SourceURL                  string
 }
-type DiffHunk struct {
-	ID                  int `json:"id"`
-	BaseStart, BaseEnd  int
-	Base, Local, Remote string
+type DiffChange struct {
+	Start, End         int
+	BaseStart, BaseEnd int
+	Kind               string
+	Side               string
 }
+type DiffHunk struct {
+	ID                                                   int `json:"id"`
+	BaseStart, BaseEnd                                   int
+	LocalStart, LocalEnd                                 int
+	RemoteStart, RemoteEnd                               int
+	Base, Local, Remote                                  string
+	BaseChanges, LocalChanges, RemoteChanges             []DiffChange
+	LocalAdded, LocalRemoved, RemoteAdded, RemoteRemoved int
+	WholeDocument                                        bool
+}
+
 type ConflictView struct {
 	HasDraft                   bool             `json:"has_draft"`
 	ID                         model.ConflictID `json:"id"`

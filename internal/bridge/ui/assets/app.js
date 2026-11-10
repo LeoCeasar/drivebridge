@@ -1,6 +1,8 @@
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
+  const diff = window.DriveBridgeDiff;
+  let activeHunk = null;
   let csrf = '', current = null, choices = new Map(), manual = false, editSeq = 0, savedSeq = 0;
   let draftTimer = null, draftChain = Promise.resolve(), authFlow = '', busy = false;
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
@@ -51,12 +53,70 @@
   }
   function edited() { editSeq++; manual = true; stash(); draftState('正在编辑，稍后自动保存'); document.querySelectorAll('.choice').forEach(e => e.disabled = true); clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 650); }
   $('merged-text').addEventListener('input', edited); $('save-draft').addEventListener('click', saveDraft);
-  function baseLines(text) { const parts = text.match(/[^\n]*\n|[^\n]+$/g); return parts || []; }
-  function rebuild() { if (!current) return; const source = baseLines(current.Base); let cursor = 0, text = ''; for (const h of current.hunks) { text += source.slice(cursor,h.BaseStart).join(''); text += h[choices.get(h.id) || 'Local']; cursor = h.BaseEnd; } text += source.slice(cursor).join(''); $('merged-text').value = text; editSeq++; stash(); draftState('差异选择已更新，稍后自动保存'); clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft,650); }
-  function renderHunks() { $('hunk-list').replaceChildren(); $('hunk-count').textContent = `${current.hunks.length} 处差异`; for (const h of current.hunks) { const row = make('div', undefined, 'hunk-row'); row.append(make('span', `差异 ${h.id + 1}，原版第 ${h.BaseStart + 1} 行`)); const group = make('div',undefined,'hunk-choices'); for (const [key,label] of [['Local','采用本地'],['Remote','采用云端'],['Base','还原原版']]) { const b = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); b.disabled = manual; b.addEventListener('click', () => { choices.set(h.id,key); rebuild(); renderHunks(); for (const id of ['base-text','local-text','remote-text']) $(id).scrollTop = h.BaseStart * 22; }); group.append(b); } row.append(group); $('hunk-list').append(row); } }
+  function rebuild() {
+    if (!current) return;
+    $('merged-text').value = diff.mergeChoices(current.Base,current.hunks,choices);
+    editSeq++; stash(); draftState('差异选择已更新，稍后自动保存');
+    clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft,650);
+  }
+  function jumpHunk(id) {
+    activeHunk = id;
+    document.querySelectorAll('.hunk-row').forEach(row => row.classList.toggle('active',Number(row.dataset.hunk) === id));
+    for (const name of ['base-text','local-text','remote-text']) {
+      const pane = $(name);
+      pane.querySelectorAll('[data-hunks]').forEach(row => row.classList.toggle('hunk-focus',row.dataset.hunks.split(' ').includes(String(id))));
+      const target = pane.querySelector(`[data-hunks~="${id}"]`);
+      if (target) pane.scrollTop = Math.max(0,target.offsetTop - pane.clientHeight / 3);
+    }
+  }
+  function renderSources() {
+    for (const [side,id] of [['Base','base-text'],['Local','local-text'],['Remote','remote-text']]) {
+      const pane = $(id); pane.replaceChildren(); pane.dataset.side = side.toLowerCase();
+      const rows = diff.makeLineRows(current[side],current.hunks,side);
+      if (!rows.length) pane.append(make('div',current.text ? '（空文本）' : '（只读非文本文件）','source-empty'));
+      for (const line of rows) {
+        const row = make('div',undefined,line.type === 'anchor' ? 'diff-anchor' : 'source-line' + (line.changed ? ' changed change-' + line.kind : ''));
+        if (line.hunks.length) {
+          row.dataset.hunks = line.hunks.join(' ');
+          row.addEventListener('click',() => jumpHunk(line.hunks[0]));
+        }
+        const number = make('span',line.type === 'line' ? String(line.number) : '·','source-line-number'); number.setAttribute('aria-hidden','true');
+        const text = make('span',line.type === 'line' ? line.text : line.label,'source-line-text');
+        row.append(number,text); pane.append(row);
+      }
+    }
+  }
+  function sourceRange(h,side) {
+    const start = h[side + 'Start'],end = h[side + 'End'];
+    return start === end ? `第 ${start + 1} 行前` : start + 1 === end ? `第 ${start + 1} 行` : `第 ${start + 1}–${end} 行`;
+  }
+  function renderHunks() {
+    $('hunk-list').replaceChildren(); $('hunk-count').textContent = `${current.hunks.length} 处差异，点击可定位三份来源`;
+    for (const h of current.hunks) {
+      const row = make('div',undefined,'hunk-row' + (h.id === activeHunk ? ' active' : '')); row.dataset.hunk = h.id;
+      const heading = make('div',undefined,'hunk-row-heading');
+      const jump = make('button',`差异 ${h.id + 1}，原版${sourceRange(h,'Base')}`,'hunk-jump');
+      jump.title = '定位到三份来源的对应文本'; jump.addEventListener('click',() => jumpHunk(h.id));
+      const group = make('div',undefined,'hunk-choices');
+      for (const [key,label] of [['Local','采用本地'],['Remote','采用云端'],['Base','还原原版']]) {
+        const button = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); button.disabled = manual;
+        button.addEventListener('click',() => { choices.set(h.id,key); rebuild(); renderHunks(); jumpHunk(h.id); }); group.append(button);
+      }
+      heading.append(jump,group); row.append(heading);
+      const context = make('div',undefined,'hunk-context');
+      for (const [side,label] of [['Base','共同原版'],['Local','本地'],['Remote','云端']]) {
+        const cell = make('section',undefined,'hunk-context-cell context-' + side.toLowerCase());
+        let delta = '';
+        if (side !== 'Base') delta = h.WholeDocument ? '，整份比较' : `，+${h[side+'Added']} / −${h[side+'Removed']} 行`;
+        cell.append(make('div',`${label} ${sourceRange(h,side)}${delta}`,'hunk-context-label'),make('pre',diff.snippet(h[side]),'hunk-snippet'));
+        context.append(cell);
+      }
+      row.append(context); $('hunk-list').append(row);
+    }
+  }
   async function openConflict(id) {
     if (current && editSeq !== savedSeq && !(await saveDraft())) return;
-    try { const data = await api(`/api/conflicts/${encodeURIComponent(id)}`); current = data; current.hunks ||= []; choices = new Map(); editSeq = 0; savedSeq = 0; manual = data.has_draft; $('merge').hidden = false; view('workspace'); $('merge-name').textContent = data.name; $('merge-version').textContent = `本地代次 ${data.generation}，云端修订 ${data.remote_revision || '下载观测'}`; $('base-text').textContent = data.Base; $('local-text').textContent = data.Local; $('remote-text').textContent = data.Remote; $('merged-text').value = data.has_draft ? data.Draft : data.Local; $('merged-text').disabled = !data.text; $('resolve').disabled = !data.text; $('save-draft').disabled = !data.text; $('reset-choices').disabled = !data.text;
+    try { const data = await api(`/api/conflicts/${encodeURIComponent(id)}`); current = data; current.hunks ||= []; choices = new Map(); editSeq = 0; savedSeq = 0; manual = data.has_draft; $('merge').hidden = false; view('workspace'); $('merge-name').textContent = data.name; $('merge-version').textContent = `本地代次 ${data.generation}，云端修订 ${data.remote_revision || '下载观测'}`; activeHunk = null; renderSources(); $('merged-text').value = data.has_draft ? data.Draft : data.Local; $('merged-text').disabled = !data.text; $('resolve').disabled = !data.text; $('save-draft').disabled = !data.text; $('reset-choices').disabled = !data.text;
       try { const cached = JSON.parse(localStorage.getItem(`draft:${id}`)); if (cached && cached.text !== $('merged-text').value) { $('merged-text').value = cached.text; manual = true; editSeq++; draftState('恢复了此浏览器暂存内容，请保存草稿'); } else draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); } catch (_) { draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); }
       if (!data.text) message('该文件不是可编辑文本。原版和双方副本仍保留，请通过恢复入口另存后处理。'); renderHunks(); await refresh();
     } catch (e) { message(e.message,true); }
