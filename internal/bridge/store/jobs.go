@@ -15,6 +15,7 @@ import (
 )
 
 type jobRecord struct {
+	StagedAt           time.Time               `json:"staged_at,omitempty"`
 	PreparationRestart bool                    `json:"preparation_restart,omitempty"`
 	HumanResolution    bool                    `json:"human_resolution,omitempty"`
 	ErrorCode          string                  `json:"error_code,omitempty"`
@@ -97,7 +98,7 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 	if err = saveEntry(tx, e); err != nil {
 		return
 	}
-	err = saveJob(tx, jobRecord{Job: j})
+	err = saveJob(tx, jobRecord{Job: j, StagedAt: time.Now().UTC()})
 	return
 }
 
@@ -362,6 +363,7 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
+	StagedAt           time.Time
 	PreparationRestart bool
 	HumanResolution    bool
 	ErrorCode          string
@@ -375,7 +377,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
+		j = JobJournal{StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return

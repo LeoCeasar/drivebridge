@@ -32,6 +32,7 @@ type Dependencies struct {
 	RefreshDirectories func(context.Context) error
 }
 type Options struct {
+	WriteBack                       time.Duration
 	EmptyFileUploadVerified         bool // trusted capability evidence, not a config override
 	Now                             func() time.Time
 	Concurrency                     int
@@ -60,6 +61,9 @@ func New(d Dependencies, o Options) (*Engine, error) {
 	}
 	if _, err := d.Store.Scope(context.Background()); err != nil {
 		return nil, err
+	}
+	if o.WriteBack < 0 {
+		return nil, errors.New("write-back delay must not be negative")
 	}
 	if o.Concurrency <= 0 {
 		o.Concurrency = 3
@@ -150,6 +154,10 @@ func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 		return store.ErrFrozen
 	}
 	if job.State == model.StatusQueued {
+		ready, err := e.writeBackReady(ctx, *job)
+		if err != nil || !ready {
+			return err
+		}
 		j, en, err := e.store.Prepare(ctx, job.ID)
 		if err != nil {
 			return err
@@ -176,6 +184,32 @@ func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 	}
 	return model.ErrUnsupportedContent
 }
+
+// Only new, unplanned queued work observes the write-back delay. Reconciliation
+// of an earlier dispatch must not be delayed, and legacy journals have no clock.
+func (e *Engine) writeBackReady(ctx context.Context, job model.Job) (bool, error) {
+	if e.opt.WriteBack == 0 {
+		return true, nil
+	}
+	journal, err := e.store.Journal(ctx, job.ID)
+	if err != nil {
+		return false, err
+	}
+	if journal.StagedAt.IsZero() || journal.Job.Plan != "" || len(journal.Job.OperationIDs) != 0 || len(journal.Operations) != 0 || len(journal.Results) != 0 || journal.Desired != "" {
+		return true, nil
+	}
+	creates, err := e.store.PendingCreates(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, op := range creates {
+		if op.JobID == job.ID {
+			return true, nil
+		}
+	}
+	return !e.now().Before(journal.StagedAt.Add(e.opt.WriteBack)), nil
+}
+
 func (e *Engine) publishPending(ctx context.Context, id model.EntryID) error {
 	list, err := e.store.PendingPublications(ctx)
 	if err != nil {

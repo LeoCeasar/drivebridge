@@ -286,7 +286,7 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 			dst.Visible = r.Op.Input
 			dst.Status = model.StatusQueued
 			j := model.Job{ID: model.JobID(uuid.NewString()), EntryID: dst.ID, Generation: dst.Generation, Local: dst.Local, BaseLocal: dst.LocalCheckpoint, BaseRemote: dst.RemoteCheckpoint, State: model.StatusQueued}
-			if er = saveJob(tx, jobRecord{Job: j}); er != nil {
+			if er = saveJob(tx, jobRecord{Job: j, StagedAt: time.Now().UTC()}); er != nil {
 				return er
 			}
 			if er = saveEntry(tx, dst); er != nil {
