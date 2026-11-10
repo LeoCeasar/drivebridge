@@ -98,6 +98,13 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 		return out, err
 	}
 	for _, j := range jobs {
+		journal, journalErr := s.Journal(ctx, j.ID)
+		if journalErr != nil {
+			return out, journalErr
+		}
+		if journal.ErrorCode != "" {
+			out.LastError = journal.ErrorCode
+		}
 		switch j.State {
 		case model.StatusMerging, model.StatusUploading, model.StatusAwaitingVerification:
 			out.Inflight++
@@ -113,6 +120,34 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 		return out, err
 	}
 	out.Conflicts = len(conflicts)
+	publications, err := s.PendingPublications(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Queued += len(publications)
+	if len(publications) > 0 {
+		out.CloudState = "awaiting_publish"
+	}
+	namespaces, err := s.PendingNamespace(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Queued += len(namespaces)
+	actions, err := s.NamespaceActions(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, op := range actions {
+		journal, err := s.NamespaceJournal(ctx, op.ID)
+		if err != nil {
+			return out, err
+		}
+		if journal.Dispatched {
+			out.Inflight++
+		} else {
+			out.Queued++
+		}
+	}
 	if out.Conflicts > 0 {
 		out.CloudState = "conflict"
 	} else if out.Inflight > 0 {
@@ -133,6 +168,9 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 	}
 	spec, err := m.spec(ctx, id)
 	if err != nil {
+		return out, err
+	}
+	if err = m.validateOwnership(ctx, spec); err != nil {
 		return out, err
 	}
 	out = model.MountStatus{SchemaVersion: 1, MountID: id, CloudState: "stopped", LocalSaved: true}

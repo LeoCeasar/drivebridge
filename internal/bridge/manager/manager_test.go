@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/config"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -70,7 +71,11 @@ func fixture(t *testing.T, gate chan struct{}) (*Manager, model.MountID, *fakeRu
 	}
 	runtime := &fakeRuntime{done: make(chan error)}
 	workerCtx, cancel := context.WithCancel(context.Background())
-	m, err := newManager(Options{ConfigFile: file, CLIExecutable: "", Executable: "/fixture/bridge", ReadyTimeout: 2 * time.Second}, dependencies{domain: filepath.Join(root, "global"), startLease: func(context.Context) (func(), error) { return func() {}, nil }, factory: func(ctx context.Context, spec mountSpec) (*workerServices, error) {
+	m, err := newManager(Options{ConfigFile: file, CLIExecutable: "", Executable: "/fixture/bridge", ReadyTimeout: 2 * time.Second}, dependencies{domain: filepath.Join(root, "global"), startLease: func(ctx context.Context) (func(), error) {
+		return fixtureLease(ctx, filepath.Join(root, "global", "test-admission.lock"), true)
+	}, lifecycleLease: func(ctx context.Context) (func(), error) {
+		return fixtureLease(ctx, filepath.Join(root, "global", "test-admission.lock"), false)
+	}, factory: func(ctx context.Context, spec mountSpec) (*workerServices, error) {
 		if gate != nil {
 			select {
 			case <-gate:
@@ -241,4 +246,248 @@ func TestUnstartedMountQueriesStayEmptyWithoutCreatingStore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(spec.Paths.Root, "store.db")); !os.IsNotExist(err) {
 		t.Fatal("read-only empty query created a database", err)
 	}
+}
+func fixtureReference(t *testing.T, m *Manager) []auth.Reference {
+	t.Helper()
+	c, err := m.LoadConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.Profiles[0]
+	return []auth.Reference{{ConfigID: hashPath(m.ConfigFile()), ConfigFile: m.ConfigFile(), ProfileID: p.ID, AuthRef: p.AuthRef, IdentityHash: p.IdentityHash}}
+}
+func TestAuthGuardRefusesLiveMountAndRecoveryKeepsPendingFrozen(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	refs := fixtureReference(t, m)
+	if release, err := m.Acquire(context.Background(), "app", refs); !errors.Is(err, auth.ErrReferencesBusy) {
+		if release != nil {
+			release()
+		}
+		t.Fatal("live mount did not block logout", err)
+	}
+	w := m.localWorker(id)
+	e, _ := w.services.store.EnsureEntry(context.Background(), "pending.bin", model.KindFile)
+	if _, _, err := w.services.store.Stage(context.Background(), e.ID, nil, strings.NewReader("pending preserved")); err != nil {
+		t.Fatal(err)
+	}
+	release, err := m.AcquireRecovery(context.Background(), "app", refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.UploadStatus(context.Background(), id); !errors.Is(err, ErrPending) {
+		release()
+		t.Fatal("offline pending state was not frozen", err)
+	}
+	release()
+	jobs, err := m.UploadStatus(context.Background(), id)
+	if err != nil || len(jobs) != 1 {
+		t.Fatal("recovery discarded pending input", jobs, err)
+	}
+	if release, err = m.Acquire(context.Background(), "app", refs); !errors.Is(err, auth.ErrReferencesBusy) {
+		if release != nil {
+			release()
+		}
+		t.Fatal("pending queue did not block logout", err)
+	}
+}
+func TestHistoricalStateRootCannotHidePendingFromAuthGuard(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	w := m.localWorker(id)
+	e, _ := w.services.store.EnsureEntry(context.Background(), "pending.bin", model.KindFile)
+	if _, _, err := w.services.store.Stage(context.Background(), e.ID, nil, strings.NewReader("old-root-pending")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.stopForRecovery(context.Background(), id, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	refs := fixtureReference(t, m)
+	c, _ := m.LoadConfig(context.Background())
+	c.StateDir = filepath.Join(filepath.Dir(c.StateDir), "other-state")
+	if err := config.Save(m.ConfigFile(), c); err != nil {
+		t.Fatal(err)
+	}
+	if release, err := m.Acquire(context.Background(), "app", refs); !errors.Is(err, auth.ErrReferencesBusy) {
+		if release != nil {
+			release()
+		}
+		t.Fatal("StateDir override hid durable queue", err)
+	}
+	if _, err := m.Start(context.Background(), id, true); !errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal("moved StateDir adopted without migration", err)
+	}
+}
+func TestStatusIncludesNamespaceCloudWork(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	s := m.localWorker(id).services.store
+	if _, err := s.ObserveEntry(context.Background(), store.Observation{Remote: "", Kind: model.KindFolder, Token: "fixture_folder"}); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.PrepareNamespace(context.Background(), model.NamespaceOp{Kind: "mkdir", Dst: "new-folder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SealNamespace(context.Background(), op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CommitNamespace(context.Background(), op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.FinishNamespace(context.Background(), op.ID); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(context.Background(), id)
+	if err != nil || status.Queued+status.Inflight == 0 || status.CloudState == "synced" {
+		t.Fatal("unpublished namespace reported synced", status, err)
+	}
+}
+func TestStopDoesNotUnmountDuringMutableIPC(t *testing.T) {
+	m, id, runtime, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	w := m.localWorker(id)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	w.mu.Lock()
+	w.services.retry = func(ctx context.Context) error {
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	w.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- m.Retry(context.Background(), id) }()
+	<-entered
+	if err := m.Stop(context.Background(), id, 30*time.Millisecond); !errors.Is(err, ErrPending) {
+		t.Fatal("stop crossed active mutable IPC", err)
+	}
+	runtime.mu.Lock()
+	unmounted := runtime.unmounted
+	runtime.mu.Unlock()
+	if unmounted {
+		t.Fatal("unmounted before request finished")
+	}
+	once.Do(func() { close(release) })
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+func TestRecoveryJoinsControlCancellationBeforeClosingStore(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	w := m.localWorker(id)
+	e, err := w.services.store.EnsureEntry(context.Background(), "late-journal.bin", model.KindFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	saved := make(chan error, 1)
+	w.mu.Lock()
+	w.services.retry = func(ctx context.Context) error {
+		close(entered)
+		<-ctx.Done()
+		_, _, err := w.services.store.Stage(context.Background(), e.ID, nil, strings.NewReader("late durable state"))
+		saved <- err
+		return ctx.Err()
+	}
+	w.mu.Unlock()
+	done := make(chan error, 1)
+	go func() { done <- m.Retry(context.Background(), id) }()
+	<-entered
+	if err = m.stopForRecovery(context.Background(), id, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-saved; err != nil {
+		t.Fatal("store closed before journal cancellation completed", err)
+	}
+	_ = <-done
+	jobs, err := m.UploadStatus(context.Background(), id)
+	if err != nil || len(jobs) != 1 {
+		t.Fatal("recovery discarded late durable input", jobs, err)
+	}
+}
+func TestQuiescenceStopsMountAndExcludesWorkerStarts(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err := m.WithQuiescence(context.Background(), func(ctx context.Context) error {
+		called = true
+		if m.localWorker(id) != nil {
+			t.Fatal("callback before worker stopped")
+		}
+		blocked, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		if release, err := m.startLease(blocked); !errors.Is(err, context.DeadlineExceeded) {
+			if release != nil {
+				release()
+			}
+			t.Fatal("quiescence did not exclude starts", err)
+		}
+		return nil
+	})
+	if err != nil || !called {
+		t.Fatal(err)
+	}
+}
+func TestQuiescenceDoesNotCallMigrationWhileWriterIsOpen(t *testing.T) {
+	m, id, runtime, _ := fixture(t, nil)
+	if _, err := m.Start(context.Background(), id, true); err != nil {
+		t.Fatal(err)
+	}
+	runtime.mu.Lock()
+	runtime.writers = 1
+	runtime.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	called := false
+	err := m.WithQuiescence(ctx, func(context.Context) error { called = true; return nil })
+	if err == nil || called {
+		t.Fatal("migration crossed open writer", err)
+	}
+	runtime.mu.Lock()
+	unmounted := runtime.unmounted
+	runtime.mu.Unlock()
+	if unmounted {
+		t.Fatal("migration unmounted open writer")
+	}
+}
+
+func fixtureLease(ctx context.Context, path string, shared bool) (func(), error) {
+	l, err := privateLock(path)
+	if err != nil {
+		return nil, err
+	}
+	var ok bool
+	if shared {
+		ok, err = l.TryRLockContext(ctx, time.Millisecond)
+	} else {
+		ok, err = l.TryLockContext(ctx, time.Millisecond)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrPending
+	}
+	var once sync.Once
+	return func() { once.Do(func() { _ = l.Unlock() }) }, nil
 }

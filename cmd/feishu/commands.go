@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -291,6 +292,9 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		return map[string]bool{"accepted": true}, m.ResolveConflict(ctx, model.ResolveRequest{ConflictID: model.ConflictID(args[0]), ExpectedGeneration: generation, ExpectedRemoteRevision: flagString(resolve, "expected-remote-revision"), Content: body})
 	})
 	conflict.AddCommand(resolve)
+	conflict.AddCommand(&cobra.Command{Use: "export ID", Short: "Export immutable local conflict copies without overwriting edited copies", Args: exactArgs(1), RunE: commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		return m.ExportConflict(ctx, model.ConflictID(args[0]))
+	})})
 	root.AddCommand(conflict)
 	cache := &cobra.Command{Use: "cache", Short: "Inspect caches or remove only unreferenced clean data"}
 	for _, action := range []string{"status", "clean"} {
@@ -316,7 +320,37 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		if err != nil {
 			return nil, err
 		}
-		return m.Logs(ctx, v.ID)
+		if flagString(logs, "follow") != "true" {
+			return m.Logs(ctx, v.ID)
+		}
+		followCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+		defer cancel()
+		seen := map[string]bool{}
+		tick := time.NewTicker(500 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			events, err := m.Logs(followCtx, v.ID)
+			if err != nil {
+				if followCtx.Err() != nil {
+					return nil, nil
+				}
+				return nil, err
+			}
+			for _, event := range events {
+				key := event.At.String() + "/" + event.Code
+				if !seen[key] {
+					seen[key] = true
+					if err := json.NewEncoder(logs.OutOrStdout()).Encode(event); err != nil {
+						return nil, err
+					}
+				}
+			}
+			select {
+			case <-followCtx.Done():
+				return nil, nil
+			case <-tick.C:
+			}
+		}
 	})
 	root.AddCommand(logs)
 	completion := &cobra.Command{Use: "completion SHELL", Args: exactArgs(1), RunE: func(c *cobra.Command, args []string) error {

@@ -9,6 +9,11 @@ import (
 )
 
 func (m *Manager) notifyConflict(ctx context.Context, spec mountSpec, s *store.Store, c model.Conflict) error {
+	if _, err := s.ExportConflictCopies(ctx, c.ID); err != nil {
+		if w := m.localWorker(spec.Mount.ID); w != nil {
+			w.log("conflict_copy_failed")
+		}
+	}
 	if !spec.Mount.Notify || !platform.DesktopAvailable() {
 		return nil
 	}

@@ -123,7 +123,7 @@ func (m *Manager) call(ctx context.Context, id model.MountID, route string, inpu
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("X-DriveBridge-Instance", ep.InstanceID)
 	req.Header.Set("Content-Type", "application/json")
-	client := http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 0}
+	client := http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}, Timeout: 0}
 	res, err := client.Do(req)
 	if err != nil {
 		return ErrUnavailable
@@ -254,6 +254,15 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
+	case "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict":
+		controlCtx, release, err := w.beginControl(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		ctx = controlCtx
+	}
+	switch r.URL.Path {
 	case "/stop", "/recovery/stop":
 		var input struct {
 			Wait int64 `json:"wait_ns"`
@@ -284,6 +293,22 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 			return nil, ErrConfig
 		}
 		return w.conflicts(ctx)
+	case "/conflict":
+		var in struct {
+			ID model.ConflictID `json:"id"`
+		}
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return w.conflictDetail(ctx, in.ID)
+	case "/conflict/export":
+		var in struct {
+			ID model.ConflictID `json:"id"`
+		}
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return s.store.ExportConflictCopies(ctx, in.ID)
 	case "/conflict/claim":
 		var in struct {
 			ID model.ConflictID `json:"id"`

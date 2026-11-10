@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
 )
 
@@ -23,11 +24,13 @@ type mountRuntime interface {
 	CachePaths() (string, string)
 }
 type workerServices struct {
-	store   *store.Store
-	runtime mountRuntime
-	run     func(context.Context) error
-	resolve func(context.Context, model.ResolveRequest) error
-	retry   func(context.Context) error
+	store             *store.Store
+	runtime           mountRuntime
+	run               func(context.Context) error
+	resolve           func(context.Context, model.ResolveRequest) error
+	retry             func(context.Context) error
+	refreshConflict   func(context.Context, model.ConflictID) (model.Conflict, error)
+	resumeCredentials func(context.Context) error
 }
 type worker struct {
 	manager      *Manager
@@ -42,6 +45,9 @@ type worker struct {
 	stopOnce     sync.Once
 	engineCancel context.CancelFunc
 	engineDone   chan struct{}
+	controls     map[uint64]context.CancelFunc
+	controlNext  uint64
+	controlWG    sync.WaitGroup
 }
 
 func (m *Manager) localWorker(id model.MountID) *worker {
@@ -75,11 +81,15 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 		return ErrPending
 	}
 	defer l.Unlock()
-	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{})}
+	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{}), controls: map[uint64]context.CancelFunc{}}
 	m.mu.Lock()
 	m.workers[id] = w
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); delete(m.workers, id); m.mu.Unlock() }()
+	if err = m.validateOwnership(ctx, spec); err != nil {
+		w.recordError(err)
+		return err
+	}
 	if err = m.recordOwner(spec); err != nil {
 		return err
 	}
@@ -103,6 +113,13 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 		_ = services.runtime.Unmount()
 		return err
 	}
+	if services.resumeCredentials != nil {
+		if err = services.resumeCredentials(ctx); err != nil {
+			w.recordError(err)
+			_ = services.runtime.Unmount()
+			return err
+		}
+	}
 	engineCtx, cancel := context.WithCancel(context.Background())
 	w.engineCancel = cancel
 	w.engineDone = make(chan struct{})
@@ -114,7 +131,7 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 			}
 		}
 	}()
-	defer func() { cancel(); <-w.engineDone }()
+	defer func() { cancel(); w.closeControls(); <-w.engineDone }()
 	w.mu.Lock()
 	w.ready = true
 	w.mu.Unlock()
@@ -134,6 +151,9 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 	}
 }
 func (w *worker) recordError(err error) {
+	if err == nil {
+		return
+	}
 	code := errorCode(err)
 	w.mu.Lock()
 	w.lastError = code
@@ -154,7 +174,9 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 		return out, err
 	}
 	out.Running = ready
-	out.LastError = last
+	if last != "" {
+		out.LastError = last
+	}
 	if services.runtime.CachePending() {
 		out.VFSPending++
 	}
@@ -173,6 +195,11 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 	}
 	w.stopping = true
 	services := w.services
+	if preserve {
+		for _, cancel := range w.controls {
+			cancel()
+		}
+	}
 	w.mu.Unlock()
 	success := false
 	keepPaused := false
@@ -202,7 +229,10 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 		if pubErr != nil || nsErr != nil || crErr != nil {
 			return ErrPending
 		}
-		if readers == 0 && writers == 0 && reservations == 0 && status.VFSPending == 0 && (preserve || (status.Queued == 0 && status.Inflight == 0 && status.Conflicts == 0 && len(publications) == 0 && len(names) == 0 && len(creates) == 0)) {
+		w.mu.Lock()
+		controls := len(w.controls)
+		w.mu.Unlock()
+		if controls == 0 && readers == 0 && writers == 0 && reservations == 0 && status.VFSPending == 0 && (preserve || (status.Queued == 0 && status.Inflight == 0 && status.Conflicts == 0 && len(publications) == 0 && len(names) == 0 && len(creates) == 0)) {
 			break
 		}
 		select {
@@ -229,19 +259,18 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 	return nil
 }
 func (m *Manager) Start(ctx context.Context, id model.MountID, background bool) (model.MountStatus, error) {
-	release, err := m.startLease(ctx)
+	readyCtx, cancel := context.WithTimeout(ctx, m.options.ReadyTimeout)
+	defer cancel()
+	release, err := m.startLease(readyCtx)
 	if err != nil {
 		return model.MountStatus{}, err
 	}
 	defer release()
-	spec, err := m.spec(ctx, id)
+	spec, err := m.spec(readyCtx, id)
 	if err != nil {
 		return model.MountStatus{}, err
 	}
-	if state, err := m.Status(ctx, id); err == nil && state.Running {
-		return state, nil
-	}
-	if err = validateMountpoint(spec.Mount.Mountpoint); err != nil {
+	if err = m.validateOwnership(readyCtx, spec); err != nil {
 		return model.MountStatus{}, err
 	}
 	log := filepath.Join(spec.Paths.Logs, "worker.stderr.log")
@@ -257,40 +286,93 @@ func (m *Manager) Start(ctx context.Context, id model.MountID, background bool) 
 		args = append(args, "--lark-cli", cli)
 	}
 	args = append(args, "_worker", "--mount-id", string(id))
-	if _, err = m.spawn(ctx, args, log); err != nil {
-		return model.MountStatus{}, err
-	}
-	deadline := time.NewTimer(m.options.ReadyTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	spawned := false
+	var state model.MountStatus
 	for {
-		state, err := m.Status(ctx, id)
+		state, err = m.Status(readyCtx, id)
 		if err == nil && state.Running {
 			return state, nil
 		}
-		if errors.Is(err, ErrInstanceChanged) {
-			return state, err
-		}
-		if err == nil && state.LastError != "" {
+		if spawned && err == nil && state.LastError != "" {
 			return state, errorFromCode(state.LastError)
 		}
+		if !spawned {
+			lock, lockErr := privateLock(m.runtimeLockPath(id))
+			if lockErr != nil {
+				return state, lockErr
+			}
+			ok, lockErr := lock.TryLock()
+			if lockErr != nil {
+				return state, lockErr
+			}
+			if ok {
+				if err = validateMountpoint(spec.Mount.Mountpoint); err != nil {
+					_ = lock.Unlock()
+					return state, err
+				}
+				// A free OS ownership lock proves that an old descriptor cannot belong to
+				// a managed worker. Never signal or kill the descriptor's recorded PID.
+				for _, name := range []string{"ipc.json", "ipc.key"} {
+					path := filepath.Join(spec.Paths.Root, name)
+					if err = platform.CheckNoSymlinks(path); err != nil {
+						_ = lock.Unlock()
+						return state, err
+					}
+					if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+						_ = lock.Unlock()
+						return state, removeErr
+					}
+				}
+				err = atomicJSON(filepath.Join(spec.Paths.Root, "last-state.json"), map[string]string{"last_error": ""})
+				_ = lock.Unlock()
+				if err != nil {
+					return state, err
+				}
+				if _, err = m.spawn(readyCtx, args, log); err != nil {
+					return state, err
+				}
+				spawned = true
+			} else if errors.Is(err, ErrInstanceChanged) {
+				return state, err
+			}
+		}
 		select {
-		case <-ctx.Done():
-			return state, ctx.Err()
-		case <-deadline.C:
+		case <-readyCtx.Done():
+			if ctx.Err() != nil {
+				return state, ctx.Err()
+			}
 			return state, ErrReadyTimeout
-		case <-ticker.C:
+		case <-tick.C:
 		}
 	}
 }
+
 func (m *Manager) Stop(ctx context.Context, id model.MountID, wait time.Duration) error {
 	if wait < 0 {
 		return ErrConfig
 	}
 	var out struct{}
-	return m.call(ctx, id, "/stop", map[string]int64{"wait_ns": int64(wait)}, &out)
+	err := m.call(ctx, id, "/stop", map[string]int64{"wait_ns": int64(wait)}, &out)
+	if err != nil && !errors.Is(err, ErrUnavailable) && !os.IsNotExist(err) {
+		return err
+	}
+	finishCtx, cancel := context.WithTimeout(ctx, wait+time.Second)
+	defer cancel()
+	if err = m.waitOffline(finishCtx, id); err != nil {
+		return errors.Join(ErrPending, err)
+	}
+	status, err := m.Status(ctx, id)
+	if err != nil {
+		return err
+	}
+	if status.Running || status.Queued+status.Inflight+status.Conflicts+status.VFSPending > 0 {
+		return ErrPending
+	}
+	return nil
 }
+
 func (m *Manager) waitEndpoint(ctx context.Context, id model.MountID) error {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
@@ -330,4 +412,34 @@ func validateMountpoint(path string) error {
 		return os.MkdirAll(path, 0700)
 	}
 	return err
+}
+
+func (w *worker) beginControl(parent context.Context) (context.Context, func(), error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.ready || w.stopping {
+		return nil, nil, ErrPending
+	}
+	ctx, cancel := context.WithCancel(parent)
+	w.controlNext++
+	id := w.controlNext
+	if w.controls == nil {
+		w.controls = map[uint64]context.CancelFunc{}
+	}
+	w.controls[id] = cancel
+	w.controlWG.Add(1)
+	var once sync.Once
+	return ctx, func() {
+		once.Do(func() { cancel(); w.mu.Lock(); delete(w.controls, id); w.mu.Unlock(); w.controlWG.Done() })
+	}, nil
+}
+func (w *worker) closeControls() {
+	w.mu.Lock()
+	w.stopping = true
+	w.ready = false
+	for _, cancel := range w.controls {
+		cancel()
+	}
+	w.mu.Unlock()
+	w.controlWG.Wait()
 }

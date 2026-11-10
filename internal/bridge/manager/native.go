@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/rclone/rclone/backend/local"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
 	fsconfig "github.com/rclone/rclone/fs/config"
@@ -35,6 +36,8 @@ func selectMount() (string, mountlib.MountFn, error) {
 }
 
 type nativeRuntime struct {
+	mu              sync.Mutex
+	closed          bool
 	v               *vfs.VFS
 	point           *mountlib.MountPoint
 	closeOnce       sync.Once
@@ -47,14 +50,28 @@ func (n *nativeRuntime) Activity() (int, int, int) { return n.v.ManagedActivity(
 func (n *nativeRuntime) CachePending() bool        { return n.v.ManagedCachePending() }
 func (n *nativeRuntime) Pause() (func(), error)    { return n.v.PauseManagedAdmission() }
 func (n *nativeRuntime) Unmount() error {
-	n.unmountOnce.Do(func() { n.adapterShutdown = true; n.unmountErr = n.point.Unmount() })
+	n.unmountOnce.Do(func() {
+		n.mu.Lock()
+		if n.closed {
+			n.unmountErr = ErrUnavailable
+			n.mu.Unlock()
+			return
+		}
+		n.adapterShutdown = true
+		n.mu.Unlock()
+		n.unmountErr = n.point.Unmount()
+	})
 	return n.unmountErr
 }
 func (n *nativeRuntime) Done() <-chan error           { return n.point.ErrChan }
 func (n *nativeRuntime) CachePaths() (string, string) { return n.v.ManagedCachePaths() }
 func (n *nativeRuntime) Close() error {
 	n.closeOnce.Do(func() {
-		if !n.adapterShutdown {
+		n.mu.Lock()
+		n.closed = true
+		adapterShutdown := n.adapterShutdown
+		n.mu.Unlock()
+		if !adapterShutdown {
 			n.v.Shutdown()
 		}
 	})
@@ -94,7 +111,12 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		}
 		return nil
 	}
-	client, err := cloud.New(runner, cloud.Options{CheckIdentity: verifyIdentity, TempDir: filepath.Join(spec.Paths.Root, "transport"), Capabilities: grants})
+	client, err := cloud.New(runner, cloud.Options{CheckMutation: func(context.Context) error {
+		if len(grants) == 0 {
+			return model.ErrUnsupportedContent
+		}
+		return nil
+	}, CheckIdentity: verifyIdentity, TempDir: filepath.Join(spec.Paths.Root, "transport"), Capabilities: grants})
 	if err != nil {
 		return nil, err
 	}
@@ -142,21 +164,29 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err != nil {
 		return nil, err
 	}
+	var native *nativeRuntime
 	defer func() {
 		if !success {
-			v.Shutdown()
+			if native != nil {
+				_ = native.Unmount()
+				_ = native.Close()
+			} else {
+				v.Shutdown()
+			}
 		}
 	}()
 	mountOptions := mountlib.Opt
 	mountOptions.Daemon = false
 	point := mountlib.NewMountPoint(mount, spec.Mount.Mountpoint, f, &mountOptions, &options)
 	point.VFS = v
+	point.SetVolumeName(point.MountOpt.VolumeName)
+	point.SetDeviceName(point.MountOpt.DeviceName)
 	point.ErrChan, point.UnmountFn, _, err = mount(v, point.MountPoint, &point.MountOpt)
 	if err != nil {
 		return nil, errors.Join(ErrDriver, err)
 	}
 	point.MountedOn = time.Now()
-	native := &nativeRuntime{v: v, point: point}
+	native = &nativeRuntime{v: v, point: point}
 	poll, err := time.ParseDuration(spec.Mount.PollDocs)
 	if err != nil {
 		native.Unmount()
@@ -188,7 +218,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return nil, err
 	}
 	success = true
-	return &workerServices{store: s, runtime: native, run: engine.Run, resolve: func(ctx context.Context, r model.ResolveRequest) error {
+	return &workerServices{store: s, runtime: native, run: engine.Run, refreshConflict: engine.RefreshConflict, resumeCredentials: func(ctx context.Context) error { return resumeVerifiedCredentials(ctx, s) }, resolve: func(ctx context.Context, r model.ResolveRequest) error {
 		_, _, err := engine.Resolve(ctx, r)
 		return err
 	}, retry: func(ctx context.Context) error {
@@ -206,4 +236,27 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		}
 		return failures
 	}}, nil
+}
+
+func resumeVerifiedCredentials(ctx context.Context, s *store.Store) error {
+	jobs, err := s.Pending(ctx)
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		if job.State != model.StatusBlocked && job.State != model.StatusPaused {
+			continue
+		}
+		journal, err := s.Journal(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if journal.ErrorCode != "identity_changed" && journal.ErrorCode != "permission_denied" {
+			continue
+		}
+		if err = s.ResumeJob(ctx, job.ID); err != nil && !errors.Is(err, store.ErrInvalidState) {
+			return err
+		}
+	}
+	return nil
 }

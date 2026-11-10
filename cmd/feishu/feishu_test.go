@@ -2,10 +2,12 @@ package feishu
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/config"
@@ -105,5 +107,24 @@ func TestCompletionAndHelpDoNotRequireCLIOrAccount(t *testing.T) {
 		if err := root.Execute(); err != nil || stdout.Len() == 0 {
 			t.Fatal(args, err)
 		}
+	}
+}
+func TestLogsFollowWaitsForCancellationWithoutTrailingJSON(t *testing.T) {
+	file := configFixture(t)
+	root := NewCommand(CommandOptions{})
+	var stdout bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--bridge-config", file, "logs", "team", "--follow", "--json"})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := root.ExecuteContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("follow returned instead of waiting for cancellation")
+	}
+	if stdout.Len() != 0 {
+		t.Fatal("follow emitted an unrelated trailing JSON result", stdout.String())
 	}
 }

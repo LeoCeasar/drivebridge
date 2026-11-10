@@ -40,21 +40,23 @@ type mountSpec struct {
 }
 type workerFactory func(context.Context, mountSpec) (*workerServices, error)
 type dependencies struct {
-	domain     string
-	factory    workerFactory
-	startLease func(context.Context) (func(), error)
+	domain         string
+	factory        workerFactory
+	startLease     func(context.Context) (func(), error)
+	lifecycleLease func(context.Context) (func(), error)
 }
 type Manager struct {
-	options    Options
-	domain     string
-	factory    workerFactory
-	spawn      func(context.Context, []string, string) (int, error)
-	startLease func(context.Context) (func(), error)
-	mu         sync.Mutex
-	workers    map[model.MountID]*worker
-	auth       *auth.Service
-	ctx        context.Context
-	cancel     context.CancelFunc
+	options        Options
+	domain         string
+	factory        workerFactory
+	spawn          func(context.Context, []string, string) (int, error)
+	startLease     func(context.Context) (func(), error)
+	lifecycleLease func(context.Context) (func(), error)
+	mu             sync.Mutex
+	workers        map[model.MountID]*worker
+	auth           *auth.Service
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 func New(o Options) (*Manager, error) { return newManager(o, dependencies{}) }
@@ -99,8 +101,17 @@ func newManager(o Options, d dependencies) (*Manager, error) {
 		}
 	}
 
+	if d.lifecycleLease == nil {
+		d.lifecycleLease = func(ctx context.Context) (func(), error) {
+			c, err := auth.NewCoordinator()
+			if err != nil {
+				return nil, err
+			}
+			return c.AcquireLifecycle(ctx)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{options: o, domain: d.domain, factory: d.factory, startLease: d.startLease, workers: map[model.MountID]*worker{}, ctx: ctx, cancel: cancel}
+	m := &Manager{options: o, domain: d.domain, factory: d.factory, startLease: d.startLease, lifecycleLease: d.lifecycleLease, workers: map[model.MountID]*worker{}, ctx: ctx, cancel: cancel}
 	if m.factory == nil {
 		m.factory = m.buildWorker
 	}

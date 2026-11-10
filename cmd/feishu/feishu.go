@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/internal/bridge/config"
@@ -33,7 +34,15 @@ func flagString(c *cobra.Command, name string) string {
 	return ""
 }
 func ManagerForCommand(c *cobra.Command) (*manager.Manager, error) {
-	return manager.New(manager.Options{ConfigFile: flagString(c, config.BridgeConfigFlag), CLIExecutable: flagString(c, "lark-cli")})
+	options := manager.Options{ConfigFile: flagString(c, config.BridgeConfigFlag), CLIExecutable: flagString(c, "lark-cli")}
+	if raw := flagString(c, "wait"); raw != "" {
+		duration, err := time.ParseDuration(raw)
+		if err != nil || duration <= 0 {
+			return nil, manager.ErrConfig
+		}
+		options.ReadyTimeout = duration
+	}
+	return manager.New(options)
 }
 func NewCommand(o CommandOptions) *cobra.Command {
 	root := &cobra.Command{Use: "feishu", Short: "Manage personal Feishu accounts, shared folders and durable mounts", SilenceErrors: true, SilenceUsage: true}

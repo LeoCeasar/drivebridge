@@ -247,7 +247,7 @@ func (m *Manager) acquireRefs(ctx context.Context, refs []auth.Reference, allowP
 				releases = append(releases, func() { _ = l.Unlock() })
 				seen[key] = true
 			}
-			if pending, err := offlineCachePending(o); err != nil || pending {
+			if pending, err := offlineCachePending(o); err != nil || (pending && !allowPending) {
 				return nil, auth.ErrReferencesBusy
 			}
 			if _, err = os.Stat(filepath.Join(o.Root, "store.db")); os.IsNotExist(err) {
@@ -328,4 +328,29 @@ func (m *Manager) AcquireRecovery(ctx context.Context, appID string, refs []auth
 		}
 	}
 	return m.acquireRefs(ctx, refs, true)
+}
+
+func (m *Manager) validateOwnership(ctx context.Context, spec mountSpec) error {
+	owners, err := m.owners(ctx)
+	if err != nil {
+		return err
+	}
+	expected := ownershipFor(m.options.ConfigFile, spec)
+	for _, old := range owners {
+		if old.Scope.MountID != spec.Mount.ID {
+			continue
+		}
+		if old.Root == expected.Root && old.Scope == expected.Scope {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(old.Root, "store.db")); err == nil {
+			return model.ErrIdentityChanged
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if pending, err := offlineCachePending(old); err != nil || pending {
+			return model.ErrIdentityChanged
+		}
+	}
+	return nil
 }
