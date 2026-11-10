@@ -84,6 +84,9 @@ func TestNativeMacOSBackendOptions(t *testing.T) {
 			if !reflect.DeepEqual(options.ExtraOptions, want) {
 				t.Fatalf("options=%v want=%v", options.ExtraOptions, want)
 			}
+			if options.NoAppleXattr != tc.fskit {
+				t.Fatalf("FSKit Finder compatibility requires NoAppleXattr=%v, got %v", tc.fskit, options.NoAppleXattr)
+			}
 			if shared[1] != "sentinel" {
 				t.Fatal("per-mount option overwrote shared defaults")
 			}

@@ -46,6 +46,9 @@ func nativeMountOptions(backend, goos, engine string, base mountlib.Options) (mo
 	}
 	if backend == "fskit" {
 		base.ExtraOptions = append(append([]string(nil), base.ExtraOptions...), "backend=fskit")
+		// Feishu stores file contents rather than macOS resource forks. FSKit
+		// needs the upstream cmount noapplexattr compatibility path for Finder.
+		base.NoAppleXattr = true
 	}
 	return base, nil
 }
@@ -131,12 +134,16 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		}
 		return nil
 	}
+	transportDir := filepath.Join(spec.Paths.Root, "transport")
+	if err = platform.EnsurePrivateDir(transportDir); err != nil {
+		return nil, err
+	}
 	client, err := cloud.New(runner, cloud.Options{CheckMutation: func(context.Context) error {
 		if len(grants) == 0 {
 			return model.ErrUnsupportedContent
 		}
 		return nil
-	}, CheckIdentity: verifyIdentity, TempDir: filepath.Join(spec.Paths.Root, "transport"), Capabilities: grants})
+	}, CheckIdentity: verifyIdentity, TempDir: transportDir, Capabilities: grants})
 	if err != nil {
 		return nil, err
 	}
