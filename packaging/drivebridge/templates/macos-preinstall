@@ -2,6 +2,7 @@
 set -eu
 # Trusted candidate is embedded by pkgbuild. Never execute an environment-selected
 # helper. Require the wrapper even for fresh installs to avoid detection races.
-# If Installer changes OS-user identity or strips the proof, verification fails.
+# Discover the live proof in the canonical OS account private directory; Installer
+# strips inherited environment. Cross-user execution still fails closed.
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 "$script_dir/drivebridge-install-verifier" feishu maintenance verify
