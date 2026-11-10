@@ -311,13 +311,16 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 409, "version_changed")
 			return
 		}
-		v := ConflictView{HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
+		v := ConflictView{Hunks: []DiffHunk{}, HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
 		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
 			v.Base = string(in.Base)
 			v.Local = string(in.Local)
 			v.Remote = string(in.Remote)
 			v.Draft = string(in.Draft)
 			v.Hunks = diffHunks(v.Base, v.Local, v.Remote)
+			if v.Hunks == nil {
+				v.Hunks = []DiffHunk{}
+			}
 		} else {
 			v.Text = false
 		}

@@ -483,3 +483,22 @@ func TestControlSessionMethodAndJSONSecurity(t *testing.T) {
 		t.Fatal(res.Header)
 	}
 }
+
+func TestNoTextOrNoChangesReturnsUsableEmptyHunkList(t *testing.T) {
+	h, b, c, _, _ := fixture(t)
+	b.input.Local = b.input.Base
+	b.input.Remote = b.input.Base
+	for _, text := range []bool{true, false} {
+		b.input.Text = text
+		res := request(t, c, h, "GET", "/api/conflicts/"+string(b.input.Conflict.ID), nil, "", "")
+		var raw map[string]json.RawMessage
+		e := json.NewDecoder(res.Body).Decode(&raw)
+		res.Body.Close()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if string(raw["hunks"]) != "[]" {
+			t.Fatalf("empty source broke hunk rendering: %s", raw["hunks"])
+		}
+	}
+}
