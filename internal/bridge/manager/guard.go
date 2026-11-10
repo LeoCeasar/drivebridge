@@ -89,11 +89,7 @@ func offlineCachePending(o ownership) (bool, error) {
 	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		items, err := os.ReadDir(o.VFSRoot)
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return len(items) > 0, err
+		return unmanifestedCachePending(o.VFSRoot)
 	}
 	if err != nil {
 		return false, err
@@ -103,11 +99,7 @@ func offlineCachePending(o ownership) (bool, error) {
 		return false, ErrConfig
 	}
 	if manifest.DataRoot == "" && manifest.MetaRoot == "" {
-		items, err := os.ReadDir(o.VFSRoot)
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return len(items) > 0, err
+		return unmanifestedCachePending(o.VFSRoot)
 	}
 	for _, p := range []string{manifest.DataRoot, manifest.MetaRoot} {
 		relative, err := filepath.Rel(o.VFSRoot, p)
@@ -119,6 +111,31 @@ func offlineCachePending(o ownership) (bool, error) {
 		}
 	}
 	return vfscache.ManagedMetadataPending(manifest.DataRoot, manifest.MetaRoot)
+}
+
+// A native mount can fail after VFS initialization has created an empty cache
+// directory tree, before it has published a cache manifest. Such directories
+// contain no pending bytes. Every file (including empty files), unsafe path or
+// unreadable directory still prevents replacement. Nothing is removed or adopted.
+func unmanifestedCachePending(root string) (bool, error) {
+	pending := false
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if os.IsNotExist(err) && path == root {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := platform.CheckNoSymlinks(path); err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			pending = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return pending, err
 }
 func durablePending(ctx context.Context, s *store.Store) (bool, error) {
 	jobs, err := s.Pending(ctx)
