@@ -28,6 +28,7 @@ import (
 	_ "github.com/rclone/rclone/cmd/dedupe"
 	_ "github.com/rclone/rclone/cmd/delete"
 	_ "github.com/rclone/rclone/cmd/deletefile"
+	_ "github.com/rclone/rclone/cmd/feishu"
 	_ "github.com/rclone/rclone/cmd/genautocomplete"
 	_ "github.com/rclone/rclone/cmd/gendocs"
 	_ "github.com/rclone/rclone/cmd/gitannex"

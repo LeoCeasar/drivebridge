@@ -144,6 +144,7 @@ type enrollment struct {
 	AppID        string          `json:"app_id,omitempty"`
 	ExpectedHash string          `json:"expected_hash,omitempty"`
 	State        string          `json:"state"`
+	Recovery     bool            `json:"recovery,omitempty"`
 	CanonicalRef string          `json:"canonical_ref,omitempty"`
 }
 type registry struct {
@@ -382,4 +383,30 @@ func pendingApp(r registry, app string) bool {
 		}
 	}
 	return false
+}
+
+// RecoveryGuard explicitly stops related workers while preserving pending data,
+// then holds all affected stores/configs frozen through exact-identity reauth.
+// It never authorizes logout, unlink, or identity reassignment.
+type RecoveryGuard interface {
+	AcquireRecovery(context.Context, string, []Reference) (func(), error)
+}
+
+func (s *Service) guardFlow(ctx context.Context, r registry, app string, recovery bool) (func(), error) {
+	if !recovery {
+		return s.guardApp(ctx, r, app)
+	}
+	guard, ok := s.guard.(RecoveryGuard)
+	if !ok || nilValue(guard) {
+		return nil, ErrReferencesBusy
+	}
+	refs := s.references(r, app)
+	if len(refs) == 0 {
+		return nil, ErrReferencesBusy
+	}
+	release, err := guard.AcquireRecovery(ctx, app, refs)
+	if err != nil || release == nil {
+		return nil, ErrReferencesBusy
+	}
+	return release, nil
 }

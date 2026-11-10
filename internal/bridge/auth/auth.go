@@ -169,6 +169,15 @@ func (s *Service) runner(e enrollment) (protocol, error) {
 	return s.factory(larkcli.EnrollmentOptions{Executable: s.options.Executable, AuthRoot: root, AuthRef: e.AuthRef, AppID: e.AppID, Coordinator: s.coordinator})
 }
 func (s *Service) Start(ctx context.Context, id model.ProfileID) (AuthFlow, error) {
+	return s.start(ctx, id, false)
+}
+
+// StartRecovery is an explicit preservation workflow for an already bound
+// identity. It cannot create an app, change identity, or discard pending work.
+func (s *Service) StartRecovery(ctx context.Context, id model.ProfileID) (AuthFlow, error) {
+	return s.start(ctx, id, true)
+}
+func (s *Service) start(ctx context.Context, id model.ProfileID, recovery bool) (AuthFlow, error) {
 	if err := ctx.Err(); err != nil {
 		return AuthFlow{}, err
 	}
@@ -181,6 +190,9 @@ func (s *Service) Start(ctx context.Context, id model.ProfileID) (AuthFlow, erro
 	p, err := s.profiles.Profile(ctx, id)
 	if err != nil {
 		return AuthFlow{}, err
+	}
+	if recovery && (p.AuthRef == "" || p.IdentityHash == "") {
+		return AuthFlow{}, model.ErrIdentityChanged
 	}
 	if !validID(string(id)) || (p.Brand != "feishu" && p.Brand != "lark") {
 		return AuthFlow{}, ErrInvalid
@@ -224,7 +236,8 @@ func (s *Service) Start(ctx context.Context, id model.ProfileID) (AuthFlow, erro
 		r.Enrollments = append(r.Enrollments, e)
 		i = len(r.Enrollments) - 1
 	}
-	guardRelease, err := s.guardApp(ctx, r, e.AppID)
+	e.Recovery = recovery
+	guardRelease, err := s.guardFlow(ctx, r, e.AppID, recovery)
 	if err != nil {
 		return AuthFlow{}, err
 	}
@@ -351,6 +364,17 @@ func (s *Service) Complete(ctx context.Context, id string) (Identity, error) {
 	}
 	e := r.Enrollments[i]
 	fail := func(cause error) (Identity, error) {
+		if errors.Is(cause, model.ErrIdentityChanged) {
+			found := false
+			for _, ref := range r.Disabled {
+				if ref == e.AuthRef {
+					found = true
+				}
+			}
+			if !found && validRef(e.AuthRef, false) {
+				r.Disabled = append(r.Disabled, e.AuthRef)
+			}
+		}
 		e.State = "unknown"
 		r.Enrollments[i] = e
 		err := s.saveRegistry(r)
@@ -609,7 +633,10 @@ func (s *Service) Status(ctx context.Context, id model.ProfileID) (Identity, err
 	}
 	v, err := driver.VerifyIdentity(ctx)
 	if err != nil {
-		return Identity{}, model.ErrIdentityChanged
+		if errors.Is(err, larkcli.ErrIdentity) {
+			return Identity{}, model.ErrIdentityChanged
+		}
+		return Identity{}, err
 	}
 	return s.validateIdentity(enrollment{Brand: b.Brand, AppID: b.AppID, ExpectedHash: b.IdentityHash}, v)
 }

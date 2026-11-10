@@ -618,3 +618,41 @@ func TestLogoutRechecksIdentityBeforeDestructiveInvocation(t *testing.T) {
 		t.Fatal("destructive invocation on changed identity")
 	}
 }
+func TestStatusPreservesTransientProbeFailure(t *testing.T) {
+	s, _, f, id, _ := fixture(t)
+	enroll(t, s, f, id)
+	login(t, s, f, id)
+	f.verifyErr = context.DeadlineExceeded
+	if _, err := s.Status(context.Background(), id); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal("transient probe mislabeled as account switch", err)
+	}
+}
+
+type recoveryGuardFixture struct{ called bool }
+
+func (g *recoveryGuardFixture) Acquire(context.Context, string, []Reference) (func(), error) {
+	return nil, ErrReferencesBusy
+}
+func (g *recoveryGuardFixture) AcquireRecovery(context.Context, string, []Reference) (func(), error) {
+	g.called = true
+	return func() {}, nil
+}
+func TestExplicitRecoveryUsesBoundIdentityAndRecoveryGuard(t *testing.T) {
+	s, _, f, id, _ := fixture(t)
+	if _, err := s.StartRecovery(context.Background(), id); !errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal("recovery registered new application", err)
+	}
+	enroll(t, s, f, id)
+	login(t, s, f, id)
+	guard := &recoveryGuardFixture{}
+	s.guard = guard
+	f.auth = &fakeStream{event: larkcli.AuthEvent{Kind: "user_auth", URL: "https://open.feishu.cn/auth", ExpiresIn: 60}, result: larkcli.AuthResult{UserOpenID: "user", Granted: []string{"read", "write"}}, done: make(chan struct{})}
+	flow, err := s.StartRecovery(context.Background(), id)
+	if err != nil || flow.Kind != "user_auth" || !guard.called {
+		t.Fatal(flow, err)
+	}
+	f.auth.finish()
+	if _, err = s.Complete(context.Background(), flow.ID); err != nil {
+		t.Fatal(err)
+	}
+}
