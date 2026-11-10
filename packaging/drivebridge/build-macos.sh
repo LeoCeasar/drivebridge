@@ -82,7 +82,16 @@ if ! $DB_UNSIGNED; then
 fi
 mkdir "$DB_WORK/dmg"
 ln "$DB_ARTIFACTS/$DB_NAME.pkg" "$DB_WORK/dmg/"
-hdiutil create -quiet -volname DriveBridge -srcfolder "$DB_WORK/dmg" -format UDZO "$DB_ARTIFACTS/$DB_NAME.dmg"
+# hdiutil's automatic estimate can create an image too small for the package
+# (the copy fails with ENOSPC inside /Volumes/DriveBridge despite host space).
+# Reserve logical package size plus filesystem metadata and do not hide errors.
+DB_DMG_MIB="$(python3 - "$DB_ARTIFACTS/$DB_NAME.pkg" <<'PYDMG'
+from pathlib import Path
+import sys
+print((Path(sys.argv[1]).stat().st_size + 1048575) // 1048576 + 64)
+PYDMG
+)"
+hdiutil create -size "${DB_DMG_MIB}m" -fs HFS+ -volname DriveBridge -srcfolder "$DB_WORK/dmg" -format UDZO "$DB_ARTIFACTS/$DB_NAME.dmg"
 if ! $DB_UNSIGNED; then
   codesign --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_ARTIFACTS/$DB_NAME.dmg"
   xcrun notarytool submit "$DB_ARTIFACTS/$DB_NAME.dmg" --keychain-profile "$DRIVEBRIDGE_NOTARY_PROFILE" --wait
