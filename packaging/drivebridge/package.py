@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+import zlib
+import plistlib
 import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
@@ -45,7 +47,9 @@ def check_tools(names):
             raise ValueError('missing tool: ' + name)
 
 
-def check_mode(cli_only, unsigned):
+def check_mode(cli_only, unsigned, desktop=False):
+    if desktop and cli_only:
+        raise ValueError('desktop requires native mount support; --desktop and --cli-only cannot be combined')
     if cli_only and not unsigned:
         raise ValueError('CLI-only packages are unsigned tests; release is blocked')
 
@@ -78,7 +82,17 @@ def check_commands(binary, target, cli_only):
         run([binary, command, '--help'])
 
 
-def required_files(target):
+def desktop_files(target):
+    if target == 'darwin':
+        return {'licenses/desktop.LICENSES', 'DriveBridge.app/Contents/MacOS/drivebridge-desktop',
+                'DriveBridge.app/Contents/Info.plist', 'DriveBridge.app/Contents/Resources/drivebridge.icns'}
+    if target == 'windows':
+        return {'licenses/desktop.LICENSES', 'bin/drivebridge-desktop.exe'}
+    return {'licenses/desktop.LICENSES', 'bin/drivebridge-desktop', 'share/applications/org.drivebridge.desktop.desktop',
+            'share/icons/hicolor/256x256/apps/drivebridge.png', 'launch-desktop.sh', 'install-desktop.sh'}
+
+
+def required_files(target, desktop=False):
     suffix = '.exe' if target == 'windows' else ''
     files = {'bin/drivebridge' + suffix, 'libexec/lark/lark-cli' + suffix,
              'licenses/rclone.COPYING', 'licenses/lark-cli.LICENSE',
@@ -89,12 +103,12 @@ def required_files(target):
                   'libexec/lark/package/package.json', 'libexec/lark/package/LICENSE',
                   'libexec/lark/package/checksums.txt', 'libexec/lark/package/scripts/run.js',
                   'libexec/lark/package/scripts/install.js', 'libexec/lark/package/scripts/install-wizard.js'}
-    return files
+    return files | (desktop_files(target) if desktop else set())
 
 
-def validate_payload(root, target):
+def validate_payload(root, target, desktop=False):
     root = Path(root)
-    required = required_files(target)
+    required = required_files(target, desktop)
     found = set()
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root).as_posix()
@@ -106,10 +120,11 @@ def validate_payload(root, target):
             raise ValueError('nonregular payload: ' + rel)
         if rel == 'manifest.json':
             continue
-        if path.suffix in ('.plist', '.service', '.task') or 'startup' in path.name.lower():
+        if (path.suffix in ('.plist', '.service', '.task') or 'startup' in path.name.lower()) and not (desktop and rel == 'DriveBridge.app/Contents/Info.plist'):
             raise ValueError('duplicate/unmanaged startup item: ' + rel)
         allowed_runtime = target == 'windows' and rel == 'libexec/lark/package/bin/lark-cli.exe'
-        if rel not in required and not allowed_runtime:
+        allowed_signature = desktop and target == 'darwin' and rel == 'DriveBridge.app/Contents/_CodeSignature/CodeResources'
+        if rel not in required and not allowed_runtime and not allowed_signature:
             raise ValueError('unapproved payload file (accounts/config are never copied): ' + rel)
         if path.stat().st_size == 0:
             raise ValueError('empty payload file: ' + rel)
@@ -126,7 +141,7 @@ def validate_payload(root, target):
                     # stage() admits these vendor paths only from checksum-verified archives;
                     # verify_files() additionally binds every byte to the manifest inventory.
                     vendor = rel in ('libexec/lark/lark-cli', 'libexec/lark/lark-cli.exe', 'libexec/lark/package/bin/lark-cli.exe', 'libexec/node/node.exe')
-                    example = rel in ('bin/drivebridge', 'bin/drivebridge.exe') and any(
+                    example = rel in ('bin/drivebridge', 'bin/drivebridge.exe', 'bin/drivebridge-desktop', 'bin/drivebridge-desktop.exe', 'DriveBridge.app/Contents/MacOS/drivebridge-desktop') and any(
                         tail.startswith(sample) and len(tail) > len(sample) and tail[len(sample):len(sample)+1] in (b' ', b'\n', b'\"', b')')
                         for sample in PRODUCT_HELP_EXAMPLES)
                     if not example and not (vendor and tail.startswith(VENDOR_CI_PREFIXES)):
@@ -158,7 +173,7 @@ def payload_digest(files):
 
 
 def verify_files(root, manifest):
-    validate_payload(root, manifest['platform'])
+    validate_payload(root, manifest['platform'], manifest.get('desktop', False))
     if inventory(root) != manifest['files']:
         raise ValueError('payload inventory mismatch; missing, extra, or changed file')
 
@@ -181,7 +196,7 @@ def check_native_evidence(manifest, evidence):
             raise ValueError('release blocked: evidence ' + key + ' mismatch')
     if evidence.get('payload_sha256') != payload_digest(manifest['files']):
         raise ValueError('release blocked: evidence must bind exact payload hashes')
-    for gate in NATIVE_GATES:
+    for gate in NATIVE_GATES + (('desktop_tray', 'desktop_login', 'desktop_upgrade_exit') if manifest.get('desktop') else ()):
         if evidence.get('checks', {}).get(gate) != 'passed':
             raise ValueError('release blocked: native evidence not verified: ' + gate)
 
@@ -234,6 +249,7 @@ def prepare_cli(archive, target, arch, dest):
 
 
 def stage(args):
+    check_mode(args.cli_only, args.unsigned, getattr(args, 'desktop', False))
     root, repo, package = Path(args.root), Path(args.repo), Path(args.lark_package)
     if root.exists():
         raise ValueError('stage must be new; refusing overwrite: ' + str(root))
@@ -287,18 +303,71 @@ def stage(args):
         bins = pkg.get('bin', {})
         if bins != {'lark-cli': 'scripts/run.js'}:
             raise ValueError('unexpected official CLI package launcher')
-    validate_payload(root, args.platform)
+    if getattr(args, 'desktop', False):
+        if not args.desktop_binary:
+            raise ValueError('desktop mode requires a native desktop binary')
+        stage_desktop(root, args.platform, args.arch, args.desktop_binary, args.version)
+    validate_payload(root, args.platform, getattr(args, 'desktop', False))
+
+
+def icon_png():
+    # Repository-native simple bridge glyph, opaque RGB PNG; no external asset tool.
+    n = 256
+    rows = bytearray()
+    for y in range(n):
+        rows.append(0)
+        for x in range(n):
+            ink = (45 <= x < 76 or 180 <= x < 211) and 55 <= y < 211 or 60 <= x < 196 and 55 <= y < 86 or 60 <= x < 196 and 132 <= y < 163
+            rows.extend((255, 255, 255) if ink else (24, 96, 125))
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(bytes(rows))) + chunk(b'IEND', b'')
+
+
+def stage_desktop(root, target, arch, binary, version):
+    check_binary(binary, target, arch)
+    if target == 'windows':
+        data = Path(binary).read_bytes()
+        pe = struct.unpack_from('<I', data, 60)[0]
+        if len(data) < pe + 94 or struct.unpack_from('<H', data, pe + 92)[0] != 2:
+            raise ValueError('Windows desktop binary must use windowsgui subsystem')
+    # Explicit help args avoid launching a real tray during a build.
+    help_text = run([binary, 'desktop', '--help'])
+    if 'enable-autostart' not in help_text:
+        raise ValueError('desktop binary lacks desktop command')
+    relative = 'DriveBridge.app/Contents/MacOS/drivebridge-desktop' if target == 'darwin' else 'bin/drivebridge-desktop' + ('.exe' if target == 'windows' else '')
+    copy_file(binary, root / relative)
+    copy_file(HERE / 'desktop.LICENSES', root / 'licenses/desktop.LICENSES')
+    if target == 'darwin':
+        contents = root / 'DriveBridge.app/Contents'
+        info = {'CFBundleExecutable': 'drivebridge-desktop', 'CFBundleIdentifier': 'org.drivebridge.desktop',
+                'CFBundleName': 'DriveBridge', 'CFBundleDisplayName': 'DriveBridge', 'CFBundlePackageType': 'APPL',
+                'CFBundleShortVersionString': version, 'CFBundleVersion': version,
+                'LSUIElement': True, 'CFBundleIconFile': 'drivebridge.icns', 'NSHighResolutionCapable': True}
+        (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
+        resource = contents / 'Resources/drivebridge.icns'
+        resource.parent.mkdir(parents=True)
+        png = icon_png()
+        resource.write_bytes(b'icns' + struct.pack('>I', 16 + len(png)) + b'ic08' + struct.pack('>I', 8 + len(png)) + png)
+    elif target == 'linux':
+        icon = root / 'share/icons/hicolor/256x256/apps/drivebridge.png'
+        icon.parent.mkdir(parents=True)
+        icon.write_bytes(icon_png())
+        copy_file(HERE / 'templates/drivebridge.desktop', root / 'share/applications/org.drivebridge.desktop.desktop')
+        for name in ('launch-desktop.sh', 'install-desktop.sh'):
+            copy_file(HERE / name, root / name)
 
 
 def manifest(args):
     root = Path(args.root)
-    validate_payload(root, args.platform)
+    check_mode(args.cli_only, args.unsigned, getattr(args, 'desktop', False))
+    validate_payload(root, args.platform, getattr(args, 'desktop', False))
     tools = json.loads(Path(args.tools).read_text())
     if not tools or any(not value for value in tools.values()):
         raise ValueError('tool versions must be recorded')
     lock = json.loads((HERE / 'runtime-lock.json').read_text())
     manifest = {'schema_version': 1, 'product': 'DriveBridge', 'version': args.version,
-                'platform': args.platform, 'architecture': args.arch,
+                'platform': args.platform, 'architecture': args.arch, 'desktop': getattr(args, 'desktop', False),
                 'go_version': run(['go', 'version']), 'tools': tools,
                 'runtime': lock, 'cli_binding': {'upstream_sha256': cli_asset(lock, args.platform, args.arch)['native_sha256'], 'artifact_sha256': sha(root / ('libexec/lark/lark-cli.exe' if args.platform == 'windows' else 'libexec/lark/lark-cli'))}, 'vendor_metadata': {'embedded_ci_prefixes': [p.decode() for p in VENDOR_CI_PREFIXES], 'policy': 'Only checksum-verified vendor executables may retain upstream CI source paths; bytes are never rewritten.', 'product_help_examples': [p.decode() for p in PRODUCT_HELP_EXAMPLES]}, 'mount': not args.cli_only,
                 'mount_engine': 'none' if args.cli_only else ('mount2' if args.platform == 'linux' else 'cmount'),
@@ -318,6 +387,12 @@ def render(args):
     root, out = Path(args.root).resolve(), Path(args.output)
     template = (HERE / 'templates' / args.template).read_text()
     replacements = {'@VERSION@': args.version, '@ARCH@': ('x86_64' if args.template == 'macos-distribution.xml' and args.arch == 'amd64' else args.arch), '@PAYLOAD@': str(root), '@OUTPUT@': str(out.parent.resolve()), '@DEB_DEPENDS@': 'procps' if getattr(args, 'cli_only', False) else 'fuse3, procps', '@RPM_FUSE@': '' if getattr(args, 'cli_only', False) else 'Requires: fuse3'}
+    if getattr(args, 'desktop', False) and args.template == 'deb-control':
+        replacements['@DEB_DEPENDS@'] += ', libgtk-3-0, libayatana-appindicator3-1'
+    if getattr(args, 'desktop', False) and args.template == 'linux.spec':
+        replacements['@RPM_FUSE@'] += '\nRequires: gtk3, libayatana-appindicator-gtk3'
+        template = template.replace('%pre\n', 'mkdir -p %{buildroot}/usr/share/applications %{buildroot}/usr/share/icons/hicolor/256x256/apps\ncp %{buildroot}/opt/drivebridge/share/applications/org.drivebridge.desktop.desktop %{buildroot}/usr/share/applications/\ncp %{buildroot}/opt/drivebridge/share/icons/hicolor/256x256/apps/drivebridge.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/\n%pre\n')
+        template += '\n/usr/share/applications/org.drivebridge.desktop.desktop\n/usr/share/icons/hicolor/256x256/apps/drivebridge.png\n'
     if args.template == 'windows.wxs':
         ns = 'http://wixtoolset.org/schemas/v4/wxs'
         ET.register_namespace('', ns)
@@ -339,6 +414,13 @@ def render(args):
             ET.SubElement(component, '{%s}File' % ns, Id='F' + suffix, Source=str(path))
             ET.SubElement(component, '{%s}RegistryValue' % ns, Root='HKCU', Key='Software\\DriveBridge\\Installer\\Files', Name='F' + suffix, Type='string', Value='[#F%s]' % suffix, KeyPath='yes')
             ET.SubElement(group, '{%s}ComponentRef' % ns, Id='C' + suffix)
+        if (root / 'bin/drivebridge-desktop.exe').is_file():
+            package = tree.find('{%s}Package' % ns)
+            desktop = ET.SubElement(package, '{%s}StandardDirectory' % ns, Id='DesktopFolder')
+            component = ET.SubElement(desktop, '{%s}Component' % ns, Id='DesktopShortcut', Guid='*')
+            ET.SubElement(component, '{%s}Shortcut' % ns, Id='DriveBridgeDesktopShortcut', Name='DriveBridge', Target='[INSTALLFOLDER]bin\\drivebridge-desktop.exe', WorkingDirectory='INSTALLFOLDER')
+            ET.SubElement(component, '{%s}RegistryValue' % ns, Root='HKCU', Key='Software\\DriveBridge\\Installer', Name='DesktopShortcut', Type='integer', Value='1', KeyPath='yes')
+            ET.SubElement(group, '{%s}ComponentRef' % ns, Id='DesktopShortcut')
         first = tree.find('.//{%s}Component' % ns)
         if first is None:
             raise ValueError('empty installer payload')
@@ -346,6 +428,8 @@ def render(args):
             ET.SubElement(first, '{%s}RemoveFolder' % ns, Id='R%d' % i, Directory=directory_id, On='uninstall')
         out.write_text(ET.tostring(tree, encoding='unicode'))
     else:
+        if args.template == 'windows.iss' and (root / 'bin/drivebridge-desktop.exe').is_file():
+            template = template.replace('[Registry]', '[Icons]\nName: "{userdesktop}\\DriveBridge"; Filename: "{app}\\bin\\drivebridge-desktop.exe"; WorkingDir: "{app}"\n\n[Registry]')
         for key, value in replacements.items():
             # All platform template parameters are paths/version under build control, not shell commands.
             template = template.replace(key, value)
@@ -362,10 +446,13 @@ def main():
         p.add_argument('--platform', required=True, choices=['darwin', 'linux', 'windows'])
         p.add_argument('--arch', required=True, choices=['amd64', 'arm64'])
         p.add_argument('--cli-only', action='store_true')
+        p.add_argument('--desktop', action='store_true')
         p.add_argument('--unsigned', action='store_true')
         if name == 'stage':
             for key in ('root', 'repo', 'binary', 'lark-package', 'lark-native-archive'):
                 p.add_argument('--' + key, required=True)
+            p.add_argument('--desktop-binary')
+            p.add_argument('--version', default='0.0.0')
             p.add_argument('--node-archive')
             p.add_argument('--consume-binary', action='store_true')
             p.add_argument('--signed-cli')
@@ -383,6 +470,7 @@ def main():
     for key in ('root', 'output', 'template', 'version', 'arch'):
         rend.add_argument('--' + key, required=True)
     rend.add_argument('--cli-only', action='store_true')
+    rend.add_argument('--desktop', action='store_true')
     prepare = sub.add_parser('prepare-cli')
     for key in ('archive', 'platform', 'arch', 'output'):
         prepare.add_argument('--' + key, required=True)
@@ -394,7 +482,7 @@ def main():
     args = parser.parse_args()
     if args.action == 'preflight':
         check_host(args.platform, args.arch)
-        check_mode(args.cli_only, args.unsigned)
+        check_mode(args.cli_only, args.unsigned, args.desktop)
         check_tools(args.tools)
     elif args.action == 'stage':
         stage(args)

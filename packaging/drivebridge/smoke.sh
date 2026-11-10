@@ -60,6 +60,7 @@ if $DB_RELEASE; then
     Darwin)
       codesign --verify --strict "$DB_PAYLOAD/bin/drivebridge"
       codesign --verify --strict "$DB_PAYLOAD/libexec/lark/lark-cli"
+      if [ -d "$DB_PAYLOAD/DriveBridge.app" ]; then codesign --verify --strict "$DB_PAYLOAD/DriveBridge.app"; fi
       for pkg in "$DB_ARTIFACTS"/*.pkg; do pkgutil --check-signature "$pkg"; xcrun stapler validate "$pkg"; done
       for dmg in "$DB_ARTIFACTS"/*.dmg; do codesign --verify --strict "$dmg"; xcrun stapler validate "$dmg"; done ;;
     Linux)

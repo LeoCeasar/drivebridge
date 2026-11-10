@@ -1,13 +1,17 @@
 name: DriveBridge verification and native release gates
 on:
   pull_request:
-    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'packaging/drivebridge/**', 'cmd/feishu/**', '.github/workflows/drivebridge-release.yml']
+    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'packaging/drivebridge/**', 'cmd/feishu/**', 'cmd/desktop/**', 'rclone.go', 'go.mod', 'go.sum', '.github/workflows/drivebridge-release.yml']
   workflow_dispatch:
     inputs:
       native:
         description: Run all five native driver/installer runners (missing runner blocks verification)
         type: boolean
         default: false
+      desktop:
+        description: Build native desktop tray and CLI together; requires native GUI development libraries
+        type: boolean
+        default: true
       release:
         description: Require signing and notarization; no unsigned release fallback
         type: boolean
@@ -57,6 +61,7 @@ jobs:
       DB_ARCH: ${{ matrix.arch }}
       DB_VERSION: ${{ inputs.version }}
       DB_RELEASE: ${{ inputs.release }}
+      DB_DESKTOP: ${{ inputs.desktop }}
       DRIVEBRIDGE_CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
       DRIVEBRIDGE_INSTALLER_IDENTITY: ${{ secrets.INSTALLER_IDENTITY }}
       DRIVEBRIDGE_NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
@@ -81,6 +86,7 @@ jobs:
           set -euo pipefail
           python3 packaging/drivebridge/fetch-runtime.py --platform "$DB_PLATFORM" --arch "$DB_ARCH" --output "$RUNNER_TEMP/db-runtime"
           mode=(); if [ "$DB_RELEASE" != true ]; then mode=(--unsigned); fi
+          if [ "$DB_DESKTOP" = true ]; then mode+=(--desktop); fi
           script=build-linux.sh; if [ "$DB_PLATFORM" = darwin ]; then script=build-macos.sh; fi
           bash "packaging/drivebridge/$script" --arch "$DB_ARCH" --version "$DB_VERSION" --lark-package "$RUNNER_TEMP/db-runtime/lark-package" --lark-native-archive "$RUNNER_TEMP/db-runtime/cli-native.tar.gz" --output "$RUNNER_TEMP/db-artifacts" ${mode[@]+"${mode[@]}"}
       - name: Build native Windows installers
@@ -91,6 +97,7 @@ jobs:
           python packaging/drivebridge/fetch-runtime.py --platform windows --arch amd64 --output "$env:RUNNER_TEMP/db-runtime"
           if ($LASTEXITCODE) { throw 'Runtime fetch failed' }
           $mode = @{}; if ($env:DB_RELEASE -ne 'true') { $mode.Unsigned = $true }
+          if ($env:DB_DESKTOP -eq 'true') { $mode.Desktop = $true }
           & packaging/drivebridge/build-windows.ps1 -Arch amd64 -Version $env:DB_VERSION -LarkPackage "$env:RUNNER_TEMP/db-runtime/lark-package" -LarkNativeArchive "$env:RUNNER_TEMP/db-runtime/cli-native.zip" -NodeArchive "$env:RUNNER_TEMP/db-runtime/node.zip" -OutputDir "$env:RUNNER_TEMP/db-artifacts" @mode
       - name: Native installation, upgrade and real mount evidence
         shell: python

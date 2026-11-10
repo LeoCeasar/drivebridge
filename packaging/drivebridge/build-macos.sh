@@ -52,6 +52,10 @@ PY
 if ! $DB_UNSIGNED; then
   codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/bin/drivebridge"
   codesign --verify --strict --verbose=2 "$DB_PAYLOAD/bin/drivebridge"
+  if $DB_DESKTOP; then
+    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/DriveBridge.app"
+    codesign --verify --strict --verbose=2 "$DB_PAYLOAD/DriveBridge.app"
+  fi
 fi
 write_manifest
 mkdir -p "$DB_WORK/pkgroot/Applications" "$DB_WORK/pkg-scripts"

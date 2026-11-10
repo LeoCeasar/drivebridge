@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DriveBridge
+Comment=Manage Feishu and Lark sync
+Exec=/opt/drivebridge/bin/drivebridge-desktop
+Icon=/opt/drivebridge/share/icons/hicolor/256x256/apps/drivebridge.png
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=false

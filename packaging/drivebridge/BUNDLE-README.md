@@ -13,3 +13,9 @@ These installer templates still require native lease propagation and signing val
 Startup is opt-in: `bin/drivebridge feishu mount enable-autostart NAME`; remove with `disable-autostart NAME`. The manager registers a launchd user agent, systemd user unit, or interactive user task. Do not register the worker as root or SYSTEM. Stop mounts and disable their startup entries before uninstall. Installer packages never create a second startup entry.
 
 Licenses and project notices are in `licenses/`.
+
+If `manifest.json` contains `desktop:true`, launch `DriveBridge.app` on macOS, `bin/drivebridge-desktop.exe` or the desktop shortcut on Windows, or `sh launch-desktop.sh` on Linux. Keep the full bundle together; the macOS `.app` shares its sibling CLI and runtime and cannot be moved alone. Linux portable users can run `sh install-desktop.sh` to add a current-user application launcher. It does not enable login startup.
+
+Desktop controls: `bin/drivebridge desktop start|status|stop|enable-autostart|disable-autostart` (use `.exe` on Windows). Exiting the tray or `desktop stop` keeps sync workers running; stopping all sync is a separate action. Login startup is opt-in and belongs to the current user: macOS LaunchAgent, limited Windows interactive logon task, or Linux XDG graphical session autostart. Disable it before moving or removing this directory. Build and installer scripts never enable it.
+
+Desktop native tray, login startup and upgrade exit require platform evidence in addition to the existing mount and lifecycle gates. A desktop binary in an archive is not proof that those native checks passed.

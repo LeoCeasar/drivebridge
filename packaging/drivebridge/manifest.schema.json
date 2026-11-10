@@ -157,6 +157,9 @@
           "pattern": "^[a-f0-9]{64}$"
         }
       }
+    },
+    "desktop": {
+      "type": "boolean"
     }
   }
 }

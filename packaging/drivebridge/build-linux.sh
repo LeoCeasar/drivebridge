@@ -13,6 +13,10 @@ if ! $DB_UNSIGNED; then
   need gpg; need dpkg-sig; need rpmsign
   [ -n "${DRIVEBRIDGE_GPG_KEY:-}" ] || fail 'release signing requires DRIVEBRIDGE_GPG_KEY (or explicit --unsigned)'
 fi
+if $DB_DESKTOP; then
+  need pkg-config
+  pkg-config --exists gtk+-3.0 ayatana-appindicator3-0.1 || fail 'desktop build requires GTK3 and Ayatana AppIndicator3 development libraries'
+fi
 prepare_work
 build_stage 0 ''
 python3 - "$DB_WORK/tools.json" <<'PY'
@@ -22,12 +26,18 @@ open(sys.argv[1],'w').write(json.dumps({n:subprocess.check_output([n,'--version'
 PY
 write_manifest
 DB_RENDER_MODE=(); if $DB_CLI_ONLY; then DB_RENDER_MODE=(--cli-only); fi
+if $DB_DESKTOP; then DB_RENDER_MODE+=(--desktop); fi
 mkdir -p "$DB_WORK/deb/opt/drivebridge" "$DB_WORK/deb/DEBIAN" "$DB_WORK/rpm/SOURCES" "$DB_WORK/rpm/SPECS" "$DB_WORK/rpm/BUILD" "$DB_WORK/rpm/RPMS" "$DB_WORK/rpm/SRPMS" "$DB_WORK/rpm/BUILDROOT"
 cp -R "$DB_PAYLOAD/." "$DB_WORK/deb/opt/drivebridge/"
 python3 "$DB_HERE/package.py" render --template deb-control ${DB_RENDER_MODE[@]+"${DB_RENDER_MODE[@]}"} --version "$DB_VERSION" --arch "$DB_ARCH" --root "$DB_PAYLOAD" --output "$DB_WORK/deb/DEBIAN/control"
 cp "$DB_HERE/templates/linux-preinstall" "$DB_WORK/deb/DEBIAN/preinst"
 cp "$DB_HERE/templates/linux-preinstall" "$DB_WORK/deb/DEBIAN/prerm"
 chmod 755 "$DB_WORK/deb/DEBIAN/preinst" "$DB_WORK/deb/DEBIAN/prerm"
+if $DB_DESKTOP; then
+  mkdir -p "$DB_WORK/deb/usr/share/applications" "$DB_WORK/deb/usr/share/icons/hicolor/256x256/apps"
+  cp "$DB_PAYLOAD/share/applications/org.drivebridge.desktop.desktop" "$DB_WORK/deb/usr/share/applications/"
+  cp "$DB_PAYLOAD/share/icons/hicolor/256x256/apps/drivebridge.png" "$DB_WORK/deb/usr/share/icons/hicolor/256x256/apps/"
+fi
 dpkg-deb --root-owner-group --build "$DB_WORK/deb" "$DB_ARTIFACTS/$DB_NAME.deb"
 tar -czf "$DB_WORK/rpm/SOURCES/payload.tar.gz" -C "$DB_PAYLOAD" .
 DB_RPM_ARCH=x86_64
