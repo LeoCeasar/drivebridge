@@ -62,3 +62,30 @@ func TestValidateRejectsTamperedBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+func TestValidateDirectoryDoesNotRewriteUnknownState(t *testing.T) {
+	s, d, sc := openTest(t)
+	_, j := stage(t, s, entry(t, s, "a"), "accepted")
+	if _, _, err := s.Prepare(ctx, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDirectory(ctx, d, sc); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bolt.Open(d+"/store.db", 0600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.View(func(tx *bolt.Tx) error {
+		r, err := jobTx(tx, j.ID)
+		if err == nil && r.Job.State != model.StatusMerging {
+			t.Fatalf("auditor rewrote interrupted state: %+v", r.Job)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

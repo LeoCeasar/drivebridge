@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"io"
+	"path/filepath"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	bolt "go.etcd.io/bbolt"
@@ -284,4 +287,23 @@ func (r contextReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return r.r.Read(p)
+}
+
+// ValidateDirectory audits a closed backup without recovery writes or rebinding.
+// It deliberately opens bbolt read-only; a running writer must first quiesce.
+func ValidateDirectory(ctx context.Context, dir string, expected Scope) error {
+	if err := platform.CheckNoSymlinks(dir); err != nil {
+		return err
+	}
+	dbPath := filepath.Join(dir, "store.db")
+	if err := platform.CheckNoSymlinks(dbPath); err != nil {
+		return err
+	}
+	db, err := bolt.Open(dbPath, 0600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	s := &Store{db: db, dir: dir, bound: true, scope: expected, leases: make(map[model.BlobID]int)}
+	return s.Validate(ctx)
 }
