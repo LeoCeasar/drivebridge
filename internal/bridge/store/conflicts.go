@@ -1,0 +1,121 @@
+package store
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+
+	"github.com/google/uuid"
+	"github.com/rclone/rclone/internal/bridge/model"
+	bolt "go.etcd.io/bbolt"
+)
+
+func (s *Store) SaveConflict(ctx context.Context, c model.Conflict) error {
+	for _, b := range []model.BlobID{c.Base, c.Local, c.Remote, c.Draft} {
+		if er := s.checkBlob(b); er != nil {
+			return er
+		}
+	}
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		e, er := entryTx(tx, c.EntryID)
+		if er != nil {
+			return er
+		}
+		if e.Generation != c.Generation {
+			return model.ErrGenerationChanged
+		}
+		if c.ID == "" {
+			c.ID = model.ConflictID(uuid.NewString())
+		}
+		var old model.Conflict
+		if er = get(tx, "conflicts", string(c.ID), &old); er == nil && old.EntryID != c.EntryID {
+			return model.ErrIdentityChanged
+		}
+		e.Status = model.StatusConflict
+		if er = saveEntry(tx, e); er != nil {
+			return er
+		}
+		if er = each[jobRecord](tx, "jobs", func(j jobRecord) error {
+			if j.Job.EntryID == c.EntryID && j.Job.Generation == c.Generation && pending(j.Job.State) {
+				j.Job.State = model.StatusConflict
+				return saveJob(tx, j)
+			}
+			return nil
+		}); er != nil {
+			return er
+		}
+		return put(tx, "conflicts", string(c.ID), c)
+	})
+}
+func (s *Store) Conflicts(ctx context.Context) (out []model.Conflict, err error) {
+	err = s.view(ctx, func(tx *bolt.Tx) error {
+		return each[model.Conflict](tx, "conflicts", func(c model.Conflict) error {
+			if !c.Resolved {
+				out = append(out, c)
+			}
+			return nil
+		})
+	})
+	return
+}
+func (s *Store) Resolve(ctx context.Context, r model.ResolveRequest) (e model.Entry, j model.Job, err error) {
+	b, err := s.PutBlob(ctx, bytes.NewReader(r.Content))
+	if err != nil {
+		return
+	}
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		var c model.Conflict
+		if er := get(tx, "conflicts", string(r.ConflictID), &c); er != nil {
+			return er
+		}
+		if c.Resolved {
+			return ErrInvalidState
+		}
+		if c.RemoteRevision != r.ExpectedRemoteRevision {
+			return model.ErrVersionChanged
+		}
+		current, er := entryTx(tx, c.EntryID)
+		if er != nil {
+			return er
+		}
+		if current.Generation != r.ExpectedGeneration || c.Generation != current.Generation {
+			return model.ErrGenerationChanged
+		}
+		if current.FrozenBy != "" {
+			return ErrFrozen
+		}
+		if current.Kind == model.KindDocx && int64(len(r.Content)) > LargeSnapshotBytes {
+			return model.ErrUnsupportedContent
+		}
+		if er = supersedeQueued(tx, current.ID); er != nil {
+			return er
+		}
+		e, j, er = s.stageBlob(tx, current.ID, &r.ExpectedGeneration, b)
+		if er != nil {
+			return er
+		}
+		c.Resolved = true
+		return put(tx, "conflicts", string(c.ID), c)
+	})
+	return
+}
+
+// SaveDraft keeps recovery material without changing the conflict's captured generation.
+func (s *Store) SaveDraft(ctx context.Context, id model.ConflictID, src io.Reader) error {
+	b, err := s.PutBlob(ctx, src)
+	if err != nil {
+		return err
+	}
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var c model.Conflict
+		if er := get(tx, "conflicts", string(id), &c); er != nil {
+			return er
+		}
+		if c.Resolved {
+			return errors.New("conflict already resolved")
+		}
+		c.Draft = b
+		return put(tx, "conflicts", string(id), c)
+	})
+}

@@ -1,0 +1,431 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/rclone/rclone/internal/bridge/model"
+	bolt "go.etcd.io/bbolt"
+)
+
+type namespaceRecord struct {
+	Op            model.NamespaceOp        `json:"op"`
+	Before        []model.Entry            `json:"before"`
+	Sealed        map[model.EntryID]uint64 `json:"sealed,omitempty"`
+	ActionPending bool                     `json:"action_pending,omitempty"`
+}
+
+func under(p, root string) bool { return p == root || (root != "" && strings.HasPrefix(p, root+"/")) }
+func overlaps(a, b string) bool { return under(a, b) || under(b, a) }
+func namespaceReserved(tx *bolt.Tx, p string) bool {
+	yes := false
+	_ = each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
+		if r.Op.State == "prepared" || r.Op.State == "sealed" || r.Op.State == "committed" {
+			if (r.Op.Src != "" && under(p, r.Op.Src)) || (r.Op.Dst != "" && under(p, r.Op.Dst)) {
+				yes = true
+			}
+		}
+		return nil
+	})
+	return yes
+}
+func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out model.NamespaceOp, err error) {
+	if op.Kind != "rename" && op.Kind != "replace" && op.Kind != "delete" && op.Kind != "mkdir" {
+		return out, errors.New("unsupported namespace operation")
+	}
+	if op.Kind != "mkdir" {
+		if err = validRemote(op.Src, false); err != nil {
+			return
+		}
+	}
+	if op.Kind != "delete" {
+		if err = validRemote(op.Dst, false); err != nil {
+			return
+		}
+	}
+	if op.Src != "" && op.Dst != "" && (under(op.Dst, op.Src) || under(op.Src, op.Dst)) {
+		return out, errors.New("overlapping namespace paths")
+	}
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		if op.ID != "" {
+			var old namespaceRecord
+			if er := get(tx, "namespace", op.ID, &old); er == nil {
+				if old.Op.Kind != op.Kind || old.Op.Src != op.Src || old.Op.Dst != op.Dst {
+					return ErrInvalidState
+				}
+				out = old.Op
+				return nil
+			} else if !errors.Is(er, ErrNotFound) {
+				return er
+			}
+		} else {
+			op.ID = uuid.NewString()
+		}
+		if namespaceReserved(tx, op.Src) || namespaceReserved(tx, op.Dst) {
+			return ErrFrozen
+		}
+		var src, dst model.Entry
+		var er error
+		if op.Kind != "mkdir" {
+			src, er = byPath(tx, op.Src)
+			if er != nil {
+				return er
+			}
+			if inflight(tx, src.ID, "") {
+				return ErrBusy
+			}
+			op.SrcID = src.ID
+		}
+		if op.Kind != "delete" {
+			dst, er = byPath(tx, op.Dst)
+			if er == nil {
+				op.DstExists = true
+				op.DstID = dst.ID
+			} else if !errors.Is(er, ErrNotFound) {
+				return er
+			}
+			if op.DstExists && (op.Kind != "replace") {
+				return errors.New("namespace destination exists")
+			}
+			if op.Kind == "replace" && !op.DstExists {
+				return ErrNotFound
+			}
+			if op.Kind == "replace" && (src.Kind == model.KindFolder || dst.Kind == model.KindFolder || src.Kind != dst.Kind) {
+				return model.ErrUnsupportedContent
+			}
+			parent := path.Dir(op.Dst)
+			if parent != "." {
+				p, er := byPath(tx, parent)
+				if er != nil {
+					return er
+				}
+				if p.Kind != model.KindFolder {
+					return model.ErrUnsupportedContent
+				}
+			}
+		}
+		r := namespaceRecord{Op: op}
+		if er = each[model.Entry](tx, "entries", func(e model.Entry) error {
+			if (op.Src != "" && under(e.Remote, op.Src)) || (op.DstExists && under(e.Remote, op.Dst)) {
+				var m Metadata
+				if er := get(tx, "metadata", string(e.ID), &m); er != nil {
+					return er
+				}
+				if m.Tombstone {
+					return nil
+				}
+				if e.FrozenBy != "" {
+					return ErrFrozen
+				}
+				if op.Src != "" && under(e.Remote, op.Src) && inflight(tx, e.ID, "") {
+					return ErrBusy
+				}
+				r.Before = append(r.Before, e)
+				e.FrozenBy = op.ID
+				return saveEntry(tx, e)
+			}
+			return nil
+		}); er != nil {
+			return er
+		}
+		r.Op.State = "prepared"
+		out = r.Op
+		return put(tx, "namespace", op.ID, r)
+	})
+	return
+}
+func (s *Store) SealNamespace(ctx context.Context, id string) (out model.NamespaceOp, err error) {
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if er := get(tx, "namespace", id, &r); er != nil {
+			return er
+		}
+		if r.Op.State == "sealed" || r.Op.State == "committed" || r.Op.State == "finished" {
+			out = r.Op
+			return nil
+		}
+		if r.Op.State != "prepared" {
+			return ErrInvalidState
+		}
+		r.Sealed = make(map[model.EntryID]uint64)
+		for _, old := range r.Before {
+			e, er := entryTx(tx, old.ID)
+			if er != nil {
+				return er
+			}
+			if e.FrozenBy != id {
+				return ErrFrozen
+			}
+			r.Sealed[e.ID] = e.Generation
+			if e.ID == r.Op.SrcID {
+				r.Op.ExpectedSrc = e.Generation
+				r.Op.Input = e.Local
+			}
+			if e.ID == r.Op.DstID {
+				r.Op.ExpectedDst = e.Generation
+				r.Op.Previous = e.Local
+			}
+		}
+		r.Op.State = "sealed"
+		out = r.Op
+		return put(tx, "namespace", id, r)
+	})
+	return
+}
+func tombstone(tx *bolt.Tx, e model.Entry) error {
+	var m Metadata
+	if er := get(tx, "metadata", string(e.ID), &m); er != nil {
+		return er
+	}
+	m.Tombstone = true
+	if er := put(tx, "metadata", string(e.ID), m); er != nil {
+		return er
+	}
+	if er := tx.Bucket([]byte("paths")).Delete([]byte(e.Remote)); er != nil {
+		return er
+	}
+	return saveEntry(tx, e)
+}
+func supersedeQueued(tx *bolt.Tx, id model.EntryID) error {
+	return each[jobRecord](tx, "jobs", func(j jobRecord) error {
+		if j.Job.EntryID == id && !active(j.Job.State) && pending(j.Job.State) {
+			j.Superseded = true
+			j.Job.State = model.StatusBlocked
+			return saveJob(tx, j)
+		}
+		return nil
+	})
+}
+func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry, err error) {
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if er := get(tx, "namespace", id, &r); er != nil {
+			return er
+		}
+		if r.Op.State == "committed" || r.Op.State == "finished" {
+			if r.Op.ResultID == "" {
+				return nil
+			}
+			var er error
+			out, er = entryTx(tx, r.Op.ResultID)
+			return er
+		}
+		if r.Op.State != "sealed" {
+			return ErrInvalidState
+		}
+		for key, generation := range r.Sealed {
+			e, er := entryTx(tx, key)
+			if er != nil {
+				return er
+			}
+			if e.Generation != generation {
+				return model.ErrGenerationChanged
+			}
+			if e.FrozenBy != id {
+				return ErrFrozen
+			}
+		}
+		if er := put(tx, "recovery", "namespace:"+id, recoveryRecord{NamespaceID: id, Entries: r.Before}); er != nil {
+			return er
+		}
+		switch r.Op.Kind {
+		case "replace":
+			src, er := entryTx(tx, r.Op.SrcID)
+			if er != nil {
+				return er
+			}
+			dst, er := entryTx(tx, r.Op.DstID)
+			if er != nil {
+				return er
+			}
+			if inflight(tx, src.ID, "") {
+				return ErrBusy
+			}
+			if src.Local == "" {
+				return errors.New("replacement source is not materialized")
+			}
+			if er = supersedeQueued(tx, src.ID); er != nil {
+				return er
+			}
+			if er = supersedeQueued(tx, dst.ID); er != nil {
+				return er
+			}
+			if er = tombstone(tx, src); er != nil {
+				return er
+			}
+			dst.Generation++
+			dst.Local = r.Op.Input
+			dst.Visible = r.Op.Input
+			dst.Status = model.StatusQueued
+			j := model.Job{ID: model.JobID(uuid.NewString()), EntryID: dst.ID, Generation: dst.Generation, Local: dst.Local, BaseLocal: dst.LocalCheckpoint, BaseRemote: dst.RemoteCheckpoint, State: model.StatusQueued}
+			if er = saveJob(tx, jobRecord{Job: j}); er != nil {
+				return er
+			}
+			if er = saveEntry(tx, dst); er != nil {
+				return er
+			}
+			out = dst
+			r.Op.ResultID = dst.ID
+		case "rename":
+			for _, old := range r.Before {
+				e, er := entryTx(tx, old.ID)
+				if er != nil {
+					return er
+				}
+				if !under(e.Remote, r.Op.Src) {
+					continue
+				}
+				if er = tx.Bucket([]byte("paths")).Delete([]byte(e.Remote)); er != nil {
+					return er
+				}
+				e.Remote = r.Op.Dst + strings.TrimPrefix(e.Remote, r.Op.Src)
+				if e.ID == r.Op.SrcID {
+					e.CloudName = path.Base(r.Op.Dst)
+				}
+				if er = tx.Bucket([]byte("paths")).Put([]byte(e.Remote), []byte(e.ID)); er != nil {
+					return er
+				}
+				if er = saveEntry(tx, e); er != nil {
+					return er
+				}
+				if e.ID == r.Op.SrcID {
+					out = e
+					r.Op.ResultID = e.ID
+				}
+			}
+		case "delete":
+			for _, old := range r.Before {
+				e, er := entryTx(tx, old.ID)
+				if er != nil {
+					return er
+				}
+				if er = supersedeQueued(tx, e.ID); er != nil {
+					return er
+				}
+				if er = tombstone(tx, e); er != nil {
+					return er
+				}
+				if e.ID == r.Op.SrcID {
+					out = e
+					r.Op.ResultID = e.ID
+				}
+			}
+		case "mkdir":
+			if _, er := byPath(tx, r.Op.Dst); er == nil {
+				return errors.New("mkdir path occupied")
+			} else if !errors.Is(er, ErrNotFound) {
+				return er
+			}
+			out = model.Entry{ID: model.EntryID(uuid.NewString()), MountID: s.scope.MountID, ProfileID: s.scope.ProfileID, Remote: r.Op.Dst, CloudName: path.Base(r.Op.Dst), Kind: model.KindFolder, Generation: 1, Status: model.StatusQueued, FrozenBy: id}
+			now := time.Now().UTC()
+			if er := put(tx, "metadata", string(out.ID), Metadata{FirstObserved: now, ModTime: now}); er != nil {
+				return er
+			}
+			if er := saveEntry(tx, out); er != nil {
+				return er
+			}
+			if er := tx.Bucket([]byte("paths")).Put([]byte(out.Remote), []byte(out.ID)); er != nil {
+				return er
+			}
+			r.Op.ResultID = out.ID
+		}
+		r.Op.State = "committed"
+		return put(tx, "namespace", id, r)
+	})
+	return
+}
+func (s *Store) FinishNamespace(ctx context.Context, id string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if er := get(tx, "namespace", id, &r); er != nil {
+			return er
+		}
+		if r.Op.State == "finished" {
+			return nil
+		}
+		if r.Op.State != "committed" {
+			return ErrInvalidState
+		}
+		if er := each[model.Entry](tx, "entries", func(e model.Entry) error {
+			if e.FrozenBy == id {
+				e.FrozenBy = ""
+				return saveEntry(tx, e)
+			}
+			return nil
+		}); er != nil {
+			return er
+		}
+		r.Op.State = "finished"
+		r.ActionPending = true
+		return put(tx, "namespace", id, r)
+	})
+}
+func (s *Store) AbortNamespace(ctx context.Context, id string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if er := get(tx, "namespace", id, &r); er != nil {
+			return er
+		}
+		if r.Op.State == "aborted" {
+			return nil
+		}
+		if r.Op.State != "prepared" && r.Op.State != "sealed" {
+			return ErrInvalidState
+		}
+		for _, old := range r.Before {
+			e, er := entryTx(tx, old.ID)
+			if er != nil {
+				return er
+			}
+			if e.FrozenBy == id {
+				e.FrozenBy = ""
+				if er = saveEntry(tx, e); er != nil {
+					return er
+				}
+			}
+		}
+		r.Op.State = "aborted"
+		return put(tx, "namespace", id, r)
+	})
+}
+func (s *Store) PendingNamespace(ctx context.Context) (out []model.NamespaceOp, err error) {
+	err = s.view(ctx, func(tx *bolt.Tx) error {
+		return each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
+			if r.Op.State != "finished" && r.Op.State != "aborted" {
+				out = append(out, r.Op)
+			}
+			return nil
+		})
+	})
+	return
+}
+
+// NamespaceActions contains committed local intents eligible for later engine dispatch after Finish.
+func (s *Store) NamespaceActions(ctx context.Context) (out []model.NamespaceOp, err error) {
+	err = s.view(ctx, func(tx *bolt.Tx) error {
+		return each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
+			if r.ActionPending {
+				out = append(out, r.Op)
+			}
+			return nil
+		})
+	})
+	return
+}
+func (s *Store) AcknowledgeNamespaceAction(ctx context.Context, id string) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		var r namespaceRecord
+		if er := get(tx, "namespace", id, &r); er != nil {
+			return er
+		}
+		if r.Op.State != "finished" {
+			return ErrInvalidState
+		}
+		r.ActionPending = false
+		return put(tx, "namespace", id, r)
+	})
+}
