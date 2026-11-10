@@ -540,3 +540,55 @@ func TestHistoricalEndpointDoesNotDependOnCurrentConfig(t *testing.T) {
 		t.Fatal("historical endpoint accepted wrong config", err)
 	}
 }
+
+func TestMountWorkerIsolation(t *testing.T) {
+	m, first, _, _ := fixture(t, nil)
+	c, err := m.LoadConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := c.Mounts[0]
+	other.ID = model.MountID(uuid.NewString())
+	other.Name = "second"
+	other.Mountpoint = filepath.Join(filepath.Dir(other.Mountpoint), "second-mountpoint")
+	if err = os.Mkdir(other.Mountpoint, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.AddMount(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	factory := m.factory
+	m.factory = func(ctx context.Context, spec mountSpec) (*workerServices, error) {
+		svc, err := factory(ctx, spec)
+		if err == nil && spec.Mount.ID == other.ID {
+			svc.runtime = &fakeRuntime{done: make(chan error)}
+		}
+		return svc, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.spawn = func(_ context.Context, args []string, _ string) (int, error) {
+		id := model.MountID(args[len(args)-1])
+		go func() { _ = m.RunWorker(ctx, id) }()
+		return os.Getpid(), nil
+	}
+	for _, id := range []model.MountID{first, other.ID} {
+		if _, err = m.Start(context.Background(), id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, b := m.localWorker(first), m.localWorker(other.ID)
+	if a == nil || b == nil || a == b || a.services.store == b.services.store || a.spec.Paths.Root == b.spec.Paths.Root {
+		t.Fatal("mount workers share mutable state")
+	}
+	if err = m.Stop(context.Background(), first, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	status, err := m.Status(context.Background(), other.ID)
+	if err != nil || !status.Running {
+		t.Fatal("stopping first affected second", status, err)
+	}
+	if err = m.Stop(context.Background(), other.ID, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
