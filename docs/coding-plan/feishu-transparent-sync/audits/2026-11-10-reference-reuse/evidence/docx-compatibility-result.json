@@ -1,0 +1,13 @@
+{
+  "date": "2026-11-10",
+  "probe": "LarkFS DocxHandler vs current official CLI nested JSON",
+  "larkfs_commit": "67b474915035b57f43926152caf323a3813e833a",
+  "cli_commit": "1bfdcc2c1a0ed0296ddb6349d251bdd75145bc5a",
+  "command": "GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -v -count=1 .",
+  "working_directory": "temporary standalone Go module with replace to local third_party/larkfs",
+  "exit_code": 1,
+  "stdout_stderr": "=== RUN   TestCurrentCLIFetchShape\n    docx_test.go:10: current CLI nested document.content silently dropped: got \"\"; error=nil\n--- FAIL: TestCurrentCLIFetchShape (0.00s)\n=== RUN   TestCurrentCLICreateShape\n    docx_test.go:16: current CLI nested document.document_id silently dropped: token=\"\"; error=nil\n--- FAIL: TestCurrentCLICreateShape (0.00s)\nFAIL\nFAIL\tlarkfs-contract-probe\t0.482s\nFAIL\n",
+  "interpretation": "Two compatibility assertions fail as expected: nonempty body and created ID silently become empty with nil error. This reproduces a reference-adapter defect; no remote execution.",
+  "remote_calls": 0,
+  "real_credentials_used": false
+}

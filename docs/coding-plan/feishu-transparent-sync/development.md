@@ -1,13 +1,13 @@
-<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"passed","design_sha256":"4ea2d2034e5096cef03d891928d0cb2f8b0d60716a9f1fd3264c5f8cead338eb"} -->
-# DriveBridge 飞书透明同步开发文档 v1.1
+<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"pending","design_sha256":"dee67879ac1ca8760920f5c669f4e9b8747a6a82bd13717431cba89f757524af"} -->
+# DriveBridge 飞书透明同步开发文档 v1.2
 
 > 实施者：先读完整设计和本文。实际编码按 `superpowers:executing-plans` 逐任务执行；不得因任务写在文档中就视为已实现。每项步骤使用复选框留证据。
 
-**设计：** `/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/design.md`，v1.1。该绝对路径仅为本次文档引用，不是产品运行路径。
+**设计：** [design.md](design.md)，v1.2。实际执行工作区为 `/Users/rrong/.codex/worktrees/5b46/drivebridge`，分支 `feature/feishu-transparent-sync`；不是产品运行路径。
 **目标：** 交付每用户独立配置的三平台飞书挂载；Markdown 保存后透明协作同步，普通文件覆盖，冲突副本/弹窗/diff 与失败恢复。
 **架构：** Rclone VFS→内部 overlay→本机持久队列→独立云端同步；远端内容只能经 VFS 空闲发布屏障进入本地视图。
 **技术：** Go 1.25+、现有 Cobra/Rclone、bbolt v1.4.3、现有 go-difflib；新增 goldmark v1.8.7。初始 lark-cli 1.0.99。合并 UI 使用 Go 内嵌静态资源，无外部编辑器/CDN 依赖。
-**执行边界：** 本轮只交付文档；用户审阅并确认实施后才修改产品代码。不自动安装驱动、提权、发布、推送或创建系统 Goal。
+**执行边界：** 用户已在 2026-11-10 授权开始开发、多 agent；旧文档的仅文档限制已被取代。Task 0 先修订契约，独立复核 pending；随后按依赖实施，允许独立研究/复核并行，共享文件按所有者串行交接。不自动安装驱动、提权、远端写入、发布、推送或创建系统 Goal；真实账号测试需另有明确 opt-in。裁决与能力门槛见 [implementation-decisions.md](implementation-decisions.md)。
 
 ## 1. 全局约束
 
@@ -27,7 +27,7 @@
 | R-01/R-07 | `vfs/vfscache/item.go::_store` 只认一次后端写回 | overlay 本机提交与云端确认分离；持久关闭和代次 | T03/T05/T06/T07 |
 | R-02/R-03 | `backend/feishu` 在线文档只读 `.url`；Markdown 原样往返有反例 | 独立 Docx codec 和侧车；新 md 规则不影响已有普通 md | T04/T05 |
 | R-04/R-10 | API 已实测接受过期版本 | 三方保守合并与尽力重读；保留残余风险 | T04/T07 |
-| R-05 | 已有 `--file-token`；size 初始 0 | 抽取共用执行器；size 从版本元数据取得；保留现有覆盖机制并加核验 | T02/T07 |
+| R-05 | 已有 `--file-token`；size 初始 0 | 抽取共用执行器；size 仅从已核验版本来源或完整已知版本下载取得；保留现有覆盖机制并加核验 | T02/T07 |
 | R-06 | 已有 Web GUI，但无飞书 diff | 自有内嵌本机合并页与通知；不手改上游 GUI 压缩包 | T10 |
 | R-08/R-09 | 平台脚本配置各自独立 | 新统一配置和私有身份目录；worker/CLI/UI 共用接口 | T01/T08/T09 |
 | R-11 | VFS 有重试；没有产品级未知结果和恢复账本 | bbolt/blob/journal、分类错误、确认后清理 | T03/T07/T11 |
@@ -52,7 +52,7 @@
 | `vfs/external_update.go`、`vfs/vfscache/external_update.go` | 可显式启用的 admission、空闲失效/发布及持久关闭 |
 | `vfs/managed_rename.go`、`vfs/vfscache/managed_rename.go` | 通用 Move 前的托管替换保存和源/目标缓存本机提交 |
 | `internal/bridge/sync/{engine,docx,file,reconcile,poll}.go` | 云端状态机、作业逐项确认、远端刷新与核验 |
-| `internal/bridge/auth/{auth,identity}.go` | 首次应用配置、用户授权、身份绑定和状态脱敏 |
+| `internal/bridge/auth/{auth,identity,coordinator}.go` | 首次应用配置、用户授权、身份绑定和状态脱敏 |
 | `internal/bridge/manager/{manager,worker,ipc,status}.go` | mount 生命周期、真实 ready、认证 IPC 和综合状态 |
 | `internal/bridge/platform/{process,notify,startup}_*.go` | 分平台进程、通知、登录启动；不放凭据 |
 | `internal/bridge/ui/{server,session}.go`、`ui/assets/*` | 初始化页、状态、三方 diff 与版本化提交 |
@@ -64,7 +64,10 @@
 在 T01 的 `model/types.go` 定义，不能由相邻任务重新定义同名结构：
 
 ```go
-type Operation struct { Kind, BlockID, AfterBlockID, ClientToken string; Payload json.RawMessage }
+type Operation struct {
+    Kind, BlockID, AfterBlockID, ClientToken string; Payload json.RawMessage
+    ID, Route, CapabilityID string // 可选扩展，T01 所有；T03 持久化，T02/T04/T07 消费
+}
 type Block struct {
     LocalID, RemoteID, ParentID, Kind, Hash string
     Start, End int; Opaque bool; RawXML []byte
@@ -87,6 +90,8 @@ type MountStatus struct {
 }
 ```
 
+Operation.ID 是本机 journal 身份，不是服务端幂等键；ClientToken 对 docs shortcut 必须为空。Route/CapabilityID 为空时不得派发 mutation，不能猜测默认服务端能力；T04 可只产出 Kind/定位/Payload，T07 取得 T02 能力并在 RecordPlan 前补齐 ID/Route/CapabilityID。T01 拥有这些可选扩展及 JSON 兼容性，T03 负责原样保存并拒绝执行时缺路由的计划。
+
 `Block.Start/End` 是本地 UTF-8 字节范围，左闭右开；不能用字符索引直接切 Go 字节数组。`RawXML` 和远端 ID 仅存侧车；Markdown 的 `<title>` 元数据不放进正文，标题由文件名维护。`ErrGenerationChanged`、`ErrVersionChanged`、`ErrUnsupportedContent`、`ErrUnknownResult`、`ErrIdentityChanged` 为规范可 errors.Is 的错误。
 
 ### 3.3 关键接口
@@ -103,7 +108,16 @@ func Save(path string, c Config) error
 // lib/larkcli：Request={Args []string; Stdin []byte; Dir string}
 // Response={Data json.RawMessage; Warnings []string; Result string}
 func (r *Runner) Run(ctx context.Context, req Request) (Response, error)
-// Runner 在构造时绑定 executable/configDir/identity；不接受从正文拼接 shell 命令
+// managed业务Runner 在构造时绑定 executable/authRef/verifiedIdentity/coordinator/envPolicy；不接受从正文拼接 shell 命令
+// coordinator 接口定义在 lib/larkcli（T02）：
+// WithCredentialLocks(ctx, appID, userOpenID string, run func() error) error
+// WithEnrollmentLock(ctx, run func() error) error
+// 前者先取OS用户gate共享，再AppID/身份；后者取同gate独占，AppID未知仍被协调
+// 实现归 T08；T02 离线测试注入 fake，managed 模式缺 coordinator/身份时 fail closed，不能用 no-op 锁
+// managed 先 AppID 文件锁，再可选 AppID+OpenID 文件锁；覆盖全部可能自动刷新的托管子进程
+// T02另定义Enrollment/AuthStream的白名单事件DTO和保留子进程句柄（Wait/CancelAndWait）；T08消费
+// 仅显式注册/授权阶段可缺AppID或UserOpenID；不豁免gate/已知AppID锁
+// legacy/direct 维持既有CLI配置/官方锁，不强制产品authRef，不自动迁移或共享canonical root；禁止managed降级direct
 
 // store：所有方法作用于构造时绑定的一个 mount
 func Open(dir string) (*Store, error)
@@ -142,10 +156,15 @@ func Merge(baseLocal, local []byte, remote model.DocView) (model.MergeResult, er
 
 // cloud：FileMeta={Token,Version string; Size int64; ModTime time.Time}
 // Document={Token,Revision string; XML []byte; Warnings []string}
-// ApplyResult={Revision,Result string; Completed []int; Warnings []string}
+// ApplyResult={Revision,Result string; Completed []int; Warnings []string; Capabilities []OperationCapability}
+// 可选 OperationCapability/ApplyResult 扩展归 T01 model；cloud 使用类型别名，lib/larkcli 的协议 DTO 归 T02 并显式转换。
+// OperationCapability={ID,Kind,Route,ServerTokenField string; Verified bool; Evidence string}
+// Evidence 必须标离线/真实；Verified 只批准所列操作语义，不代表 CAS 或未知结果可重试。
 func (c *Client) FileMeta(ctx context.Context, token string) (FileMeta, error)
 func (c *Client) FetchDoc(ctx context.Context, token, revision string) (Document, error)
 func (c *Client) ApplyDoc(ctx context.Context, token, revision string, ops []model.Operation) (ApplyResult, error)
+// 首版仅len(ops)==1；len>1拒绝unsupported_batch（len==0参数错误），签名保留以兼容将来扩展。
+// T07逐次ApplyDoc→RecordOperation持久→回读/remap；cloud不得内部循环未journal的多个mutation。
 // 新建、上传、下载、列举、改名、删除遵循 typed lib/larkcli Drive/Docx 方法与已读 API schema；只用固定版本支持的参数。
 
 // overlay
@@ -190,7 +209,7 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 输入/输出：实现设计 5.2 与本文 3.2；`config.DefaultPaths/Load/Save`。配置保存带 schema、锁、临时文件和原子替换；Paths 可注入给测试。
 - [ ] 定义测试：`TestProfileIsolation` 两个用户根/同名 profile 不共享目录；`TestUnknownSchemaReadOnly` 不覆盖未来配置；`TestConfigHasNoCredentials` 保存结果没有密钥字段；坏挂载路径和重复 UUID 被拒。
 - [ ] 运行测试并记录缺失行为导致的失败。
-- [ ] 按设计 5.1 JSON 固定 Config/Profile/Remote/Mount 的字段与序列化；实现类型、路径、身份引用、参数验证及原子保存；产品覆盖参数用 --bridge-config，Windows 使用 Known Folder/ACL，Linux 使用 XDG 规则。
+- [ ] 按设计 5.1 JSON 固定 Config/Profile/Remote/Mount 的字段与序列化；定义当前用户身份注册表引用/验证身份 DTO 和 Operation/OperationCapability 可选扩展，禁止相同身份绑定多个 canonical auth root；实现类型、路径、身份引用、参数验证及原子保存；产品覆盖参数用 --bridge-config，Windows 使用 Known Folder/ACL，Linux 使用 XDG 规则。
 - [ ] 验证：`go test ./internal/bridge/config ./internal/bridge/model ./internal/bridge/platform -count=1`；类型测试和文件权限断言通过。
 - 完成：无实验账号/目录/绝对路径写入默认配置。边界：不登录、不启动 mount。
 
@@ -199,11 +218,14 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 需求：R-05/R-08/R-10/R-12。依赖：T01。
 - 文件：新增 `lib/larkcli/{runner,errors,drive,docx}.go` 及测试；拆分/修改 `backend/feishu/{feishu,client,metadata,naming}.go` 和 `feishu_internal_test.go`；新增 `internal/bridge/cloud/client.go`。
 - 输入/输出：Runner/Response、cloud.FileMeta/Document/ApplyResult；Drive DTO 固定为 list items、cursor、file_token、version、size_bytes、URL 和错误；不得把原始 map 传给 store。
-- [ ] 定义 `TestRunnerErrorEnvelopeOnStderr`、`TestPartialSuccessNotConfirmed`、`TestAuthOutputRedacted`、`TestPagedJSONNoTruncation`、`TestFileSizeFromVersionHistory`、`TestVirtualURLCannotRemove`；fake process 检查 argv 含 `--as user`、独立 configDir 和相对临时文件路径。
+- [ ] 定义 `TestRunnerErrorEnvelopeOnStderr`、`TestPartialSuccessNotConfirmed`、`TestAuthOutputRedacted`、`TestPagedJSONNoTruncation`、`TestMetadataPresenceAndCurrentVersion`、`TestVirtualURLCannotRemove`；fake process 检查 argv 含 `--as user`、注册表派生 auth root 和相对临时文件路径；检查可能自动刷新的托管普通读取/写入/探测均持共享锁，继承 CLI credential/profile/workspace 覆盖被清理且代理/证书网络变量按明确集合保留。
 - [ ] 运行对应包测试确认失败原因。
 - [ ] 实现 exec.CommandContext、取消、stdout/stderr 分开解析、stderr 错误信封、结构化 retryable/unknown；日志不记录 auth 原文、正文或凭据。
-- [ ] 实现最新文件版本元数据读取：固定 CLI `+version-history --limit 1`，校验非删除版本及非负 size_bytes；capability 失败返回明确错误，不能返回 size=0 冒充空文件。缓存键含 profile/Token/revision。
-- [ ] 实现显式分页循环或 page-all/page-limit=0 的聚合和循环检测；缺时间戳用持久首次观测值，不每次返回 time.Now。
+- [ ] 按设计 6.5 实现 preserving raw history 候选（`api GET /open-apis/drive/v1/files/{token}/history`，显式 only_tag=false，单页），保留 size/version 等字段存在性与精确整数。只有经验证当前版本来源与 history 明确关联才返回当前 FileMeta；否则验证完整的已知版本下载并绑定版本，不能证明 current 就返回 metadata_unknown。新增缺字段、错类型、负值、溢出、真实零、rename/连续覆盖及历史过滤/乱序夹具；禁止使用 shortcut 归零值、缺转空或首项当 head。缓存键含身份引用/Token/已核验 version。
+- [ ] 首版只实现单页 cursor 循环；每页校验 envelope/业务 code/items/has_more/cursor，重复或缺失 cursor 失败。新增第二页业务错误且缺 data、网络断开、取消、重复 cursor 用例；失败保留旧完整 snapshot、不推断删除；成功末页后才提交完整结果。禁止 --page-all 聚合。缺时间戳用标注来源的持久首次观测值，不每次返回 time.Now。
+- [ ] 固定 Docx 嵌套 DTO：fetch 的 data.document.content 与 create 的 data.document.document_id；新增 `TestDocxNestedContentAndID`、`TestDocxMissingRequiredFieldsRejected`，覆盖非空正文不读空、非空 Token 不丢失；字段 presence 区分合法空正文与缺失正文，必需 ID/版本缺失即协议错误，不移植 LarkFS 平铺解析器。
+- [ ] 按设计 6.4 逐 operation 暴露路线/能力表；shortcut XML replace/delete/insert 无 client_token，本机 ID 不发送为服务端键。原生 docx 候选在参数位置、结构转换、响应和 unknown 语义逐项验证前关闭；生产能力缺失返回 unsupported_capability，typed cloud 适配不扩大能力。
+- [ ] Runner 显式区分 legacy/direct 与 managed；原生 feishu: 继续既有配置和官方锁，未配置产品也可运行；不静默改用canonical root。managed（含worker复用原生适配）缺身份/协调器必须拒绝，不能降级；新增兼容性与拒绝降级测试。legacy/direct与外部CLI操作同属产品锁外生命周期风险，按设计7.1恢复。
 - [ ] 验证：`go test ./lib/larkcli ./backend/feishu ./internal/bridge/cloud -count=1`；保留既有普通文件 live 测试入口，未经 opt-in 不访问飞书。
 - 完成：原生命令仍保持同步上传含义；版本号不被转换成条件写保证。边界：不维护产品上传队列。
 
@@ -272,8 +294,9 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 输入/输出：Engine.Run/SyncEntry、Publisher；依赖 cloud、store、markdown，Publisher 由 manager 绑定到 VFS.TryExternalUpdate/overlay.Publish。
 - [ ] 定义 `TestG1UploadG2SaveRebases`、`TestPartialPatchResumesWithoutDuplicate`、`TestTimeoutAfterCommitReconciles`、`TestCreateUnknownNoDuplicate`、`TestRemoteDriftThreeTimesConflicts`、`TestRemoteRefreshDefersOpenFile`、`TestPermissionAndDiskErrorsPause`、`TestOrdinaryReadbackMismatchNotConfirmed`。
 - [ ] 运行失败用例。
-- [ ] 实现单 entry 串行/profile 并发与限流；Prepare→最新 Fetch→Merge→目标重读→RecordPlan→逐操作提交/记录→回读→Confirm→Publish。
-- [ ] 每次 Prepare 与 Namespace FrozenBy 检查原子化；启动先恢复 namespace，不抢跑旧源 job；每个结构性操作完成后回读并重建剩余映射，保留已完成操作的幂等 ID。
+- [ ] 实现单 entry 串行/profile 并发与限流，服从 AppID 共享凭据锁；Prepare→最新 Fetch→Merge→目标重读→校验路线能力并绑定本机 Operation.ID→RecordPlan→逐操作提交/记录→回读→Confirm→Publish。
+- [ ] unknown mutation 先回读并按唯一块/内容/上下文核验；歧义转 paused/conflict，不能把本机 ID 当去重证明。补 shortcut insert/replace/delete 提交后丢响应、重复正文无法定位、部分成功后块 ID 变化、未验证原生路线拒绝派发测试；不能证明未提交时不因回读旧值自动重发。完整目录快照失败时不做删除决策。
+- [ ] 每次 Prepare 与 Namespace FrozenBy 检查原子化；启动先恢复 namespace，不抢跑旧源 job；每个结构性操作完成后回读并重建剩余映射，保留本机 Operation.ID 与路线/能力证据；仅已验证原生路线才保留并发送对应服务端键。
 - [ ] 实现双 checkpoint 跨新代次的 rebase；发布 busy 留 Desired，不能清新代次或强制重写打开文件。
 - [ ] 实现普通文件备份/原 Token 覆盖/下载 SHA-256；无可信哈希时实际回读；unknown 先核验，非幂等创建以唯一临时名定位，歧义暂停。
 - [ ] 远端拒绝零字节普通文件时标记 blocked/empty_file_unsupported，保留本地空文件；变非空后再排队，不能返回 cloud_state=synced。
@@ -285,14 +308,18 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 ### T08：每用户首次配置、授权与身份绑定
 
 - 需求：R-08/R-09/R-11。依赖：T01/T02/T03。
-- 文件：新增 `internal/bridge/auth/{auth,identity}.go`、测试；新增 `platform/permissions_*.go`。
+- 文件：新增 `internal/bridge/auth/{auth,identity,coordinator}.go`、测试；新增 `platform/permissions_*.go`。
 - 输入/输出：Service.Start/Complete、AuthFlow、Identity；config 中只保存 credential reference 和身份摘要。
-- [ ] 定义 `TestAppConfiguredButUserMissing`、`TestProfileAuthDirectoryIsolation`、`TestDifferentUserCannotReusePending`、`TestExpiredDeviceFlowStartsFresh`、`TestAuthSecretsNeverLogged`、`TestGrantedScopesNotAssumedRequestedOnly`。
+- [ ] 定义 `TestAppConfiguredButUserMissing`、`TestSameIdentitySharesAuthRootAndCoordinator`、`TestDifferentUserCannotReusePending`、`TestExpiredDeviceFlowStartsFresh`、`TestAuthSecretsNeverLogged`、`TestGrantedScopesNotAssumedRequestedOnly`。
 - [ ] 运行失败用例。
-- [ ] 实现后台 config init 流程和 split device flow；提取登录 URL，device_code 只留当前流程的私有内存；完成/过期后清除，重启重新发起。
-- [ ] 实现 verified user 及身份摘要校验；每 profile 的刷新/配置加锁，不切全局 profile；只向用户展示授权页面/实际 scopes，不打印密钥。
+- [ ] 按设计7.1.1实现非TTY `config init --new --brand` retained enrollment：T02方法流式解析stderr URL/QR/prose及最终裸stdout白名单，T08持当前OS用户gate独占（其他managed调用共享侧）；不得假设--no-wait/--json注册flag或提前知道AppID。注册无server expiry时ExpiresAt为未知，本机默认10分钟上限单独标注。
+- [ ] 用户授权用 `auth login --scope <明确scopes> --json` retained streaming，不加--as；解析 device_authorization/authorization_complete 裸NDJSON事件（无ok/success），Start收到URL后返回，Complete收割同一child并核验身份/scopes/最终退出码。禁止split completion敏感device_code进入argv；T02拥有流式事件DTO/进程句柄，T08拥有flow状态。
+- [ ] 新增 `TestEnrollmentUnknownAppIDBlocksOtherManagedCalls`、`TestCancelReapsBeforeUnlock`、`TestEnrollmentSavedButProbeFailsNeedsReconcile`、`TestAuthorizationCompleteMissingScopesNotSuccess`、`TestRestartReconcilesEnrollmentBeforeRetry`。取消/超时先终止并reap再解锁，保留可能已保存的enrollment状态；不假设远端未创建，不删共享凭据。重启核验残留状态，内存流程不复用；只有成功退出、身份验证和所需scopes齐全才启用同步。
+- [ ] 实现 verified user 及身份摘要校验、临时登录 root→canonical 身份 root 的引用归并；相同 AppID+OpenID 复用 root/协调器，不同用户 root 分开，brand 不分官方键锁。产品只存引用/已验证身份；官方命令管理秘密，不自行复制 token 或 App Secret。
+- [ ] 实现 T02 coordinator 接口：跨 worker 的 OS用户enrollment gate→AppID→AppID+OpenID 文件锁覆盖所有可刷新 child invocation；AppSecret/TAT 的 AppID 写入同样串行。引用解除与 CLI logout 分开；logout/重授权/应用密钥变更检查所有受影响引用/挂载/作业。
+- [ ] 新增同 AppID 两用户、同身份多 profile、并行模拟过期刷新、共享 AppSecret/TAT 写、pending 引用拒绝 logout、继承他人凭据环境、brand 键碰撞和外部 CLI 撤销/换账号恢复测试。外部 CLI 不持产品锁，异常必须暂停旧队列并显式恢复；离线模拟不证明真实 token 旋转安全。只展示授权页面/实际 scopes，不打印密钥。
 - [ ] 验证：`go test -race ./internal/bridge/auth ./internal/bridge/config -count=1`；真实新账号授权由用户在浏览器完成，不用测试脚本点击同意权限。
-- 完成：应用配置成功不能误报用户已登录；官方 CLI 管凭据，产品不自行复制 token。
+- 完成：应用配置/授权完成事件不能独立当作成功；最终退出码与保存后核验一致才可用，应用配置成功不能误报用户已登录；官方 CLI 管凭据，产品不自行复制 token。
 
 ### T09：worker、跨平台管理与产品 CLI
 
@@ -304,7 +331,7 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - [ ] 实现平台派生路径、运行锁、实例 UUID、loopback 认证 IPC、后台进程和登录启动；缺驱动/错误编译标签由 doctor 准确报错，不自行 sudo。
 - [ ] 提供每用户 config/auth 服务与 worker IPC 调用，并实现 enable/disable-autostart；无 worker 时配置/登录服务仍可构造，静态 UI 和 feishu gui 入口由 T10 挂接；Windows 用户交互会话启动，不使用 SYSTEM/session 0。
 - [ ] 实现 composite 状态与安全停止：检查打开 writer、VFS pending、产品 queued/inflight/unknown/conflict；WaitForWriters 的 void 返回不能当作 drain 成功。
-- [ ] 实现 Cobra wiring、补全、显式 cache clean 和脱敏日志；profile logout/remote remove 遇引用或待上传返回 6。
+- [ ] 实现 Cobra wiring、补全、显式 cache clean 和脱敏日志；profile logout/remote remove 遇引用或待上传返回 6；logout 通过 T08 对全部共享凭据引用检查，不直接运行 CLI logout。全部 CLI child 包括 doctor 中会访问凭据的探测均走 T02 环境/协调入口。
 - [ ] 验证：`go test -race ./cmd/feishu ./internal/bridge/manager ./internal/bridge/platform -count=1`；`go run . feishu --help` 及现有 `version/config/mount --help` 仍可用。
 - 完成：GUI/CLI 共用 worker；Windows 从不传 --daemon。边界：界面交互归 T10。
 
@@ -357,13 +384,14 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - [ ] 运行 `go test -race ./lib/larkcli ./backend/feishu ./internal/bridge/... ./vfs/... -count=1`。
 - [ ] 在各发布 OS/架构运行 `go test ./internal/bridge/integration -run TestNativeMount -count=1`，填写挂载驱动、引擎和输出；无桌面和桌面 diff 分别验收。
 - [ ] 在隔离合成目录 opt-in 运行 `go test ./internal/bridge/integration -run TestLiveFeishu -count=1`；覆盖小/大/空文件、权限失效、局部补丁、分页、历史不可读及已接受的竞态反例。
+- [ ] 按 implementation-decisions 的 LV-01–LV-05，在明确授权的隔离账号/目录执行实际凭据共享、逐操作能力、精确元数据、完整分页与嵌套 DTO 契约验收；未通过的能力保持关闭，不借 mock 放行。
 - [ ] 记录两台电脑独立授权/同账号与不同账号隔离；完成 T11 升级/恢复验收；检查 UI 无“所有冲突都能避免”的宣传。
 - [ ] 进行需求覆盖与整分支审核；修复阻塞项并重验受影响检查。尚缺的平台/签名/真实场景写成未完成，不宣称全部交付。
 - 完成：每项需求都有产品行为和证据，未上传数据保留且恢复路径可操作；用户审阅后再决定合并/发布。
 
 ## 6. 依赖与完成条件
 
-执行顺序：T01→T02/T03→T04→T05→T06→T07；T08 在 T03 后独立完成；随后 T09→T10/T11→T12→T13。该顺序允许内部任务分工，但本轮不自动启用并行实施。
+执行顺序：T01→T02/T03→T04→T05→T06→T07；T08 在 T03 后独立完成；随后 T09→T10/T11→T12→T13。用户已授权多 agent；研究/测试设计/独立复核可并行。共享文件和规范接口按所有者交接，不同时写 model/types.go、cloud/client.go、cmd/feishu 或发布 workflow。T02 先定义 coordinator 注入契约，T08 后实现，T09 组装后才启用需凭据的生产调用，避免 T02↔T08 循环依赖。
 
 每任务提交范围只包含自己的文件和必要契约修订；提交前运行相应验证。共享接口需要调整时，先修改设计与本文、记录原因及受影响任务，不允许相邻任务各自发明兼容层。
 
@@ -371,6 +399,6 @@ CI/本地缺驱动、签名、权限或真实环境时记录具体未执行项�
 
 ## 7. 写作前关卡与复核
 
-写作前 `validate_records.py check development-gate.json --require-ready` 已退出 0；信息闭合度 95/100，不是实现通过率。依据见 [development-gate.json](development-gate.json)。
+v1.1 require-ready/95 分为历史；v1.2 的真实能力及独立复核仍未完成，当前 [development-gate.json](development-gate.json) 不宣称 ready。保守能力失败协议允许离线模块继续开发，不构成对应云端能力发布许可。
 
-本地接口实验的结论只能引用 [validation-results.md](validation-results.md)；本文所有新增产品测试尚未运行。实施者复核、接口一致性和需求覆盖见 [review.md](review.md)。review_status 表示文档技术复核，元数据摘要绑定复核后的实际设计版本。
+本地接口实验的结论只能引用 [validation-results.md](validation-results.md)；本文所有新增产品测试尚未运行。历史实施者复核见 [review.md](review.md)；v1.2 仅完成作者自查，review_status=pending，等待独立复核。元数据 SHA 绑定当前 pending 设计，只说明内容对应，不代表复核通过。Task 0 的 T01–T13 自洽及共享边枚举记录在执行账本 `.superpowers/sdd/development/preflight.md`。

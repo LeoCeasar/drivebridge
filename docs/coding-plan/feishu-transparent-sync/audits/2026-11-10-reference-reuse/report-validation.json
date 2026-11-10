@@ -1,0 +1,67 @@
+{
+  "date": "2026-11-10",
+  "status": "passed",
+  "meaning": "审核产物格式/内容/路径检查通过；不表示产品功能或待修设计通过。",
+  "checks": [
+    {
+      "command": [
+        "python3",
+        "/Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py",
+        "check",
+        "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/audits/2026-11-10-reference-reuse/audit.json"
+      ],
+      "exit_code": 0,
+      "output": "记录格式与状态一致；这不代替事实核验。\n"
+    },
+    {
+      "command": [
+        "python3",
+        "/Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/render_audit.py",
+        "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/audits/2026-11-10-reference-reuse/audit.json",
+        "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/audits/2026-11-10-reference-reuse/audit.html"
+      ],
+      "exit_code": 0,
+      "output": "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/audits/2026-11-10-reference-reuse/audit.html\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "git",
+        "check-ignore",
+        "-v",
+        "third_party/larksuite-cli/README.md",
+        "third_party/larkfs/go.mod"
+      ],
+      "exit_code": 0,
+      "output": ".gitignore:26:/third_party/\tthird_party/larksuite-cli/README.md\n.gitignore:26:/third_party/\tthird_party/larkfs/go.mod\n"
+    },
+    {
+      "command": "read generated HTML / findings / verdict / gaps / no external assets",
+      "exit_code": 0,
+      "output": "5 finding rows; complete titles and audit content present; offline assets only"
+    },
+    {
+      "command": "check Markdown local links and pinned GitHub source paths against clones",
+      "exit_code": 0,
+      "output": "all referenced paths exist"
+    },
+    {
+      "command": "verify reference HEADs and clean worktrees",
+      "exit_code": 0,
+      "output": "both match audit pins; clean"
+    },
+    {
+      "command": "verify no tracked third_party, no staged changes, unchanged v1.1 design/development digests",
+      "exit_code": 0,
+      "output": "passed"
+    }
+  ]
+}

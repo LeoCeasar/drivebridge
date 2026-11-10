@@ -21,3 +21,6 @@ __pycache__
 .DS_Store
 resource_windows_*.syso
 .devcontainer
+
+# Locally checked-out reference repositories; never package or commit them.
+/third_party/

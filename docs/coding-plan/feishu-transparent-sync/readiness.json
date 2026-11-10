@@ -35,18 +35,18 @@
     },
     {
       "id": "7",
-      "score": 10,
-      "evidence": "固定 CLI 1.0.99，已实测两个接口接受过期写入、近期历史可读、小文件同 Token 覆盖、分页聚合；追加真实 +version-history 响应包含 size_bytes，可作大小元数据来源。未测的大文件和超时在开发验收中强制验证，不假称通过。"
+      "score": 0,
+      "evidence": "F02/F03 的真实逐操作能力、current-head 元数据关联与版本下载遵循未验证；设计6.4/6.5明确候选与失败门槛，不声称 shortcut/latest/CAS 已证明。"
     },
     {
       "id": "8",
-      "score": 10,
-      "evidence": "工程决定：按系统用户/profile/mount UUID 隔离；私有 bbolt 与 fsync 后不可变 blob；官方 CLI 管理授权，产品配置不存密钥；未确认、冲突和恢复引用的数据不参与清理。"
+      "score": 5,
+      "evidence": "产品 UUID 与官方共享凭据域已分开；设计7.1定义复用root、AppID→AppID+OpenID文件锁和环境过滤。真实刷新/外部CLI生命周期仍需LV-01。"
     },
     {
       "id": "9",
       "score": 5,
-      "evidence": "三平台交付路径、依赖检查、旧配置显式导入、schema 备份迁移和回滚只读策略可以定义；尚无三个平台的运行及签名证据，签名凭据和实际环境不妨碍写任务，但阻塞对应产物发布。"
+      "evidence": "三平台实际挂载/签名/升级未执行，LV-01–LV-05 亦待真实授权；均为发布门槛。"
     },
     {
       "id": "10",
@@ -54,7 +54,12 @@
       "evidence": "真实接口反例已纳入已确认边界；所有能力映射到单位/故障注入/原生挂载/真实接口/升级验收。结果须明确已执行与计划执行，发布不能用交叉编译代替实际挂载。"
     }
   ],
-  "critical_unknowns": [],
+  "critical_unknowns": [
+    "LV-01：真实共享凭据刷新、AppSecret/TAT/退出及外部CLI恢复验证未执行。",
+    "LV-02：逐操作服务端能力和响应丢失核验未执行；未验证路线保持关闭。",
+    "LV-03：当前head关联及已知版本下载遵循未证明；失败返回metadata_unknown。",
+    "v1.2 独立文档复核 pending；全部新增产品测试、真实分页和发布平台验收未执行。"
+  ],
   "accepted_risks": [
     "用户已明确接受飞书网页与本地同段并发时仍可能覆盖；冲突 UI 只覆盖已检测冲突，历史恢复不保证任意离线时长。"
   ],
@@ -66,6 +71,14 @@
     "unknown_upload": "请求结果不明确时进入 awaiting_verification，先核验不盲重试；创建使用持久 operation UUID 和临时远端名称识别，匹配不唯一则暂停。",
     "limits": "Markdown 可编辑上限10MiB；缓存预算5GiB仅清理可安全淘汰数据；默认写回2s、活动文档轮询5s、目录刷新30s、每profile并发2及可配置限流退避。",
     "ui": "嵌入本机浏览器三方diff页与系统弹窗；离线本机可合并并排队，提交时校验本地/远端输入版本；无桌面保留冲突并提供CLI入口。",
-    "compatibility": "不修改Rclone原命令语义；托管挂载与raw feishu明确分开；不自动转换既有普通.md；所有安装包不携带实验账号、路径或目录。"
-  }
+    "compatibility": "不修改Rclone原命令语义；托管挂载与raw feishu明确分开；不自动转换既有普通.md；所有安装包不携带实验账号、路径或目录。",
+    "credentials": "业务profile隔离；相同验证身份复用auth root；实际AppID/AppID+OpenID共享域跨进程锁，不含brand；全部可能刷新child参与，外部CLI须显式恢复。"
+  },
+  "version": "1.2",
+  "review_status": "pending",
+  "historical_v1_1": {
+    "score": 95,
+    "disposition": "历史已通过的信息闭合度；v1.2 新证据下失效，不沿用 ready。"
+  },
+  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。"
 }

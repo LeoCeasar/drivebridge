@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>feishu-transparent-sync-reference-reuse · 代码审核</title>
+<style>
+:root{color-scheme:light;--ink:#182329;--muted:#566870;--line:#dce3e6;--paper:#f4f6f5;--accent:#0c675e}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"PingFang SC",sans-serif}main{max-width:1440px;margin:auto;padding:40px 28px 72px}header{border-top:5px solid var(--accent);padding-top:22px}.eyebrow{letter-spacing:.12em;color:var(--accent);font:12px ui-monospace,monospace}h1{font-size:30px;line-height:1.25;margin:12px 0}h2{font-size:18px;margin:30px 0 12px}.meta{color:var(--muted)}.verdict{display:inline-block;padding:5px 14px;border-radius:4px;font-weight:700}.ready{background:#d9eee6;color:#17573c}.needs-fixes{background:#fae0dc;color:#8e2820}.inconclusive{background:#faedcc;color:#74530b}.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}.tile{border:1px solid var(--line);background:white;padding:16px}.tile b{font:30px ui-monospace,monospace;display:block}.tile span{color:var(--muted)}section{background:white;border:1px solid var(--line);padding:18px 20px;margin-top:16px}section h2:first-child{margin-top:0}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:10px;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}th{font-weight:650;background:#edf2ef}td{min-width:100px}tr[data-severity=P0]{border-left:4px solid #a62922}tr[data-severity=P1]{border-left:4px solid #c8601b}tr[data-severity=P2]{border-left:4px solid #c59b28}tr[data-severity=P3]{border-left:4px solid #6e8391}pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.filters{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}select{font:inherit;padding:4px;border:1px solid var(--line)}ul{padding-left:22px}.legend,footer{color:var(--muted);font-size:12px}summary{cursor:pointer;font-weight:650}@media(max-width:650px){main{padding:24px 12px}.tiles{grid-template-columns:repeat(2,1fr)}section{padding:12px}h1{font-size:25px}}@media print{.filters{display:none}main{padding:0}.scroll{overflow:visible}section{break-inside:avoid}body{background:white}}
+</style>
+<style>
+.filters label{display:flex;align-items:center;gap:6px;max-width:100%;min-width:0}.filters select{min-width:0;max-width:100%;flex:1}
+.cell{max-height:280px;min-width:100px;max-width:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+@media print{.cell{max-height:none;max-width:none;overflow:visible}}
+</style>
+</head>
+<body><main>
+<header><div class="eyebrow">CODING-PLAN / AUDIT</div><h1>feishu-transparent-sync-reference-reuse 代码审核</h1><span class="verdict needs-fixes">需修复</span><p class="meta">同模型新上下文复审 · 生成于 2026-11-10T07:57:28+00:00</p><p>官方 CLI 可承担认证、文件传输、Docx 协议与稳定错误分类；T02/T08 收窄为受控适配。现成 +sync 跳过在线文档且没有三方基线，不能替代托管同步。需先修订 F01 凭据共享域、F02 幂等能力映射、F03 精确元数据及 F05 显式分页完整性契约。F04 离线复现 LarkFS 对当前官方嵌套 JSON 静默读空/空 Token，禁止直接搬该解析器。保留 Rclone VFS、持久队列、Markdown 保守合并与冲突 UI。</p></header>
+<div class="tiles"><div class="tile"><b>0</b><span>P0 未关闭</span></div><div class="tile"><b>4</b><span>P1 未关闭</span></div><div class="tile"><b>1</b><span>P2 未关闭</span></div><div class="tile"><b>0</b><span>P3 未关闭</span></div></div>
+<section><h2>目标与实际检查范围</h2><pre>{
+  &quot;repo&quot;: &quot;/Users/rrong/Documents/perf/projects/drivebridge&quot;,
+  &quot;base&quot;: &quot;b2271fdfda822ecf98ce7a321ddfa232dc8ccb66&quot;,
+  &quot;head&quot;: &quot;b2271fdfda822ecf98ce7a321ddfa232dc8ccb66&quot;
+}</pre><p>方案 v1.1 的官方 CLI/LarkFS 复用与契约审核；不是功能实现或分支合并审核。检查固定提交的认证/配置/凭据/错误/Drive/Docx/分页及 LarkFS adapter/doctype/naming/cache/retry/mount/桌面相关源码，未穷尽两仓库。requirements 状态指设计覆盖与复用结论，不表示产品已实现。仅修改根 .gitignore、写本次审核报告及隔离测试材料；未改变旧设计、产品代码、索引、分支或飞书数据。</p></section>
+<section><h2>验证缺口与恢复条件</h2><ul><li><strong>关键：</strong>F01的产品凭据协调协议、环境边界及同账号重复绑定生命周期需落实到设计/任务并验证；源码风险确认不等于真实刷新竞态已复现。</li><li><strong>关键：</strong>F02每种块操作的实际传输路线、幂等字段和unknown恢复判定还未闭合；不把docs_ai与原生docx接口混同。</li><li><strong>关键：</strong>F03需要保留原始大小存在性并确认当前版本；既有样本不能证明全量latest契约。</li><li><strong>一般：</strong>没有执行真实三平台挂载、签名、安装或升级；这是未来发布门槛，本次审核完成不代表产品交付完成。</li><li><strong>一般：</strong>选定官方Markdown单测依赖未缓存，未执行；其实现判断为源码证据。未穷尽全部上游代码/依赖许可。</li><li><strong>一般：</strong>官方源码package.json与前轮发行CLI均标1.0.99，未核验提交与已安装二进制可复现构建对应关系；发行时必须固定二进制及校验和。</li><li><strong>关键：</strong>F05聚合后续页错误隐藏为成功的控制流已核验，但未做动态故障注入；首版应收窄为显式逐页并补完整快照提交测试。</li></ul></section>
+<section><h2>需求覆盖</h2><div class="scroll"><table><thead><tr><th scope="col">需求</th><th scope="col">覆盖</th><th scope="col">依据</th></tr></thead><tbody><tr><td><div class="cell">AR01-local-reference-isolation</div></td><td><div class="cell">implemented</div></td><td><div class="cell">两个仓库克隆至 third_party 并固定提交；根 .gitignore:26 的 /third_party/ 命中两仓库文件，git ls-files -- third_party 无输出。</div></td></tr><tr><td><div class="cell">AR02-official-reuse-boundary</div></td><td><div class="cell">implemented</div></td><td><div class="cell">README 第2/3/6节明确直接命令复用/薄适配/产品自建；官方 drive_sync.go:79 跳过在线文档，203–235 没有持久三方基线，markdown_patch.go:117–168 是普通文件整篇覆盖。</div></td></tr><tr><td><div class="cell">AR03-per-user-and-multi-account</div></td><td><div class="cell">partial</div></td><td><div class="cell">设计已有动态用户路径/UUID/身份绑定；F01发现config root 与官方凭据共享域及锁不一致，需补环境约束、重复身份协调和生命周期测试。</div></td></tr><tr><td><div class="cell">AR04-retry-and-operation-idempotency</div></td><td><div class="cell">partial</div></td><td><div class="cell">已有 unknown/journal/逐项回读原则；F02 的具体 Operation 到 shortcut/raw API、服务端幂等键与恢复能力尚未列清。</div></td></tr><tr><td><div class="cell">AR05-file-metadata-completeness</div></td><td><div class="cell">partial</div></td><td><div class="cell">F03：version-history only_tag过滤及缺字段size转0无法仅凭非负值确认为当前准确大小；T02仍需保留原始字段的来源和验证。分页循环/聚合完整性检测应保留。 F05新增：后续业务错误页可被聚合为成功且has_more=false，首版明确单页循环。</div></td></tr><tr><td><div class="cell">AR06-larkfs-source-selection</div></td><td><div class="cell">implemented</div></td><td><div class="cell">README 第5节逐项检查原18个参考文件；可参考Runner/类型/命名/TTL/测试，不搬ReplaceFile、整篇overwrite、缓存或挂载层。F04实际兼容性断言失败。</div></td></tr><tr><td><div class="cell">AR07-local-collaboration-safety</div></td><td><div class="cell">implemented</div></td><td><div class="cell">复用结论保持T03/T04/T05/T06/T07/T10/T11的持久状态、代次、三方合并、VFS屏障及恢复；此处implemented指设计边界已明确，产品仍未实现。</div></td></tr><tr><td><div class="cell">AR08-cross-platform-evidence</div></td><td><div class="cell">partial</div></td><td><div class="cell">官方原生二进制可作打包候选；LarkFS CI缺Windows且FileProvider写入仍只读。三平台真实挂载/签名/升级保留队列仍待实施验收，不能由参考源码替代。</div></td></tr></tbody></table></div></section>
+<section><h2>问题、争议与处置</h2><p class="legend">P0 紧急严重 · P1 高影响 · P2 一般 · P3 低影响；是否阻塞单独判断。true 已验证成立；false 已验证不成立；unverified 未能验证。fixed 保留已修复问题，not-an-issue 保留被推翻意见。</p>
+<div class="filters"><label>严重度 <select id="severity"><option value="">全部</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label><label>处置 <select id="status"><option value="">全部</option><option value="open">未关闭</option><option value="fixed">已修复</option><option value="not-an-issue">非问题</option></select></label><label>来源 <select id="source"><option value="">全部</option><option value="larkfs_audit离线复现、主审重跑">larkfs_audit离线复现、主审重跑</option><option value="official_cli_audit最终复核新增；主审沿CallAPI→paginateLoop→mergePagedResults→checkErr逐处核验">official_cli_audit最终复核新增；主审沿CallAPI→paginateLoop→mergePagedResults→checkErr逐处核验</option><option value="主审、official_cli_audit、larkfs_audit 源码与既有实验勘界">主审、official_cli_audit、larkfs_audit 源码与既有实验勘界</option><option value="主审、official_cli_audit、larkfs_audit 独立源码核验">主审、official_cli_audit、larkfs_audit 独立源码核验</option><option value="主审与两个独立源码复核">主审与两个独立源码复核</option></select></label></div>
+<div class="scroll"><table><thead><tr><th>ID</th><th>严重度</th><th>阻塞</th><th>类型</th><th>问题</th><th>场景</th><th>位置</th><th>来源</th><th>核验</th><th>处置</th><th>证据 / 方法</th><th>动作</th></tr></thead><tbody id="findings"><tr data-severity="P1" data-status="open" data-source="主审、official_cli_audit、larkfs_audit 独立源码核验"><td><div class="cell">F01</div></td><td><div class="cell">P1</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">design-contract</div></td><td><div class="cell">独立 CLI configDir 不能提供独立凭据生命周期与刷新串行</div></td><td><div class="cell">同OS用户两个产品profile绑定同AppID+OpenID：凭据键/存储共享，configDir下文件锁却不同；logout/重授权也可能影响其他引用。继承env credential provider还可优先于配置。不同身份UAT键不同，并非必然串token。</div></td><td><div class="cell">design.md:108,261–263；development.md:T01/T02/T08/T09</div></td><td><div class="cell">主审、official_cli_audit、larkfs_audit 独立源码核验</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;官方 internal/auth/token_store.go:46–69，UAT键为AppID:UserOpenID；internal/keychain/keychain.go:24–30 AppSecret/TAT另按AppID共享。&quot;,
+  &quot;internal/keychain/keychain_darwin.go:52–58、keychain_windows.go:24–28不按产品configDir隔离；token_lock.go:37–43却按core.GetConfigDir()/locks定位刷新锁。&quot;,
+  &quot;cmd/profile/add.go:108–114禁止同root重复AppID；core/config.go:342–344只取Users[0]；cmd/auth/login.go:657–668会替换用户/删除旧用户凭据。因此单root+官方profile并非通用多账号替代。&quot;,
+  &quot;internal/credential/credential_provider.go:192–225先选extension/env，再选本地配置；extension/credential/env/env.go:36–82读取环境账号。&quot;,
+  &quot;源码证明命名空间不一致，实际旋转token竞争/注销影响是风险推断；本轮未在真实账号制造竞态。&quot;
+]</div></td><td><div class="cell">保持每用户/产品profile业务状态隔离；按官方实际AppID及AppID+OpenID共享域协调、重复身份去重/共享引用、统一跨worker刷新/授权/logout锁；过滤继承CLI覆盖环境并核验身份。brand是校验维度但不是官方存储键，不能用brand分锁掩盖碰撞。对外部CLI操作明确无法锁住的边界并恢复，不声称强隔离。</div></td></tr><tr data-severity="P1" data-status="open" data-source="主审、official_cli_audit、larkfs_audit 源码与既有实验勘界"><td><div class="cell">F03</div></td><td><div class="cell">P1</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">design-contract</div></td><td><div class="cell">仅 version-history limit1 与非负大小不足以保证当前准确元数据</div></td><td><div class="cell">上游版本项缺少/损坏size，被shortcut格式化为0后通过非负检查；only_tag结果的首项亦未被证明总对应当前head。</div></td><td><div class="cell">development.md:205 T02；design.md:22</div></td><td><div class="cell">主审、official_cli_audit、larkfs_audit 源码与既有实验勘界</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;官方 shortcuts/drive/drive_version.go:68–76强制only_tag=true。&quot;,
+  &quot;同文件111–133映射版本字段，127将GetFloat(size)转int64；shortcuts/common/extract.go:58–60忽略存在性，缺失或非法字段可归零。&quot;,
+  &quot;前轮真实45/81bytes实验仍有效；本轮没有证明limit1必然不是最新，只证明当前保证的依据不充分。&quot;
+]</div></td><td><div class="cell">将version-history作为有条件候选源；选定保留字段存在性与精确整数解析的接口，验证过滤/排序/当前版本关联；必要时实际回读确认。不可证明时显式unknown/error；增加缺字段、空文件、重命名、连续覆盖及乱序/过滤测试。</div></td></tr><tr data-severity="P1" data-status="open" data-source="larkfs_audit离线复现、主审重跑"><td><div class="cell">F04</div></td><td><div class="cell">P1</div></td><td><div class="cell">非阻塞</div></td><td><div class="cell">reference-compatibility</div></td><td><div class="cell">LarkFS Docx 解析器静默丢弃当前官方嵌套响应</div></td><td><div class="cell">fake Runner注入data.document.content或data.document.document_id后调用公共DocxHandler，非空正文变空、创建Token变空，两者err=nil。</div></td><td><div class="cell">third_party/larkfs/pkg/doctype/docx.go:38–58,82–98</div></td><td><div class="cell">larkfs_audit离线复现、主审重跑</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;官方 shortcuts/doc/docs_fetch_v2.go:87–93、docs_create_v2.go:130–137及已存前轮真实响应均为嵌套document形状。&quot;,
+  &quot;LarkFS仅解析data.markdown/content/text和data.document_id/doc_id/token平铺字段。&quot;,
+  &quot;evidence/docx-compatibility-result.json记录主审go test退出1，两个契约断言失败；evidence/docx-compatibility-test.go.txt仅用合成JSON，不执行真实CLI。&quot;
+]</div></td><td><div class="cell">不直接移植该解析器；T02编写固定官方契约DTO，缺必需字段即协议错误，加入该回归用例。此为参考仓库兼容性缺陷，不是当前DriveBridge新增缺陷；不会因为没修第三方而阻止其他设计修订。</div></td></tr><tr data-severity="P1" data-status="open" data-source="official_cli_audit最终复核新增；主审沿CallAPI→paginateLoop→mergePagedResults→checkErr逐处核验"><td><div class="cell">F05</div></td><td><div class="cell">P1</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">design-contract</div></td><td><div class="cell">聚合分页可能把后续页业务错误转换为成功且无更多页</div></td><td><div class="cell">第一页成功且has_more=true，第二页返回非零业务code而没有data/has_more；聚合复制第一成功页code=0，并把最后错误页缺失has_more转为false。目录缺项可能被误认为删除。</div></td><td><div class="cell">development.md:T02分页二选一；官方internal/client/client.go:422–438、pagination.go:60–78、cmd/service/service.go:765–778</div></td><td><div class="cell">official_cli_audit最终复核新增；主审沿CallAPI→paginateLoop→mergePagedResults→checkErr逐处核验</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;官方client.go:380–389 CallAPI返回解码对象；430–438后续业务错误追加至结果并终止。&quot;,
+  &quot;pagination.go:60–78最后错误页无data时has_more=false，顶层却来自第一成功页；service.go:765–778只检查合并结果。&quot;,
+  &quot;该场景为静态控制流核验，本轮未执行故障注入，不声称真实飞书上已发生。&quot;
+]</div></td><td><div class="cell">T02首版明确单页cursor循环，逐页校验错误/类型/重复cursor；任一页失败保留旧完整快照并标记失败，不据部分列表推断删除。增加第二页业务错误缺data、网络失败、取消和重复cursor测试。聚合需先验证/修复逐页错误保留机制，不凭exit=0/ok=true/has_more=false接受完整。</div></td></tr><tr data-severity="P2" data-status="open" data-source="主审与两个独立源码复核"><td><div class="cell">F02</div></td><td><div class="cell">P2</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">design-contract</div></td><td><div class="cell">本机操作 ID 与 docs shortcut 的服务端幂等能力尚未明确映射</div></td><td><div class="cell">记录Operation.ClientToken后用docs +update执行块插入，响应丢失时不能假设服务端已收到该幂等键。设计只要求已验证可幂等操作，原则成立，但跨任务契约尚未闭合。</div></td><td><div class="cell">design.md:190；development.md:Operation.ClientToken/T02/T07</div></td><td><div class="cell">主审与两个独立源码复核</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;官方 shortcuts/doc/docs_update_v2.go:37–49没有client-token公开flag，263–299构造body没有client_token。&quot;,
+  &quot;该shortcut走docs_ai路径；其他原生docx资源操作存在client_token，不可把一种路径的能力扩展到另一种路径。&quot;,
+  &quot;development.md T07要求部分成功恢复/保留幂等ID，但未逐操作定义路线与字段位置。&quot;
+]</div></td><td><div class="cell">补route/capability/idempotency/unknown reconciliation表；只有已验证的raw接口才传服务端幂等键。shortcut保留本机operation ID，以回读与块/内容定位核对已执行操作，歧义暂停，不盲重发或整批重放。</div></td></tr></tbody></table></div></section>
+<section><h2>实际验证结果</h2><div class="scroll"><table><thead><tr><th scope="col">命令</th><th scope="col">必需</th><th scope="col">结果</th><th scope="col">退出码</th><th scope="col">证据 / 未运行原因</th></tr></thead><tbody><tr><td><div class="cell">git check-ignore -v third_party/larksuite-cli/README.md third_party/larkfs/go.mod; git ls-files -- third_party</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">.gitignore:26 /third_party/命中；tracked files为空；git status --short --ignored third_party显示!! third_party/。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test ./pkg/cli/test ./pkg/cache/test ./pkg/errors/test -count=1</div></td><td><div class="cell">False</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">larkfs_audit执行，3个包通过；工作目录third_party/larkfs；先读测试，仅mock/local temp scripts。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test ./pkg/doctype/test ./pkg/adapter/test -run &#x27;^(TestFileAndFolderHandlersBlackbox|TestDriveAdapterRoutesAndCaches)$&#x27; -count=1</div></td><td><div class="cell">False</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">larkfs_audit执行，2个包通过；只证明旧mock契约，不证明当前官方JSON/真实云端。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOTOOLCHAIN=local go test ./errs -run &#x27;^(TestCategoryWireValues|TestRetryAfter|TestIsRetryable|TestPermissionError_MarshalJSON_HasAllWireFields)$&#x27; -count=1</div></td><td><div class="cell">False</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">official_cli_audit执行，ok github.com/larksuite/cli/errs 0.541s；config/data/log目录均指向独立TemporaryDirectory。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOTOOLCHAIN=local go test ./extension/download -run &#x27;^TestExactLengthReader(AcceptsExactBody|RejectsShortBody|RejectsLongBodyWithoutExposingExtraBytes|AllowsZeroLengthReads|RejectsNoProgress|RejectsInvalidReadCount)$&#x27; -count=1</div></td><td><div class="cell">False</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">official_cli_audit执行，ok github.com/larksuite/cli/extension/download 0.898s；纯本地字节读取器测试。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOTOOLCHAIN=local go test ./shortcuts/markdown -run &#x27;^(TestMarkdownDiffIncludesNoNewlineMarker|TestApplyMarkdownPatchRejectsInvalidRegex)$&#x27; -count=1</div></td><td><div class="cell">False</div></td><td><div class="cell">not-run</div></td><td><div class="cell">1</div></td><td><div class="cell">尝试后setup failed：SDK/cobra/go-diff等依赖未缓存，GOPROXY=off拒绝下载；测试体未编译/执行，不记产品失败。</div></td></tr><tr><td><div class="cell">GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -v -count=1 . (temporary module replacing local LarkFS)</div></td><td><div class="cell">False</div></td><td><div class="cell">failed</div></td><td><div class="cell">1</div></td><td><div class="cell">larkfs_audit执行且主审重跑，两条针对当前官方嵌套JSON的兼容断言均失败；符合F04复现预期，证实第三方解析器问题。详见evidence/docx-compatibility-result.json。</div></td></tr><tr><td><div class="cell">真实账号多profile并行刷新/logout、逐操作服务端幂等、当前版本精确大小、三平台真实挂载/升级</div></td><td><div class="cell">False</div></td><td><div class="cell">not-run</div></td><td><div class="cell">None</div></td><td><div class="cell">本轮为本地源码审核，无新真实账号授权/远端写入/驱动挂载。F01/F02/F03修订与后续实施验收需补相应证据；前轮真实实验没有在本轮重跑。</div></td></tr><tr><td><div class="cell">官方聚合分页：第一页成功、第二页业务错误且无data/has_more的故障注入</div></td><td><div class="cell">False</div></td><td><div class="cell">not-run</div></td><td><div class="cell">None</div></td><td><div class="cell">该结论本轮依据固定源码控制流，未执行此故障场景；不把静态路径称作动态复现。</div></td></tr></tbody></table></div></section>
+<section><details><summary>完整记录、历史问题与审查者信息（已脱敏）</summary><pre>{
+  &quot;kind&quot;: &quot;audit&quot;,
+  &quot;work_id&quot;: &quot;feishu-transparent-sync-reference-reuse&quot;,
+  &quot;date&quot;: &quot;2026-11-10&quot;,
+  &quot;target&quot;: {
+    &quot;repo&quot;: &quot;/Users/rrong/Documents/perf/projects/drivebridge&quot;,
+    &quot;base&quot;: &quot;b2271fdfda822ecf98ce7a321ddfa232dc8ccb66&quot;,
+    &quot;head&quot;: &quot;b2271fdfda822ecf98ce7a321ddfa232dc8ccb66&quot;
+  },
+  &quot;mode&quot;: &quot;same-model&quot;,
+  &quot;completed&quot;: true,
+  &quot;verdict&quot;: &quot;needs-fixes&quot;,
+  &quot;scope&quot;: &quot;方案 v1.1 的官方 CLI/LarkFS 复用与契约审核；不是功能实现或分支合并审核。检查固定提交的认证/配置/凭据/错误/Drive/Docx/分页及 LarkFS adapter/doctype/naming/cache/retry/mount/桌面相关源码，未穷尽两仓库。requirements 状态指设计覆盖与复用结论，不表示产品已实现。仅修改根 .gitignore、写本次审核报告及隔离测试材料；未改变旧设计、产品代码、索引、分支或飞书数据。&quot;,
+  &quot;summary&quot;: &quot;官方 CLI 可承担认证、文件传输、Docx 协议与稳定错误分类；T02/T08 收窄为受控适配。现成 +sync 跳过在线文档且没有三方基线，不能替代托管同步。需先修订 F01 凭据共享域、F02 幂等能力映射、F03 精确元数据及 F05 显式分页完整性契约。F04 离线复现 LarkFS 对当前官方嵌套 JSON 静默读空/空 Token，禁止直接搬该解析器。保留 Rclone VFS、持久队列、Markdown 保守合并与冲突 UI。&quot;,
+  &quot;references&quot;: [
+    {
+      &quot;repository&quot;: &quot;https://github.com/larksuite/cli&quot;,
+      &quot;path&quot;: &quot;third_party/larksuite-cli&quot;,
+      &quot;commit&quot;: &quot;1bfdcc2c1a0ed0296ddb6349d251bdd75145bc5a&quot;,
+      &quot;declared_version&quot;: &quot;1.0.99&quot;,
+      &quot;license_file&quot;: &quot;third_party/larksuite-cli/LICENSE&quot;,
+      &quot;license_declaration&quot;: &quot;MIT&quot;,
+      &quot;dirty&quot;: false
+    },
+    {
+      &quot;repository&quot;: &quot;https://github.com/IchenDEV/larkfs&quot;,
+      &quot;path&quot;: &quot;third_party/larkfs&quot;,
+      &quot;commit&quot;: &quot;67b474915035b57f43926152caf323a3813e833a&quot;,
+      &quot;license_file&quot;: &quot;third_party/larkfs/LICENSE&quot;,
+      &quot;license_declaration&quot;: &quot;MIT&quot;,
+      &quot;dirty&quot;: false
+    }
+  ],
+  &quot;design_baseline&quot;: {
+    &quot;version&quot;: &quot;1.1&quot;,
+    &quot;design&quot;: &quot;docs/coding-plan/feishu-transparent-sync/design.md&quot;,
+    &quot;design_sha256&quot;: &quot;4ea2d2034e5096cef03d891928d0cb2f8b0d60716a9f1fd3264c5f8cead338eb&quot;,
+    &quot;development_sha256&quot;: &quot;9919bbecf5b688d09ab54a36bf7df4e4142c48c6f40673f2ad31094612b0a86d&quot;,
+    &quot;prior_pass&quot;: &quot;原审核通过记录保留为历史；本轮新增契约问题尚未修复，不沿用其95分就绪结论。&quot;
+  },
+  &quot;requirements&quot;: [
+    {
+      &quot;id&quot;: &quot;AR01-local-reference-isolation&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;两个仓库克隆至 third_party 并固定提交；根 .gitignore:26 的 /third_party/ 命中两仓库文件，git ls-files -- third_party 无输出。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR02-official-reuse-boundary&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;README 第2/3/6节明确直接命令复用/薄适配/产品自建；官方 drive_sync.go:79 跳过在线文档，203–235 没有持久三方基线，markdown_patch.go:117–168 是普通文件整篇覆盖。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR03-per-user-and-multi-account&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;设计已有动态用户路径/UUID/身份绑定；F01发现config root 与官方凭据共享域及锁不一致，需补环境约束、重复身份协调和生命周期测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR04-retry-and-operation-idempotency&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;已有 unknown/journal/逐项回读原则；F02 的具体 Operation 到 shortcut/raw API、服务端幂等键与恢复能力尚未列清。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR05-file-metadata-completeness&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;F03：version-history only_tag过滤及缺字段size转0无法仅凭非负值确认为当前准确大小；T02仍需保留原始字段的来源和验证。分页循环/聚合完整性检测应保留。 F05新增：后续业务错误页可被聚合为成功且has_more=false，首版明确单页循环。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR06-larkfs-source-selection&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;README 第5节逐项检查原18个参考文件；可参考Runner/类型/命名/TTL/测试，不搬ReplaceFile、整篇overwrite、缓存或挂载层。F04实际兼容性断言失败。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR07-local-collaboration-safety&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;复用结论保持T03/T04/T05/T06/T07/T10/T11的持久状态、代次、三方合并、VFS屏障及恢复；此处implemented指设计边界已明确，产品仍未实现。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;AR08-cross-platform-evidence&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;官方原生二进制可作打包候选；LarkFS CI缺Windows且FileProvider写入仍只读。三平台真实挂载/签名/升级保留队列仍待实施验收，不能由参考源码替代。&quot;
+    }
+  ],
+  &quot;findings&quot;: [
+    {
+      &quot;id&quot;: &quot;F01&quot;,
+      &quot;type&quot;: &quot;design-contract&quot;,
+      &quot;title&quot;: &quot;独立 CLI configDir 不能提供独立凭据生命周期与刷新串行&quot;,
+      &quot;scenario&quot;: &quot;同OS用户两个产品profile绑定同AppID+OpenID：凭据键/存储共享，configDir下文件锁却不同；logout/重授权也可能影响其他引用。继承env credential provider还可优先于配置。不同身份UAT键不同，并非必然串token。&quot;,
+      &quot;location&quot;: &quot;design.md:108,261–263；development.md:T01/T02/T08/T09&quot;,
+      &quot;source&quot;: &quot;主审、official_cli_audit、larkfs_audit 独立源码核验&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;官方 internal/auth/token_store.go:46–69，UAT键为AppID:UserOpenID；internal/keychain/keychain.go:24–30 AppSecret/TAT另按AppID共享。&quot;,
+        &quot;internal/keychain/keychain_darwin.go:52–58、keychain_windows.go:24–28不按产品configDir隔离；token_lock.go:37–43却按core.GetConfigDir()/locks定位刷新锁。&quot;,
+        &quot;cmd/profile/add.go:108–114禁止同root重复AppID；core/config.go:342–344只取Users[0]；cmd/auth/login.go:657–668会替换用户/删除旧用户凭据。因此单root+官方profile并非通用多账号替代。&quot;,
+        &quot;internal/credential/credential_provider.go:192–225先选extension/env，再选本地配置；extension/credential/env/env.go:36–82读取环境账号。&quot;,
+        &quot;源码证明命名空间不一致，实际旋转token竞争/注销影响是风险推断；本轮未在真实账号制造竞态。&quot;
+      ],
+      &quot;action&quot;: &quot;保持每用户/产品profile业务状态隔离；按官方实际AppID及AppID+OpenID共享域协调、重复身份去重/共享引用、统一跨worker刷新/授权/logout锁；过滤继承CLI覆盖环境并核验身份。brand是校验维度但不是官方存储键，不能用brand分锁掩盖碰撞。对外部CLI操作明确无法锁住的边界并恢复，不声称强隔离。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;F02&quot;,
+      &quot;type&quot;: &quot;design-contract&quot;,
+      &quot;title&quot;: &quot;本机操作 ID 与 docs shortcut 的服务端幂等能力尚未明确映射&quot;,
+      &quot;scenario&quot;: &quot;记录Operation.ClientToken后用docs +update执行块插入，响应丢失时不能假设服务端已收到该幂等键。设计只要求已验证可幂等操作，原则成立，但跨任务契约尚未闭合。&quot;,
+      &quot;location&quot;: &quot;design.md:190；development.md:Operation.ClientToken/T02/T07&quot;,
+      &quot;source&quot;: &quot;主审与两个独立源码复核&quot;,
+      &quot;severity&quot;: &quot;P2&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;官方 shortcuts/doc/docs_update_v2.go:37–49没有client-token公开flag，263–299构造body没有client_token。&quot;,
+        &quot;该shortcut走docs_ai路径；其他原生docx资源操作存在client_token，不可把一种路径的能力扩展到另一种路径。&quot;,
+        &quot;development.md T07要求部分成功恢复/保留幂等ID，但未逐操作定义路线与字段位置。&quot;
+      ],
+      &quot;action&quot;: &quot;补route/capability/idempotency/unknown reconciliation表；只有已验证的raw接口才传服务端幂等键。shortcut保留本机operation ID，以回读与块/内容定位核对已执行操作，歧义暂停，不盲重发或整批重放。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;F03&quot;,
+      &quot;type&quot;: &quot;design-contract&quot;,
+      &quot;title&quot;: &quot;仅 version-history limit1 与非负大小不足以保证当前准确元数据&quot;,
+      &quot;scenario&quot;: &quot;上游版本项缺少/损坏size，被shortcut格式化为0后通过非负检查；only_tag结果的首项亦未被证明总对应当前head。&quot;,
+      &quot;location&quot;: &quot;development.md:205 T02；design.md:22&quot;,
+      &quot;source&quot;: &quot;主审、official_cli_audit、larkfs_audit 源码与既有实验勘界&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;官方 shortcuts/drive/drive_version.go:68–76强制only_tag=true。&quot;,
+        &quot;同文件111–133映射版本字段，127将GetFloat(size)转int64；shortcuts/common/extract.go:58–60忽略存在性，缺失或非法字段可归零。&quot;,
+        &quot;前轮真实45/81bytes实验仍有效；本轮没有证明limit1必然不是最新，只证明当前保证的依据不充分。&quot;
+      ],
+      &quot;action&quot;: &quot;将version-history作为有条件候选源；选定保留字段存在性与精确整数解析的接口，验证过滤/排序/当前版本关联；必要时实际回读确认。不可证明时显式unknown/error；增加缺字段、空文件、重命名、连续覆盖及乱序/过滤测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;F04&quot;,
+      &quot;type&quot;: &quot;reference-compatibility&quot;,
+      &quot;title&quot;: &quot;LarkFS Docx 解析器静默丢弃当前官方嵌套响应&quot;,
+      &quot;scenario&quot;: &quot;fake Runner注入data.document.content或data.document.document_id后调用公共DocxHandler，非空正文变空、创建Token变空，两者err=nil。&quot;,
+      &quot;location&quot;: &quot;third_party/larkfs/pkg/doctype/docx.go:38–58,82–98&quot;,
+      &quot;source&quot;: &quot;larkfs_audit离线复现、主审重跑&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: false,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;官方 shortcuts/doc/docs_fetch_v2.go:87–93、docs_create_v2.go:130–137及已存前轮真实响应均为嵌套document形状。&quot;,
+        &quot;LarkFS仅解析data.markdown/content/text和data.document_id/doc_id/token平铺字段。&quot;,
+        &quot;evidence/docx-compatibility-result.json记录主审go test退出1，两个契约断言失败；evidence/docx-compatibility-test.go.txt仅用合成JSON，不执行真实CLI。&quot;
+      ],
+      &quot;action&quot;: &quot;不直接移植该解析器；T02编写固定官方契约DTO，缺必需字段即协议错误，加入该回归用例。此为参考仓库兼容性缺陷，不是当前DriveBridge新增缺陷；不会因为没修第三方而阻止其他设计修订。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;F05&quot;,
+      &quot;type&quot;: &quot;design-contract&quot;,
+      &quot;title&quot;: &quot;聚合分页可能把后续页业务错误转换为成功且无更多页&quot;,
+      &quot;scenario&quot;: &quot;第一页成功且has_more=true，第二页返回非零业务code而没有data/has_more；聚合复制第一成功页code=0，并把最后错误页缺失has_more转为false。目录缺项可能被误认为删除。&quot;,
+      &quot;location&quot;: &quot;development.md:T02分页二选一；官方internal/client/client.go:422–438、pagination.go:60–78、cmd/service/service.go:765–778&quot;,
+      &quot;source&quot;: &quot;official_cli_audit最终复核新增；主审沿CallAPI→paginateLoop→mergePagedResults→checkErr逐处核验&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;官方client.go:380–389 CallAPI返回解码对象；430–438后续业务错误追加至结果并终止。&quot;,
+        &quot;pagination.go:60–78最后错误页无data时has_more=false，顶层却来自第一成功页；service.go:765–778只检查合并结果。&quot;,
+        &quot;该场景为静态控制流核验，本轮未执行故障注入，不声称真实飞书上已发生。&quot;
+      ],
+      &quot;action&quot;: &quot;T02首版明确单页cursor循环，逐页校验错误/类型/重复cursor；任一页失败保留旧完整快照并标记失败，不据部分列表推断删除。增加第二页业务错误缺data、网络失败、取消和重复cursor测试。聚合需先验证/修复逐页错误保留机制，不凭exit=0/ok=true/has_more=false接受完整。&quot;
+    }
+  ],
+  &quot;tests&quot;: [
+    {
+      &quot;command&quot;: &quot;git check-ignore -v third_party/larksuite-cli/README.md third_party/larkfs/go.mod; git ls-files -- third_party&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;.gitignore:26 /third_party/命中；tracked files为空；git status --short --ignored third_party显示!! third_party/。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test ./pkg/cli/test ./pkg/cache/test ./pkg/errors/test -count=1&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;larkfs_audit执行，3个包通过；工作目录third_party/larkfs；先读测试，仅mock/local temp scripts。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test ./pkg/doctype/test ./pkg/adapter/test -run &#x27;^(TestFileAndFolderHandlersBlackbox|TestDriveAdapterRoutesAndCaches)$&#x27; -count=1&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;larkfs_audit执行，2个包通过；只证明旧mock契约，不证明当前官方JSON/真实云端。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOTOOLCHAIN=local go test ./errs -run &#x27;^(TestCategoryWireValues|TestRetryAfter|TestIsRetryable|TestPermissionError_MarshalJSON_HasAllWireFields)$&#x27; -count=1&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;official_cli_audit执行，ok github.com/larksuite/cli/errs 0.541s；config/data/log目录均指向独立TemporaryDirectory。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOTOOLCHAIN=local go test ./extension/download -run &#x27;^TestExactLengthReader(AcceptsExactBody|RejectsShortBody|RejectsLongBodyWithoutExposingExtraBytes|AllowsZeroLengthReads|RejectsNoProgress|RejectsInvalidReadCount)$&#x27; -count=1&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;official_cli_audit执行，ok github.com/larksuite/cli/extension/download 0.898s；纯本地字节读取器测试。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOTOOLCHAIN=local go test ./shortcuts/markdown -run &#x27;^(TestMarkdownDiffIncludesNoNewlineMarker|TestApplyMarkdownPatchRejectsInvalidRegex)$&#x27; -count=1&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;not-run&quot;,
+      &quot;exit_code&quot;: 1,
+      &quot;evidence&quot;: &quot;尝试后setup failed：SDK/cobra/go-diff等依赖未缓存，GOPROXY=off拒绝下载；测试体未编译/执行，不记产品失败。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -v -count=1 . (temporary module replacing local LarkFS)&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;failed&quot;,
+      &quot;exit_code&quot;: 1,
+      &quot;evidence&quot;: &quot;larkfs_audit执行且主审重跑，两条针对当前官方嵌套JSON的兼容断言均失败；符合F04复现预期，证实第三方解析器问题。详见evidence/docx-compatibility-result.json。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;真实账号多profile并行刷新/logout、逐操作服务端幂等、当前版本精确大小、三平台真实挂载/升级&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;not-run&quot;,
+      &quot;exit_code&quot;: null,
+      &quot;evidence&quot;: &quot;本轮为本地源码审核，无新真实账号授权/远端写入/驱动挂载。F01/F02/F03修订与后续实施验收需补相应证据；前轮真实实验没有在本轮重跑。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;官方聚合分页：第一页成功、第二页业务错误且无data/has_more的故障注入&quot;,
+      &quot;required&quot;: false,
+      &quot;status&quot;: &quot;not-run&quot;,
+      &quot;exit_code&quot;: null,
+      &quot;evidence&quot;: &quot;该结论本轮依据固定源码控制流，未执行此故障场景；不把静态路径称作动态复现。&quot;
+    }
+  ],
+  &quot;gaps&quot;: [
+    {
+      &quot;description&quot;: &quot;F01的产品凭据协调协议、环境边界及同账号重复绑定生命周期需落实到设计/任务并验证；源码风险确认不等于真实刷新竞态已复现。&quot;,
+      &quot;critical&quot;: true
+    },
+    {
+      &quot;description&quot;: &quot;F02每种块操作的实际传输路线、幂等字段和unknown恢复判定还未闭合；不把docs_ai与原生docx接口混同。&quot;,
+      &quot;critical&quot;: true
+    },
+    {
+      &quot;description&quot;: &quot;F03需要保留原始大小存在性并确认当前版本；既有样本不能证明全量latest契约。&quot;,
+      &quot;critical&quot;: true
+    },
+    {
+      &quot;description&quot;: &quot;没有执行真实三平台挂载、签名、安装或升级；这是未来发布门槛，本次审核完成不代表产品交付完成。&quot;,
+      &quot;critical&quot;: false
+    },
+    {
+      &quot;description&quot;: &quot;选定官方Markdown单测依赖未缓存，未执行；其实现判断为源码证据。未穷尽全部上游代码/依赖许可。&quot;,
+      &quot;critical&quot;: false
+    },
+    {
+      &quot;description&quot;: &quot;官方源码package.json与前轮发行CLI均标1.0.99，未核验提交与已安装二进制可复现构建对应关系；发行时必须固定二进制及校验和。&quot;,
+      &quot;critical&quot;: false
+    },
+    {
+      &quot;description&quot;: &quot;F05聚合后续页错误隐藏为成功的控制流已核验，但未做动态故障注入；首版应收窄为显式逐页并补完整快照提交测试。&quot;,
+      &quot;critical&quot;: true
+    }
+  ],
+  &quot;reviewers&quot;: [
+    {
+      &quot;id&quot;: &quot;primary&quot;,
+      &quot;mode&quot;: &quot;main-review&quot;,
+      &quot;scope&quot;: &quot;两个固定源码仓库与现有v1.1交叉核对；重跑F04并写报告。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;official_cli_audit&quot;,
+      &quot;mode&quot;: &quot;same-model-fresh-context&quot;,
+      &quot;scope&quot;: &quot;独立读官方源码与现有设计，无主审结论起步；已交付完整源码/测试结论。 最终报告复核确认F01–F03，新增F05分页业务错误隐藏路径；主审采纳并修订。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;larkfs_audit&quot;,
+      &quot;mode&quot;: &quot;same-model-fresh-context&quot;,
+      &quot;scope&quot;: &quot;独立读LarkFS，后用官方原始源码交叉核验F01–F03；执行F04离线最小复现。 最终README/JSON/HTML及18文件/测试/F04复核通过，无必须修改项。&quot;
+    }
+  ],
+  &quot;history&quot;: [
+    {
+      &quot;event&quot;: &quot;既有v1.1独立设计复核通过&quot;,
+      &quot;reference&quot;: &quot;../../review.md&quot;,
+      &quot;disposition&quot;: &quot;历史通过记录不修改；本轮新增问题按F01–F04记录。&quot;
+    },
+    {
+      &quot;event&quot;: &quot;候选单auth root+官方profile简化建议被核验否决&quot;,
+      &quot;disposition&quot;: &quot;官方profile限制同AppID及单用户，最终建议改为产品独立root+实际凭据共享域协调；未将被否决建议写入设计。&quot;
+    },
+    {
+      &quot;event&quot;: &quot;最终文档复核新增F05&quot;,
+      &quot;disposition&quot;: &quot;独立复核发现仅检查聚合has_more不足，主审核验后把首版路线收窄到显式单页，保留该设计待修项。&quot;
+    }
+  ],
+  &quot;decisions&quot;: [
+    &quot;官方 CLI 仍是后台协议执行器；不增加用户每日手工CLI步骤。&quot;,
+    &quot;不引入LarkFS挂载/VFS/持久缓存作为第二套系统；只参考小型纯函数、接口和测试情景。&quot;,
+    &quot;不估算未经工程验证的节省百分比；本轮未修改产品代码或旧设计。&quot;
+  ]
+}</pre></details></section>
+<footer><p>本地离线报告。当前记录和格式校验不替代事实核验。未发现问题不代表未检查的路径没有风险。</p></footer>
+</main><script>
+function filterRows(){const severity=document.getElementById('severity').value;const status=document.getElementById('status').value;const source=document.getElementById('source').value;document.querySelectorAll('#findings tr[data-severity]').forEach(row=>{row.hidden=Boolean((severity&&row.dataset.severity!==severity)||(status&&row.dataset.status!==status)||(source&&row.dataset.source!==source));});}
+['severity','status','source'].forEach(id=>document.getElementById(id).addEventListener('change',filterRows));
+</script></body></html>

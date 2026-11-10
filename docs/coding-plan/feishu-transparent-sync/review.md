@@ -1,4 +1,6 @@
-# 文档复核记录
+# v1.1 历史文档复核记录
+
+当前 v1.2 已修订契约，独立复核 **pending**。以下是 v1.1 历史记录，不适用于 v1.2；当前裁决见 [implementation-decisions.md](implementation-decisions.md)。
 
 日期：2026-11-10。对象：design.md v1.1 和 development.md v1.1。结论：文档契约已完成自查、独立上下文复核和受影响协议复验；产品代码及计划中的行为测试尚未实施。
 

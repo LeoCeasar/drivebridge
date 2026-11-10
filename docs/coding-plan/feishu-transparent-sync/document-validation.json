@@ -2,34 +2,92 @@
   "kind": "document-validation",
   "work_id": "feishu-transparent-sync",
   "date": "2026-11-10",
-  "design_sha256": "4ea2d2034e5096cef03d891928d0cb2f8b0d60716a9f1fd3264c5f8cead338eb",
-  "development_sha256": "9919bbecf5b688d09ab54a36bf7df4e4142c48c6f40673f2ad31094612b0a86d",
-  "review_mode": "same-model fresh-context document review plus author source verification",
-  "review_findings_closed": 4,
+  "version": "1.2",
+  "design_sha256": "dee67879ac1ca8760920f5c669f4e9b8747a6a82bd13717431cba89f757524af",
+  "development_sha256": "c30ee749890183995bac639d5d6de7eca0365d400d855259db57ee88257e4c7f",
+  "review_status": "pending",
+  "review_mode": "author self-check only; v1.2 independent review pending",
+  "review_findings_closed": 0,
+  "document_decisions_recorded": [
+    "F01",
+    "F02",
+    "F03",
+    "F05"
+  ],
+  "regression_task_added": "F04 in T02; not implemented or run",
   "checks": [
     {
-      "check": "design gate require-ready",
-      "exit_code": 0
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py check /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/readiness.json",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": "记录格式与状态一致；这不代替事实核验。"
     },
     {
-      "check": "development gate require-ready",
-      "exit_code": 0
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py check /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/development-gate.json",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": "记录格式与状态一致；这不代替事实核验。"
     },
     {
-      "check": "local links, JSON, Go snippet syntax, whitespace, 13 task boundaries",
-      "exit_code": 0
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py check /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/audits/2026-11-10-reference-reuse/audit.json",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": "记录格式与状态一致；这不代替事实核验。"
     },
     {
-      "check": "handoff metadata and actual design digest binding",
-      "exit_code": 0
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py check /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/readiness.json --require-ready",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "output": "未超过 90 分或仍有关键未知项"
+    },
+    {
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py check /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/development-gate.json --require-ready",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "output": "未超过 90 分或仍有关键未知项"
+    },
+    {
+      "command": "python3 /Users/rrong/.codex/plugins/cache/coding-plan-local/coding-plan/0.1.3/scripts/validate_records.py handoff --host codex --design /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/design.md --development /Users/rrong/.codex/worktrees/5b46/drivebridge/docs/coding-plan/feishu-transparent-sync/development.md",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "output": "文档尚未复核通过"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "git check-ignore -v third_party",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": ".gitignore:26:/third_party/\tthird_party"
+    },
+    {
+      "command": "git ls-files -- third_party",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": "local document contract check (stdlib JSON/SHA/metadata/links/requirements/tasks/preflight/Go syntax/audit byte equality)",
+      "exit_code": 0,
+      "output": "pending metadata bound; R01–R13/T01–T13 retained; 13 task + 78 pair rows; 31 local links; 7 immutable audit files; all Go fences parse with gofmt"
     }
   ],
   "product_code_changed": false,
   "new_product_tests_run": false,
+  "live_tests_status": "not-run: no live account authorization, credential reads, API requests, drivers, remote writes, or installation performed by Task 0",
   "unverified_release_conditions": [
-    "native mounts and GUI on all promised OS/architectures",
-    "failure injection and crash recovery",
-    "large/empty file capability",
-    "signed installers and upgrade preservation"
-  ]
+    "LV-01 shared credentials/enrollment/refresh/logout/external CLI recovery",
+    "LV-02 per-operation route/unknown reconciliation; native docx capabilities disabled until proven",
+    "LV-03 current-version history linkage and complete immutable-version download honoring",
+    "LV-04 native pagination contract plus offline later-page failure preservation",
+    "LV-05 pinned release CLI checksum and nested Docx response contract",
+    "all new product behavior/race/failure-injection tests",
+    "native mounts and GUI on all promised OS/architectures; close/fsync ENOSPC/EIO",
+    "signed installers, actual installation, uninstall and upgrade preservation"
+  ],
+  "historical_v1_1": "Prior passed/95 record is historical; not inherited by current v1.2. Reference audit artifacts are byte-identical historical evidence."
 }

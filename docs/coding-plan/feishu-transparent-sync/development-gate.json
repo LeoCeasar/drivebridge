@@ -6,7 +6,7 @@
     {
       "id": "1",
       "score": 10,
-      "evidence": "design.md v1.1 覆盖 R-01 至 R-13；R-10 的尽力同步边界已由用户在真实实验后确认。"
+      "evidence": "v1.2 保留 R-01–R-13；按审核修订F01/F02/F03/F05并加入F04回归。独立复核 pending。"
     },
     {
       "id": "2",
@@ -26,33 +26,45 @@
     {
       "id": "5",
       "score": 10,
-      "evidence": "规范模型见design.md 5.2；store、cloud、codec、manager和冲突提交的共享签名在开发文档统一定义。"
+      "evidence": "T01所有model可选扩展；T02所有协议DTO/coordinator接口；T08实现协调；T09组装。preflight逐任务/逐对核对，公共方法签名保留。"
     },
     {
       "id": "6",
       "score": 10,
-      "evidence": "覆盖上传/分页已有、size初始0、VFS清Dirty、元数据size_bytes和Markdown重导入损失均映射到具体任务，不从零重造已有能力。"
+      "evidence": "T02去除shortcut limit1保证和聚合分页二选一，保留原始presence/已验证版本关联、显式逐页及嵌套DTO回归。"
     },
     {
       "id": "7",
       "score": 10,
-      "evidence": "模型/配置→runner/store→codec/overlay/VFS→引擎→auth/manager/UI→迁移/交付，模块依赖无回环。"
+      "evidence": "T02注入coordinator契约而不依赖T08实现，T09组装后才允许生产凭据调用；共享文件按所有者交接。"
     },
     {
       "id": "8",
-      "score": 10,
-      "evidence": "明确私有动态路径、profile/mount隔离、fsync+事务、不可变blob、双checkpoint、未知结果、GC引用及显式迁移。"
+      "score": 5,
+      "evidence": "身份/root/共享凭据锁与恢复协议已定义，真实系统凭据生命周期仍需LV-01，不借隔离目录承诺强隔离。"
     },
     {
       "id": "9",
-      "score": 5,
-      "evidence": "真实接口样本已取得；故障、三平台驱动、签名和安装环境尚未运行。文档规定实际运行作为交付门槛，环境缺失时禁止称该平台通过。"
+      "score": 0,
+      "evidence": "全部新增产品用例、真实逐操作/元数据/凭据/分页契约、三平台挂载和签名尚未执行；Task0仅验证文档，不计测试通过。"
     },
     {
       "id": "10",
-      "score": 10,
-      "evidence": "每任务给出验证命令和预期；最终要求逐平台挂载/升级/数据恢复证据、任务复核及风险披露；不自动开始编码。"
+      "score": 5,
+      "evidence": "任务及失败门槛明确，用户已授权普通实施；v1.2独立复核pending，未创建Goal或完成产品交付。"
     }
   ],
-  "critical_unknowns": []
+  "critical_unknowns": [
+    "LV-01：真实共享凭据刷新、AppSecret/TAT/退出及外部CLI恢复验证未执行。",
+    "LV-02：逐操作服务端能力和响应丢失核验未执行；未验证路线保持关闭。",
+    "LV-03：当前head关联及已知版本下载遵循未证明；失败返回metadata_unknown。",
+    "v1.2 独立文档复核 pending；全部新增产品测试、真实分页和发布平台验收未执行。"
+  ],
+  "version": "1.2",
+  "review_status": "pending",
+  "historical_v1_1": {
+    "score": 95,
+    "disposition": "历史已通过的信息闭合度；v1.2 新证据下失效，不沿用 ready。"
+  },
+  "implementation_policy": "用户已授权实施；保守失败门槛允许独立离线任务继续开发。此记录不满足require-ready，不构成云端能力或平台发布许可。"
 }

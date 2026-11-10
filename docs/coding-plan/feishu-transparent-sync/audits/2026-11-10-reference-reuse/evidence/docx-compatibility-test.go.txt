@@ -1,0 +1,17 @@
+package contractprobe
+import("context";"testing";"github.com/IchenDEV/larkfs/pkg/doctype")
+type fakeRunner struct{ output string }
+func (f fakeRunner) Path() string {return "fake-never-executes"}
+func (f fakeRunner) Run(context.Context,...string)([]byte,error){return []byte(f.output),nil}
+func TestCurrentCLIFetchShape(t *testing.T){
+h:=doctype.NewDocxHandler(fakeRunner{`{"ok":true,"identity":"user","data":{"document":{"content":"# preserved text","document_id":"synthetic_doc","revision_id":3}}}`})
+b,err:=h.Read(context.Background(),"synthetic_doc")
+if err!=nil {t.Fatal(err)}
+if string(b)!="# preserved text" {t.Fatalf("current CLI nested document.content silently dropped: got %q; error=nil",b)}
+}
+func TestCurrentCLICreateShape(t *testing.T){
+h:=doctype.NewDocxHandler(fakeRunner{`{"ok":true,"identity":"user","data":{"document":{"document_id":"synthetic_created_doc","revision_id":1}}}`})
+token,err:=h.Create(context.Background(),"synthetic_folder","Title",[]byte("body"))
+if err!=nil {t.Fatal(err)}
+if token!="synthetic_created_doc" {t.Fatalf("current CLI nested document.document_id silently dropped: token=%q; error=nil",token)}
+}

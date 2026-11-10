@@ -1,13 +1,7 @@
-# 可选实施交接
+# 当前实施交接
 
-本轮只生成交接文本，没有创建系统 Goal 或启动产品编码。审阅设计与开发文档后，可由用户明确选择普通逐任务实施，或在支持 Goal 的宿主提交以下目标。
+2026-11-10 用户已授权“开始开发，多 agent 调用”。按 v1.2 [design.md](design.md) 与 [development.md](development.md) 在 `/Users/rrong/.codex/worktrees/5b46/drivebridge` 的 `feature/feishu-transparent-sync` 分支普通逐任务执行，不创建 Goal。
 
-```text
-开发文档与复核已完成。
-设计文件：/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/design.md
-开发文档：/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/development.md
-是否启动系统 /goal，按以下目标持续开发和验证？
-/goal 读取设计文件 "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/design.md" 和开发文档 "/Users/rrong/Documents/perf/projects/drivebridge/docs/coding-plan/feishu-transparent-sync/development.md"。按已确认范围逐项完成全部任务，使用合适的执行技能编码。先读项目规则；记录任务进度和证据；按开发文档运行每项验证，持续修复范围内的问题。完成后运行规定的功能、集成和回归验证，使用 coding-plan 的 audit 审核并保存本地 HTML。仅当所有任务完成、必需验收通过、审核阻塞项清零时完成目标。设计、行为、接口或责任边界出现实质差异时先与用户确认；缺少环境或权限时如实记录未验证项，不以 mock 替代必需真实验证，不宣称完成。范围外的重要历史问题先请求范围决定。用户暂停、取消或系统预算耗尽时遵循系统状态。不自动合并、推送或发布。
+Task 0 只关闭文档决定；v1.2 独立复核 pending。按 [implementation-decisions.md](implementation-decisions.md) 的文件所有者及能力门槛推进，保留 R-01–R-13、T01–T13 和尽力并发边界。缺真实能力时关闭受影响操作并保留数据，可继续独立离线模块。没有真实授权/环境的检查如实记录 not-run。不自动安装驱动、推送或发布。
 
-这里只生成交接文本，尚未创建 Goal。当前宿主没有 Goal 时，请将指令交给支持 Goal 的宿主。
-```
+原 v1.1 的“尚未授权实施”和可选 Goal 提示已由本次普通实施授权取代；历史复核不构成 v1.2 passed。
