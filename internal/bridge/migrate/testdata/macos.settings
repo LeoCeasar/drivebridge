@@ -1,0 +1,7 @@
+BACKEND='feishu'
+REMOTE='Legacy Feishu'
+REMOTE_PATH=''
+MOUNT_POINT='/legacy/mount'
+AUTO_START='true'
+CACHE_MODE='writes'
+MOUNT_COMMAND='$(touch /never-execute-imported-command)'
