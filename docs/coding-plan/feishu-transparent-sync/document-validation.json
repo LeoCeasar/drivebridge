@@ -3,8 +3,8 @@
   "work_id": "feishu-transparent-sync",
   "date": "2026-11-10",
   "version": "1.2",
-  "design_sha256": "d2ede903e0b5eba8ebb1c5af66d54dd94708710b82bb60cacce24ed14a83e7ee",
-  "development_sha256": "8466ee13affc303280ef39a5f8dc8974f3600e1d1276d4b1221c3b1728bd66b9",
+  "design_sha256": "48f235077db5ef00db2801e5ed23a59041dcc10b8524ac596a64fa992d033fd4",
+  "development_sha256": "f127549c05f214cbe3a1c080e19df83f1ddc9e58141e355238617ac492b0235a",
   "review_status": "passed",
   "review_mode": "same-model fresh-context; contracts_review; spec compliant and quality approved",
   "review_findings_closed": 0,
@@ -91,5 +91,7 @@
   ],
   "historical_v1_1": "Prior passed/95 record is historical; not inherited by current v1.2. Reference audit artifacts are byte-identical historical evidence.",
   "review_evidence": "review-v1.2.md",
-  "post_review_note": "Prior check results below belong to pre-approval Task0 snapshot. Independent review completed afterward; binding refreshed. require-ready still rejects unverified live gates; no new Goal created."
+  "post_review_note": "Prior check results below belong to pre-approval Task0 snapshot. Independent review completed afterward; binding refreshed. require-ready still rejects unverified live gates; no new Goal created.",
+  "implementation_addendum": "T01 canonical payload/context, compatible config helpers, dedicated Cache child, private Windows reparse rejection; code review and scoped fix review recorded separately. Live gates unchanged.",
+  "observation_contract": "file-observation-contract.md; source analysis by independent file_metadata_resolution; correctness reviewed again with affected task implementations. Server currentVersion remains unverified."
 }

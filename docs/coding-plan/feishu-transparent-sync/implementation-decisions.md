@@ -37,3 +37,18 @@ T02 不依赖尚未实现的 T08：协调器接口在 lib/larkcli 定义，离�
 ## 证据与当前状态
 
 只运行本地文档格式/绑定/引用/范围检查；命令、退出码见 [document-validation.json](document-validation.json) 与执行账本 `.superpowers/sdd/development/task-0-report.md`。历史 v1.1 的 95 分和 passed 不再代表当前版本；新的 readiness/development-gate 明确保留未知，require-ready 预期拒绝。主协调者已收到独立复核：Spec compliant / quality Approved；详见 review-v1.2.md。
+
+## T01 实施接口澄清与复核修订
+
+- 统一 OperationPayload 字段为 XML/BeforeHash/AfterHash，JSON 为 xml/before_hash/after_hash；Operation.Payload 仍是 RawMessage。Kind 常量为 block_replace/block_insert_after/block_delete；哈希排除远端 ID。DocView 可选 SourceURL/ReferenceMap 只保留上下文，T02/T04/T07 不得把它当未知资源可重放许可。
+- config.Load(path string) (Config,error)、Save(path string,Config) error 保持确认签名；WithPaths 是可注入补充。mount_engine 首版只支持 auto。挂载路径配置只作结构校验，运行时文件/盘符可用性和活跃挂载往返由 T09/T13 验收。
+- 独立代码审核发现 Windows 原 CacheDir 包含 StateDir。统一改为 os.UserCacheDir()/DriveBridge/Cache；Windows Cache 与 State 同级，品牌父目录可继续容纳其他组件。保留状态/缓存递归拒绝；旧已发布路径的迁移属于 T11，本特性尚未发布。
+- 私有 Windows state/cache/auth 现存路径组件保守拒绝全部 reparse points（含 junction）；挂载盘符结构校验单独处理。代价是 reparse/cloud-placeholder 存储需要选择真实本地路径。原生 junction/ACL/盘符测试仍是平台门槛，交叉编译不是运行通过。
+
+这些是现有需求的接口/路径修订，不扩大产品格式范围或服务器并发保证；实现与复核证据分别见任务报告及后续实施验证记录。
+
+## T02 普通文件观测路线裁决
+
+现有需求只要求本机所读字节与准确大小一致、普通文件尽力覆盖及恢复，不要求用无法证明的 history 首项伪造 current。根据独立来源分析，新增 [file-observation-contract.md](file-observation-contract.md) 的显式观测 variant、持久 FileData、按需 materialization 与备份引用。完整 HTTP 传输成功不等于服务端内容语义的独立证明；保持该限制，不能把 SaveOptions.ContentLength 未使用误写成 Go HTTP 不检测已声明长度的提前 EOF。FileMeta 严格服务器版本路线继续保留未验证门槛；观测路线不要求虚构版本。
+
+代价：增加少量 typed DTO/快照字段及目标首次访问下载；避免目录全量下载和重复获取不同版本。此为已确认尽力同步行为的实现裁决，不新增无损/原子/服务器 head 承诺。接口由 T02 明确扩展唯一 model，持久行为由 T03、VFS/overlay 与同步分别验证。

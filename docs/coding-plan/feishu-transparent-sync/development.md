@@ -1,4 +1,4 @@
-<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"passed","design_sha256":"d2ede903e0b5eba8ebb1c5af66d54dd94708710b82bb60cacce24ed14a83e7ee"} -->
+<!-- coding-plan: {"work_id":"feishu-transparent-sync","stage":"development","review_status":"passed","design_sha256":"48f235077db5ef00db2801e5ed23a59041dcc10b8524ac596a64fa992d033fd4"} -->
 # DriveBridge 飞书透明同步开发文档 v1.2
 
 > 实施者：先读完整设计和本文。实际编码按 `superpowers:executing-plans` 逐任务执行；不得因任务写在文档中就视为已实现。每项步骤使用复选框留证据。
@@ -72,7 +72,15 @@ type Block struct {
     LocalID, RemoteID, ParentID, Kind, Hash string
     Start, End int; Opaque bool; RawXML []byte
 }
-type DocView struct { XML, Markdown []byte; Revision string; Blocks []Block }
+type DocView struct {
+    XML, Markdown []byte; Revision string; Blocks []Block
+    SourceURL string; ReferenceMap json.RawMessage // 可选来源上下文，不授予资源重放能力
+}
+type OperationPayload struct {
+    XML string `json:"xml,omitempty"`
+    BeforeHash string `json:"before_hash,omitempty"`
+    AfterHash string `json:"after_hash,omitempty"`
+}
 type Hunk struct { BaseStart, BaseEnd int; Base, Local, Remote []string }
 type MergeResult struct { Markdown []byte; Operations []Operation; Hunks []Hunk; ConflictReason string }
 type PublishCandidate struct {
@@ -89,6 +97,8 @@ type MountStatus struct {
     CloudState, LastError string
 }
 ```
+
+T01 实施澄清：逻辑操作 Kind 固定为 block_replace、block_insert_after、block_delete。Payload 仍为 json.RawMessage，按 OperationPayload 的 xml/before_hash/after_hash 键编码；哈希描述不含远端 ID 的语义块内容，供 T07 回读核验。T04 可增 DecodeWithOptions 来源上下文 helper，保留原 Decode 签名；T02/cloud 应保留来源 URL/reference_map，不能据此重放未知资源。可淘汰缓存根修订为 os.UserCacheDir()/DriveBridge/Cache，与 Windows State 同级；不认领整个品牌父目录。
 
 Operation.ID 是本机 journal 身份，不是服务端幂等键；ClientToken 对 docs shortcut 必须为空。Route/CapabilityID 为空时不得派发 mutation，不能猜测默认服务端能力；T04 可只产出 Kind/定位/Payload，T07 取得 T02 能力并在 RecordPlan 前补齐 ID/Route/CapabilityID。T01 拥有这些可选扩展及 JSON 兼容性，T03 负责原样保存并拒绝执行时缺路由的计划。
 
@@ -165,6 +175,9 @@ func (c *Client) FetchDoc(ctx context.Context, token, revision string) (Document
 func (c *Client) ApplyDoc(ctx context.Context, token, revision string, ops []model.Operation) (ApplyResult, error)
 // 首版仅len(ops)==1；len>1拒绝unsupported_batch（len==0参数错误），签名保留以兼容将来扩展。
 // T07逐次ApplyDoc→RecordOperation持久→回读/remap；cloud不得内部循环未journal的多个mutation。
+// 普通文件观测独立于严格 FileMeta；接口与 FileIdentity/Snapshot.FileData 见 file-observation-contract.md
+func (c *Client) ObserveFile(ctx context.Context, token string) (*FileObservation, error)
+// FileObservation: Token string, Identity model.FileIdentity, Size int64; Open() (io.ReadCloser,error), Close() error
 // 新建、上传、下载、列举、改名、删除遵循 typed lib/larkcli Drive/Docx 方法与已读 API schema；只用固定版本支持的参数。
 
 // overlay
@@ -222,6 +235,7 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - [ ] 运行对应包测试确认失败原因。
 - [ ] 实现 exec.CommandContext、取消、stdout/stderr 分开解析、stderr 错误信封、结构化 retryable/unknown；日志不记录 auth 原文、正文或凭据。
 - [ ] 按设计 6.5 实现 preserving raw history 候选（`api GET /open-apis/drive/v1/files/{token}/history`，显式 only_tag=false，单页），保留 size/version 等字段存在性与精确整数。只有经验证当前版本来源与 history 明确关联才返回当前 FileMeta；否则验证完整的已知版本下载并绑定版本，不能证明 current 就返回 metadata_unknown。新增缺字段、错类型、负值、溢出、真实零、rename/连续覆盖及历史过滤/乱序夹具；禁止使用 shortcut 归零值、缺转空或首项当 head。缓存键含身份引用/Token/已核验 version。
+- [ ] 按 [file-observation-contract.md](file-observation-contract.md) 增加 typed ObserveFile 完整下载/私有临时租约；T02 所需 canonical FileIdentity 及 Snapshot.FileData/FileIdentity 增量由本任务明确修改唯一 model，不建相邻副本。实际读取/大小/哈希/身份/路径校验后才返回；禁止把观测 ID/哈希送 --version/revision。严格 FileMeta 不可用不阻止独立观测路线；失败不采用。
 - [ ] 首版只实现单页 cursor 循环；每页校验 envelope/业务 code/items/has_more/cursor，重复或缺失 cursor 失败。新增第二页业务错误且缺 data、网络断开、取消、重复 cursor 用例；失败保留旧完整 snapshot、不推断删除；成功末页后才提交完整结果。禁止 --page-all 聚合。缺时间戳用标注来源的持久首次观测值，不每次返回 time.Now。
 - [ ] 固定 Docx 嵌套 DTO：fetch 的 data.document.content 与 create 的 data.document.document_id；新增 `TestDocxNestedContentAndID`、`TestDocxMissingRequiredFieldsRejected`，覆盖非空正文不读空、非空 Token 不丢失；字段 presence 区分合法空正文与缺失正文，必需 ID/版本缺失即协议错误，不移植 LarkFS 平铺解析器。
 - [ ] 按设计 6.4 逐 operation 暴露路线/能力表；shortcut XML replace/delete/insert 无 client_token，本机 ID 不发送为服务端键。原生 docx 候选在参数位置、结构转换、响应和 unknown 语义逐项验证前关闭；生产能力缺失返回 unsupported_capability，typed cloud 适配不扩大能力。
@@ -230,6 +244,8 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 完成：原生命令仍保持同步上传含义；版本号不被转换成条件写保证。边界：不维护产品上传队列。
 
 ### T03：不可变快照、双 checkpoint 与作业恢复
+
+实施补充：普通文件另须保存带 FileData/显式 FileIdentity 的 snapshot；初次干净采用、远端刷新、作业备份引用互不混用。按观测契约冻结方法/故障用例后实现，GC 包含 FileData 和在用 reader。
 
 - 需求：R-01/R-04/R-11。依赖：T01。
 - 文件：新增 `internal/bridge/store/{store,blob,jobs,conflicts,gc,namespace,create}.go` 和行为测试。
@@ -257,6 +273,8 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 
 ### T05：托管 overlay 与文件系统名称/身份
 
+实施补充：普通文件既可用已验证服务器版本，也可按 ObserveFile 下载观测后持久采用。Materializer 同时覆盖未物化普通文件；Size/Open/Range 绑定同一 blob，不因缺当前服务器版本阻止观测型读取。
+
 - 需求：R-01/R-03/R-05/R-12。依赖：T01/T02/T03/T04。
 - 文件：新增 `internal/bridge/overlay/{fs,object,namespace}.go`、`naming.go` 及测试。
 - 输入/输出：New 返回内部 fs.Fs；Fs/Object 符合现有 fs 接口；Publish 只做 Store.CommitPublication 和新对象构造，不访问网络。
@@ -271,6 +289,8 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 完成：已物化对象 Size 与提供字节一致；未物化投影明确为 -1，进入内核属性/打开路径前解析，不以 0 冒充空文件。边界：云端确认归 T07。
 
 ### T06：VFS 本机发布屏障和托管持久关闭
+
+实施补充：Materializer 的错误返回和准确属性同时覆盖在线投影与普通文件观测；目录枚举不触发全量物化。
 
 - 需求：R-01/R-07/R-11/R-12。依赖：T03/T05。
 - 文件：新增 `vfs/{external_update,managed_rename}.go`、`vfs/vfscache/{external_update,managed_rename}.go` 及测试；修改 `vfs/{vfs,file,dir,read,write,read_write}.go`、`vfs/vfscache/{cache,item}.go`、`cmd/cmount/fs.go`、`cmd/mount2/node.go`；检查 `cmd/mount2/file.go` 和 `cmd/serve/nfs` 的实际反馈通道。
@@ -288,6 +308,8 @@ VFS 新 API 及 admission 规则以设计 6.2 为准。UI 使用 manager IPC，�
 - 完成：没有直接从 engine 写 VFS 缓存文件；持 File.mu 不调用需 Dir.mu 的方法。边界：不引入飞书/model 包到 vfs。
 
 ### T07：双向同步、覆盖核验及结果不明确的恢复
+
+实施补充：普通文件 mutation 前持久保护新取得的远端观测备份；回读比较捕获输入 SHA/大小。观测 ContentIdentity 与服务器 revision 分开，ABA/检查后竞态不消除。
 
 - 需求：R-04/R-05/R-07/R-10/R-11。依赖：T02/T03/T04/T05/T06。
 - 文件：新增 `internal/bridge/sync/{engine,docx,file,reconcile,poll}.go`、接口测试和故障夹具。

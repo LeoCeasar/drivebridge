@@ -1,0 +1,107 @@
+{
+  "operation": "read-only explicit single-page listing of existing synthetic folder",
+  "pages": [
+    {
+      "page": 1,
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "files",
+        "has_more",
+        "next_page_token"
+      ],
+      "files_count": 1,
+      "has_more": true,
+      "next_cursor_present": true,
+      "item_keys": [
+        [
+          "created_time",
+          "modified_time",
+          "name",
+          "owner_id",
+          "parent_token",
+          "token",
+          "type",
+          "url"
+        ]
+      ]
+    },
+    {
+      "page": 2,
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "files",
+        "has_more",
+        "next_page_token"
+      ],
+      "files_count": 1,
+      "has_more": true,
+      "next_cursor_present": true,
+      "item_keys": [
+        [
+          "created_time",
+          "modified_time",
+          "name",
+          "owner_id",
+          "parent_token",
+          "token",
+          "type",
+          "url"
+        ]
+      ]
+    },
+    {
+      "page": 3,
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "files",
+        "has_more",
+        "next_page_token"
+      ],
+      "files_count": 1,
+      "has_more": true,
+      "next_cursor_present": true,
+      "item_keys": [
+        [
+          "created_time",
+          "modified_time",
+          "name",
+          "owner_id",
+          "parent_token",
+          "token",
+          "type",
+          "url"
+        ]
+      ]
+    },
+    {
+      "page": 4,
+      "exit_code": 0,
+      "ok": true,
+      "data_keys": [
+        "files",
+        "has_more"
+      ],
+      "files_count": 1,
+      "has_more": false,
+      "next_cursor_present": false,
+      "item_keys": [
+        [
+          "created_time",
+          "modified_time",
+          "name",
+          "owner_id",
+          "parent_token",
+          "token",
+          "type",
+          "url"
+        ]
+      ]
+    }
+  ],
+  "complete": true,
+  "unique_resources": 4,
+  "scope": "Existing 4 resources, page_size1, no mutation/error-injection/root listing proof."
+}

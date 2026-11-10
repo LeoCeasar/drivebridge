@@ -127,7 +127,7 @@ profile、remote、mount、entry、job、conflict 都使用独立 UUID；重命�
 | Windows 状态 | 当前用户 Known Folder LocalAppData 下的 DriveBridge/State |
 | Linux 状态 | XDG_STATE_HOME/drivebridge，未设置时使用当前用户 `~/.local/state/drivebridge` |
 | 状态内容 | `auth/{identities/<identity-id>/lark,locks,registry.json}`、`mounts/<mount-id>/{state.db,blobs,vfs,logs,conflicts}` |
-| 可淘汰临时下载 | `os.UserCacheDir()/DriveBridge/<mount-id>` |
+| 可淘汰临时下载 | `os.UserCacheDir()/DriveBridge/Cache/<mount-id>` |
 
 VFS 待写数据放在持久状态目录，不放系统临时目录；配置/缓存目录权限为当前用户私有。Windows 设置等价 ACL。每个 mount 一个 bbolt 库和独占 worker，配置写入另加文件锁；不让多个进程同时写同一库。
 
@@ -191,7 +191,7 @@ blob 按 SHA-256 寻址、不可变；写临时文件→同步文件→原子改
 7. 回读实际云端结构和内容，保存新的 RemoteCheckpoint。若当前 Generation 已大于作业代次，只确认旧作业，不清除新代次，下一作业以旧输入 L 和实际远端结果重新合并。
 8. 仅当前代次仍匹配且 VFS 空闲时发布合并内容；成功后把本地 checkpoint 推进为已发布内容。若新编辑已经开始，保存 Desired 并延期；不得后台改写正在使用的缓存文件。
 
-当远端变化而本地没有待上传内容时，也走步骤 8。远端版本比较用明确 revision，不能只依赖秒级 mtime/size 指纹。打开只读句柄时同样延期更新，避免单次读取跨版本混合。
+当远端变化而本地没有待上传内容时，也走步骤 8。Docx/已验证版本路线比较明确 revision；普通文件观测路线比较实际内容 SHA，不把相同内容当相同服务器版本，也不只依赖秒级 mtime/size。打开只读句柄时同样延期更新，避免单次读取跨版本混合。
 
 托管 Item 维护 mutation_seq/durable_seq；WriteAt/Truncate 增加序号，Flush/Sync 在排除在途写入后执行 data fsync→原子元数据替换/fsync→目录 fsync。成功序号之后的写入仍为 dirty。不得只修改 Release 或仅测试 Go Close：`mount2.Flush/Fsync` 已有返回通道，`cmount.Fsync` 当前是 no-op，必须为托管实例转发 handle.Sync。真实挂载需验证 ENOSPC/EIO 经 close/fsync 返回；NFS 未通过等价稳定写入/错误反馈验证时，托管兼容入口只能只读。
 
@@ -271,9 +271,11 @@ VFS 对源/目标取得命名空间预留；存在活动写句柄时返回 busy 
 
 ### 6.5 精确元数据与完整目录
 
+普通文件分服务器版本与下载观测两条路线，完整规范见 [file-observation-contract.md](file-observation-contract.md)。服务器版本保持严格证明门槛；传输完成的普通文件观测按实际字节/哈希持久采用，不伪造 Version 或 Revision。缺少 current-version 关联不阻止观测型读取。以下历史/版本条件仅约束服务器版本路线。
+
 普通文件元数据候选为官方 raw `api GET /open-apis/drive/v1/files/{token}/history`，JSON 原始 items 字段，单页请求参数明确 `only_tag=false`、`page_size` 和后续 `last_edit_time`。这是保留 presence 的候选，不声称服务端接受该过滤或排序/最新语义已验证。T02 使用 `json.RawMessage`/`json.Number` 和带 presence 的 DTO，逐项检查 version、size、类型、删除状态和时间；负数、非整数、溢出、缺字段/非法字段返回协议/metadata_unknown 错误，不能负转零或缺转空。真实空文件只有明确 size=0 且完整验证后才成立。
 
-只有另一个已验证当前版本来源与 history version 明确关联，且证明该条 size 属于该版本时，才返回当前 FileMeta。`limit 1`、最大数值、首条、mtime 或 only_tag 结果都不能独立证明 head。T02 必须记录当前版本来源/关联的证据；尚无证明时，只允许对已知且已验证版本执行完整 `+version-get --version V` 下载、确认服务端确实按 V 返回不可变字节及完整性后计数字节，元数据绑定 V（`+version-get` 响应 version 只是请求回显，不能单独证明版本遵循）；若不能证明 V 为当前，FileMeta 不得冒充 current，返回 metadata_unknown 并阻止依赖精确大小的访问。无可靠 mtime 时可用持久首次观测值并标明来源；不能用空字符串伪造版本。能力不足不阻止无网络的配置/存储/codec 等任务开发。
+只有另一个已验证当前版本来源与 history version 明确关联，且证明该条 size 属于该版本时，才返回当前 FileMeta。`limit 1`、最大数值、首条、mtime 或 only_tag 结果都不能独立证明 head。T02 必须记录当前版本来源/关联的证据；尚无证明时，只允许对已知且已验证版本执行完整 `+version-get --version V` 下载、确认服务端确实按 V 返回不可变字节及完整性后计数字节，元数据绑定 V（`+version-get` 响应 version 只是请求回显，不能单独证明版本遵循）；若不能证明 V 为当前，FileMeta 不得冒充 current，返回 metadata_unknown；采用独立 ObserveFile 路线时，以已持久绑定观测字节提供准确本地大小/读取，不冒充服务器版本。无可靠 mtime 时可用持久首次观测值并标明来源；不能用空字符串伪造版本。能力不足不阻止无网络的配置/存储/codec 等任务开发。
 
 首版列表只用显式单页 cursor 循环，禁用 `--page-all`。每页独立验证进程结果、typed JSON envelope、业务 code、items 类型、has_more 布尔及下一 cursor。has_more=true 时 cursor 必须非空且未出现（包括与本页输入相同）；缺字段/重复 cursor/网络失败/取消/后续业务错误均使刷新失败。仅最终有效 has_more=false 后，将暂存条目原子替换为新的完整 namespace snapshot。任一页失败保留之前完整快照并报告错误；首次没有完整快照则返回不可用，不以部分列表推断删除或空目录。聚合 ok/exit=0/has_more=false 不能证明完整性。
 

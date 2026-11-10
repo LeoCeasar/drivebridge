@@ -1,0 +1,36 @@
+{
+  "operation": "read-only version downloads of existing synthetic file",
+  "results": [
+    {
+      "label": "old",
+      "exit_code": 0,
+      "ok": true,
+      "private_regular_file": true,
+      "reported_size": 45,
+      "actual_size": 45,
+      "sha256": "740dbca2270da147a9410283990efe8f099a36ae19a0af5ae3bdf2f5b5e6ff65"
+    },
+    {
+      "label": "new",
+      "exit_code": 0,
+      "ok": true,
+      "private_regular_file": true,
+      "reported_size": 81,
+      "actual_size": 81,
+      "sha256": "70fbce145e5d54f7cc397c34d37465c9048a8d95f0b73ab3a44230edc4dd1cee"
+    },
+    {
+      "label": "old-repeat",
+      "exit_code": 0,
+      "ok": true,
+      "private_regular_file": true,
+      "reported_size": 45,
+      "actual_size": 45,
+      "sha256": "740dbca2270da147a9410283990efe8f099a36ae19a0af5ae3bdf2f5b5e6ff65"
+    }
+  ],
+  "old_repeat_stable": true,
+  "old_and_new_differ": true,
+  "latest_metadata_link_verified": false,
+  "scope": "Only two existing synthetic versions; no rename/revert/deleted-version tests or remote writes."
+}

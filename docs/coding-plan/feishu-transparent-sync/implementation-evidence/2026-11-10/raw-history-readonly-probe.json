@@ -1,0 +1,29 @@
+{
+  "operation": "read-only raw history of existing synthetic file",
+  "exit_code": 0,
+  "ok": true,
+  "data_keys": [
+    "has_more",
+    "items"
+  ],
+  "items": [
+    {
+      "version": "7706417134590577662",
+      "size": 81,
+      "edit_time": 1794290061800,
+      "type": 1,
+      "tag": 2,
+      "is_deleted": false
+    },
+    {
+      "version": "7706417122722352147",
+      "size": 45,
+      "edit_time": 1794290059026,
+      "type": 1,
+      "tag": 1,
+      "is_deleted": false
+    }
+  ],
+  "server_current_link_verified": false,
+  "has_more": false
+}
