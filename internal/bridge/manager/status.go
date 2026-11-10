@@ -211,7 +211,29 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 	} else if !os.IsNotExist(statErr) {
 		return out, statErr
 	}
-	raw, err := os.ReadFile(filepath.Join(spec.Paths.Root, "last-state.json"))
+	readLastWorkerError(spec.Paths.Root, &out)
+	return out, nil
+}
+
+// Once a child has been spawned, readiness must not acquire the runtime lock to
+// inspect its offline Store. Doing so can defeat that child's first ownership
+// claim. Only authenticated IPC can report readiness; a last-error hint does not.
+func (m *Manager) startupStatus(ctx context.Context, spec mountSpec) (model.MountStatus, error) {
+	var out model.MountStatus
+	err := m.call(ctx, spec.Mount.ID, "/status", nil, &out)
+	if err == nil {
+		return out, nil
+	}
+	if !os.IsNotExist(err) {
+		return out, err
+	}
+	out = model.MountStatus{SchemaVersion: 1, MountID: spec.Mount.ID, CloudState: "starting"}
+	readLastWorkerError(spec.Paths.Root, &out)
+	return out, nil
+}
+
+func readLastWorkerError(root string, out *model.MountStatus) {
+	raw, err := os.ReadFile(filepath.Join(root, "last-state.json"))
 	if err == nil {
 		var state struct {
 			LastError string `json:"last_error"`
@@ -220,7 +242,6 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 			out.LastError = state.LastError
 		}
 	}
-	return out, nil
 }
 
 type cacheManifest struct {

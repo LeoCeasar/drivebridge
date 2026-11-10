@@ -79,7 +79,27 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 		return err
 	}
 	if !ok {
-		return ErrPending
+		// Offline status also owns this lock while inspecting a persisted Store.
+		// Allow that short read to finish, but never replace a live authenticated
+		// worker or wait indefinitely for any other owner.
+		claimCtx, cancel := context.WithTimeout(ctx, m.options.ReadyTimeout)
+		defer cancel()
+		var current model.MountStatus
+		if probeErr := m.call(claimCtx, id, "/status", nil, &current); probeErr == nil {
+			return ErrPending
+		} else if errors.Is(probeErr, ErrInstanceChanged) {
+			return probeErr
+		}
+		ok, err = l.TryLockContext(claimCtx, 10*time.Millisecond)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return errors.Join(ErrPending, err)
+			}
+			return err
+		}
+		if !ok {
+			return ErrPending
+		}
 	}
 	defer l.Unlock()
 	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{}), controls: map[uint64]context.CancelFunc{}}
@@ -290,7 +310,11 @@ func (m *Manager) startAdmitted(readyCtx context.Context, id model.MountID) (mod
 	spawned := false
 	var state model.MountStatus
 	for {
-		state, err = m.Status(readyCtx, id)
+		if spawned {
+			state, err = m.startupStatus(readyCtx, spec)
+		} else {
+			state, err = m.Status(readyCtx, id)
+		}
 		if err == nil && state.Running {
 			return state, nil
 		}
