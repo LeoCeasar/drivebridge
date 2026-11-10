@@ -25,10 +25,11 @@ type ControllerOptions struct {
 	ErrorCode func(error) string
 }
 type recovery struct {
-	attempts int
-	next     time.Time
-	code     string
-	active   bool
+	generation uint64
+	attempts   int
+	next       time.Time
+	code       string
+	active     bool
 }
 type Controller struct {
 	ctx       context.Context
@@ -77,6 +78,10 @@ func (c *Controller) Poll(ctx context.Context) State {
 		}
 		c.mu.Lock()
 		r := c.recovery[m.ID]
+		if !r.active && (s.Running || !m.Desired) {
+			delete(c.recovery, m.ID)
+			r = recovery{}
+		}
 		c.mu.Unlock()
 		if !s.Running && v.Error == "" && r.code != "" {
 			v.Error = r.code
@@ -118,13 +123,14 @@ func (c *Controller) recoverMount(id model.MountID) {
 	}
 	c.mu.Lock()
 	r := c.recovery[id]
-	if r.active || r.attempts >= 5 || permanent(r.code) || c.o.Now().Before(r.next) {
+	if c.busy > 0 || r.active || r.attempts >= 5 || permanent(r.code) || c.o.Now().Before(r.next) {
 		c.mu.Unlock()
 		return
 	}
 	r.active = true
 	r.attempts++
 	c.recovery[id] = r
+	generation := r.generation
 	c.wg.Add(1)
 	c.mu.Unlock()
 	go func() {
@@ -136,12 +142,16 @@ func (c *Controller) recoverMount(id model.MountID) {
 		defer c.mu.Unlock()
 		r := c.recovery[id]
 		r.active = false
+		if r.generation != generation {
+			c.recovery[id] = r
+			return
+		}
 		r.code = c.o.ErrorCode(err)
 		if err == nil {
 			r.attempts = 0
 			r.next = c.o.Now().Add(2 * time.Second)
 		} else {
-			delay := 2 * time.Second << min(r.attempts-1, 7)
+			delay := 2 * time.Second << min(max(r.attempts, 1)-1, 7)
 			if delay > 5*time.Minute {
 				delay = 5 * time.Minute
 			}
@@ -194,7 +204,12 @@ func (c *Controller) Handle(ctx context.Context, kind string, id model.MountID) 
 		}
 		if kind == "start" || kind == "retry" {
 			c.mu.Lock()
-			delete(c.recovery, id)
+			r := c.recovery[id]
+			r.generation++
+			r.attempts = 0
+			r.code = ""
+			r.next = time.Time{}
+			c.recovery[id] = r
 			c.mu.Unlock()
 		}
 		switch kind {

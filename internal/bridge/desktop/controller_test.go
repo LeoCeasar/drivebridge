@@ -19,6 +19,48 @@ type fixtureBackend struct {
 	started  chan struct{}
 }
 
+type blockedRecovery struct {
+	fixtureBackend
+	entered, release chan struct{}
+}
+
+func (b *blockedRecovery) Start(ctx context.Context, _ model.MountID, _ bool) error {
+	select {
+	case b.entered <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-b.release:
+		return errors.New("obsolete network failure")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func TestManualRetryWhileRecoveryPending(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := &blockedRecovery{fixtureBackend: fixtureBackend{mounts: []Mount{{ID: "a", Desired: true}}, status: map[model.MountID]model.MountStatus{}}, entered: make(chan struct{}), release: make(chan struct{})}
+	c := NewController(ctx, b, ControllerOptions{})
+	c.Poll(ctx)
+	select {
+	case <-b.entered:
+	case <-time.After(time.Second):
+		t.Fatal("recovery not entered")
+	}
+	if err := c.Handle(ctx, "retry", "a"); err != nil {
+		t.Fatal(err)
+	}
+	close(b.release)
+	c.Wait()
+	c.mu.Lock()
+	r := c.recovery["a"]
+	c.mu.Unlock()
+	if r.active || r.attempts != 0 || r.code != "" {
+		t.Fatalf("obsolete result overwrote manual retry: %+v", r)
+	}
+}
+
 func (b *fixtureBackend) Mounts(context.Context) ([]Mount, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
