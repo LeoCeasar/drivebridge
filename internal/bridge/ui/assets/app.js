@@ -2,6 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const diff = window.DriveBridgeDiff;
+  const recovery = window.DriveBridgeRecovery;
   let activeHunk = null;
   let csrf = '', current = null, choices = new Map(), manual = false, editSeq = 0, savedSeq = 0;
   let draftTimer = null, draftChain = Promise.resolve(), authFlow = '', busy = false;
@@ -22,20 +23,22 @@
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
   for (const id of ['setup-shortcut', 'start-setup']) $(id).addEventListener('click', () => view('settings'));
   function cloudLabel(state) { const value = state.cloud_state; const labels = {synced:'已确认',queued:'等待同步',uploading:'正在上传',merging:'正在合并',awaiting_verification:'等待回读核验',conflict:'需要合并',blocked:'已阻塞',paused:'已暂停',offline:'离线'}; return labels[value] || (state.running ? '等待确认' : '挂载未启动'); }
-  function renderMounts(mounts = []) {
+  function renderMounts(mounts = [], canRetry = false) {
     $('mount-rows').replaceChildren(); $('mount-empty').hidden = mounts.length > 0;
     for (const mount of mounts) {
       const state = mount.state || {}, row = make('tr'); const name = make('td'); name.append(make('span', mount.name, 'mount-name'), make('span', mount.mountpoint, 'mount-path'));
       const local = make('td'); local.append(make('span', state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动'), 'state-tag' + (state.local_saved ? '' : ' pending')));
       const cloud = make('td', cloudLabel(state)); const queue = make('td', `队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', state.running ? '安全停止' : '启动挂载', 'button small');
-      button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${state.running ? 'stop' : 'start'}`, 'POST', {}); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button); row.append(name, local, cloud, queue, action); $('mount-rows').append(row);
+      button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${state.running ? 'stop' : 'start'}`, 'POST', {}); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);
+      if (canRetry) { const retry = make('button','重试同步','button small'); retry.disabled = !recovery.canRetry(mount,canRetry); retry.title = state.running ? '重新核验并重试待同步项目' : '请先启动挂载'; retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = !recovery.canRetry(mount,canRetry); } }); action.append(retry); }
+      row.append(name, local, cloud, queue, action); $('mount-rows').append(row);
     }
   }
   function renderConflicts(conflicts = []) {
     $('conflict-count').textContent = conflicts.length; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = conflicts.length > 0;
     for (const c of conflicts) { const button = make('button', c.name || '待合并文件', 'conflict-item' + (current?.id === c.id ? ' selected' : '')); button.title = c.name || ''; button.addEventListener('click', () => openConflict(c.id)); $('conflict-list').append(button); }
   }
-  async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true); } }
+  async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true); } }
   $('refresh').addEventListener('click', refresh);
   function options(select, items, label) { select.replaceChildren(); if (!items.length) { const empty = make('option', label); empty.value = ''; select.append(empty); } for (const item of items) { const option = make('option', item.name); option.value = item.id; select.append(option); } }
   async function loadConfig() {
@@ -47,6 +50,18 @@
   $('auth-complete').addEventListener('click', async () => { if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; message('授权成功，可以选择共享目录。'); await loadConfig(); } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
   function stash() { if (!current) return; try { localStorage.setItem(`draft:${current.id}`, JSON.stringify({text:$('merged-text').value, generation:current.generation, revision:current.remote_revision})); } catch (_) { /* The editor and durable backend draft remain the primary copies. */ } }
   function draftState(text) { $('draft-state').textContent = text; }
+  function recoveryControls() {
+    const state = recovery.conflictState(current,busy);
+    $('merged-text').disabled = !state.canEdit;
+    $('save-draft').disabled = !state.canSaveDraft;
+    $('resolve').disabled = !state.canResolve;
+    $('resolve').title = current?.stale ? '请先刷新差异并重新核验云端' : '';
+    $('reset-choices').disabled = !state.canEdit;
+    $('export-copies').hidden = !current?.can_export_copies;
+    $('export-copies').disabled = !state.canExport;
+    $('source-warning').textContent = state.warning;
+    $('source-warning').hidden = !state.warning;
+  }
   async function saveDraft() {
     if (!current || !current.text) return true; clearTimeout(draftTimer); const id = current.id, seq = editSeq, content = $('merged-text').value; stash();
     let success = false; draftChain = draftChain.catch(() => {}).then(async () => { try { await api(`/api/conflicts/${encodeURIComponent(id)}/draft`,'PUT',{content:bytes(content)}); if (current?.id === id && seq === editSeq) { savedSeq = seq; draftState('草稿已保存到本机'); try { localStorage.removeItem(`draft:${id}`); } catch (_) {} } success = true; } catch (e) { if (current?.id === id) { draftState('尚未保存到本机，请保持页面打开'); message(e.message + ' 当前编辑仍在页面中，请恢复连接后保存。', true); } } }); await draftChain; return success;
@@ -115,14 +130,29 @@
     }
   }
   async function openConflict(id) {
+    if (busy) return;
     if (current && editSeq !== savedSeq && !(await saveDraft())) return;
-    try { const data = await api(`/api/conflicts/${encodeURIComponent(id)}`); current = data; current.hunks ||= []; choices = new Map(); editSeq = 0; savedSeq = 0; manual = data.has_draft; $('merge').hidden = false; view('workspace'); $('merge-name').textContent = data.name; $('merge-version').textContent = `本地代次 ${data.generation}，云端修订 ${data.remote_revision || '下载观测'}`; activeHunk = null; renderSources(); $('merged-text').value = data.has_draft ? data.Draft : data.Local; $('merged-text').disabled = !data.text; $('resolve').disabled = !data.text; $('save-draft').disabled = !data.text; $('reset-choices').disabled = !data.text;
+    try { const data = await api(`/api/conflicts/${encodeURIComponent(id)}`); current = data; current.hunks ||= []; choices = new Map(); editSeq = 0; savedSeq = 0; manual = data.has_draft; $('merge').hidden = false; view('workspace'); $('merge-name').textContent = data.name; $('merge-version').textContent = `本地代次 ${data.generation}，云端修订 ${data.remote_revision || '下载观测'}`; activeHunk = null; renderSources(); $('merged-text').value = data.has_draft ? data.Draft : data.Local; recoveryControls(); $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
       try { const cached = JSON.parse(localStorage.getItem(`draft:${id}`)); if (cached && cached.text !== $('merged-text').value) { $('merged-text').value = cached.text; manual = true; editSeq++; draftState('恢复了此浏览器暂存内容，请保存草稿'); } else draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); } catch (_) { draftState(data.has_draft ? '已载入本机草稿' : '草稿未修改'); }
       if (!data.text) message('该文件不是可编辑文本。原版和双方副本仍保留，请通过恢复入口另存后处理。'); renderHunks(); await refresh();
     } catch (e) { message(e.message,true); }
   }
+  $('refresh-conflict').addEventListener('click',async () => { if (!current || busy) return; const id = current.id; $('refresh-conflict').disabled = true; try { await openConflict(id); } finally { $('refresh-conflict').disabled = false; } });
+  $('export-copies').addEventListener('click',async () => {
+    if (!current || busy) return;
+    const id = current.id; $('export-copies').disabled = true;
+    try {
+      if (!(await saveDraft())) return;
+      const copies = await api(`/api/conflicts/${encodeURIComponent(id)}/copies`,'POST',{});
+      if (current?.id !== id) return;
+      const box = $('copy-paths'); box.replaceChildren(make('strong','本地副本已保存'),make('p','可复制以下目录到文件管理器查看。编辑这些副本不会改写受保护的同步数据。'));
+      const paths = make('dl');
+      for (const [key,label] of [['directory','副本目录'],['base','共同原版'],['local','本地内容'],['remote','云端内容'],['draft','合并草稿'],['manifest','校验清单']]) { if (copies[key]) paths.append(make('dt',label),make('dd',copies[key])); }
+      box.append(paths); box.hidden = false;
+    } catch(e) { message(e.message,true); } finally { recoveryControls(); }
+  });
   $('reset-choices').addEventListener('click', async () => { if (!current || !(await saveDraft())) return; manual = false; choices = new Map(); rebuild(); renderHunks(); });
-  $('resolve').addEventListener('click', async () => { if (!current || busy) return; busy = true; $('resolve').disabled = true; try { if (!(await saveDraft())) return; await api(`/api/conflicts/${encodeURIComponent(current.id)}/resolve`,'POST',{conflict_id:current.id,expected_generation:current.generation,expected_remote_revision:current.remote_revision,content:bytes($('merged-text').value)}); message('合并结果已在本机接受，云端确认请查看同步状态。'); $('merge').hidden = true; current = null; await refresh(); } catch (e) { draftState('草稿已保留'); message(e.status === 409 ? '输入版本已变化，草稿已保留。请刷新差异并重新核对后提交。' : e.message,true); } finally { busy = false; $('resolve').disabled = !current?.text; } });
+  $('resolve').addEventListener('click', async () => { if (!recovery.conflictState(current,busy).canResolve) return; busy = true; recoveryControls(); try { if (!(await saveDraft())) return; await api(`/api/conflicts/${encodeURIComponent(current.id)}/resolve`,'POST',{conflict_id:current.id,expected_generation:current.generation,expected_remote_revision:current.remote_revision,content:bytes($('merged-text').value)}); message('合并结果已在本机接受，云端确认请查看同步状态。'); $('merge').hidden = true; current = null; await refresh(); } catch (e) { draftState('草稿已保留'); if (current && (e.status === 409 || e.code === 'refresh_required')) { current.stale = true; if (e.status === 409) current.refresh_warning = 'version_changed'; } message(e.status === 409 ? '输入版本已变化，草稿已保留。请刷新差异并重新核对后提交。' : e.message,true); } finally { busy = false; recoveryControls(); } });
   $('later').addEventListener('click', async () => { if (await saveDraft()) { $('merge').hidden = true; message('草稿已保留，可随时从左侧继续处理。'); } });
   window.addEventListener('beforeunload', event => { if (current && editSeq !== savedSeq) { stash(); event.preventDefault(); event.returnValue = ''; } });
   async function start() {

@@ -38,6 +38,7 @@ type ConflictSummary struct {
 }
 type StatusView struct {
 	SchemaVersion int               `json:"schema_version"`
+	CanRetry      bool              `json:"can_retry"`
 	Mounts        []MountView       `json:"mounts"`
 	Conflicts     []ConflictSummary `json:"conflicts"`
 }
@@ -56,6 +57,8 @@ type ConflictInputs struct {
 	Base, Local, Remote, Draft []byte
 	Text                       bool
 	SourceURL                  string
+	Stale                      bool
+	RefreshWarning             string
 }
 type DiffChange struct {
 	Start, End         int
@@ -75,6 +78,9 @@ type DiffHunk struct {
 }
 
 type ConflictView struct {
+	Stale                      bool             `json:"stale"`
+	RefreshWarning             string           `json:"refresh_warning,omitempty"`
+	CanExportCopies            bool             `json:"can_export_copies"`
 	HasDraft                   bool             `json:"has_draft"`
 	ID                         model.ConflictID `json:"id"`
 	EntryID                    model.EntryID    `json:"entry_id"`
@@ -85,6 +91,22 @@ type ConflictView struct {
 	Text                       bool       `json:"text"`
 	Hunks                      []DiffHunk `json:"hunks"`
 	SourceURL                  string     `json:"source_url,omitempty"`
+}
+
+// Optional capabilities keep fixture/offline hosts honest about available actions.
+type SyncRetrier interface {
+	Retry(context.Context, model.MountID) error
+}
+type ConflictCopies struct {
+	Directory string `json:"directory"`
+	Base      string `json:"base,omitempty"`
+	Local     string `json:"local,omitempty"`
+	Remote    string `json:"remote,omitempty"`
+	Draft     string `json:"draft,omitempty"`
+	Manifest  string `json:"manifest"`
+}
+type ConflictExporter interface {
+	ExportConflict(context.Context, model.ConflictID) (ConflictCopies, error)
 }
 type Backend interface {
 	Status(context.Context) (StatusView, error)

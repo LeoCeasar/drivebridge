@@ -105,7 +105,14 @@ func (b *ManagerBackend) AuthComplete(ctx context.Context, id string) error {
 }
 func (b *ManagerBackend) Conflict(ctx context.Context, id model.ConflictID) (ConflictInputs, error) {
 	v, err := b.manager.Conflict(ctx, id)
-	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL}, err
+	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL, Stale: v.Stale, RefreshWarning: v.RefreshWarning}, err
+}
+func (b *ManagerBackend) Retry(ctx context.Context, id model.MountID) error {
+	return b.manager.Retry(ctx, id)
+}
+func (b *ManagerBackend) ExportConflict(ctx context.Context, id model.ConflictID) (ConflictCopies, error) {
+	v, err := b.manager.ExportConflict(ctx, id)
+	return ConflictCopies{Directory: v.Directory, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Manifest: v.Manifest}, err
 }
 func (b *ManagerBackend) SaveDraft(ctx context.Context, id model.ConflictID, v []byte) error {
 	return b.manager.SaveDraft(ctx, id, v)
@@ -129,3 +136,5 @@ func (b *ManagerBackend) ClaimConflictNotification(ctx context.Context, id model
 }
 
 var _ Backend = (*ManagerBackend)(nil)
+var _ SyncRetrier = (*ManagerBackend)(nil)
+var _ ConflictExporter = (*ManagerBackend)(nil)

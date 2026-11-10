@@ -47,6 +47,7 @@ func respond(w http.ResponseWriter, status int, v any) {
 }
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
+	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
 	respond(w, status, map[string]any{"code": code, "retryable": status == 503, "message": messages[code]})
 }
 func apiError(w http.ResponseWriter, err error) {
@@ -89,7 +90,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -102,7 +103,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/app.js", "/diff-view.js":
+		case "/app.js", "/diff-view.js", "/recovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -148,6 +149,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		for i := range v.Mounts {
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
 		}
+		_, v.CanRetry = h.backend.(SyncRetrier)
 		respond(w, 200, v)
 		return
 	case "/api/config":
@@ -236,7 +238,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.conflict(w, r, parts[2], parts[3:])
 		return
 	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop") {
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry") {
 		if r.Method != "POST" {
 			method(w, "POST")
 			return
@@ -246,7 +248,18 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			respondError(w, 400, "invalid_request")
 			return
 		}
-		if err := h.backend.Mount(r.Context(), model.MountID(parts[2]), parts[3]); err != nil {
+		var err error
+		if parts[3] == "retry" {
+			retrier, ok := h.backend.(SyncRetrier)
+			if !ok {
+				respondError(w, 503, "unavailable")
+				return
+			}
+			err = retrier.Retry(r.Context(), model.MountID(parts[2]))
+		} else {
+			err = h.backend.Mount(r.Context(), model.MountID(parts[2]), parts[3])
+		}
+		if err != nil {
 			apiError(w, err)
 			return
 		}
@@ -311,7 +324,8 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 409, "version_changed")
 			return
 		}
-		v := ConflictView{Hunks: []DiffHunk{}, HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
+		v := ConflictView{Hunks: []DiffHunk{}, Stale: in.Stale, RefreshWarning: safeCode(in.RefreshWarning), HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
+		_, v.CanExportCopies = h.backend.(ConflictExporter)
 		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
 			v.Base = string(in.Base)
 			v.Local = string(in.Local)
@@ -335,6 +349,27 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		return
 	}
 	switch tail[0] {
+	case "copies":
+		if r.Method != "POST" {
+			method(w, "POST")
+			return
+		}
+		var empty struct{}
+		if decode(w, r, &empty) != nil {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		exporter, ok := h.backend.(ConflictExporter)
+		if !ok {
+			respondError(w, 503, "unavailable")
+			return
+		}
+		copies, err := exporter.ExportConflict(r.Context(), cid)
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		respond(w, 200, copies)
 	case "draft":
 		if r.Method != "PUT" {
 			method(w, "PUT")
@@ -373,6 +408,10 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		}
 		if current.Conflict.EntryID != current.Entry.ID || current.Conflict.Generation != in.ExpectedGeneration || current.Entry.Generation != in.ExpectedGeneration || current.Conflict.RemoteRevision != in.ExpectedRemoteRevision {
 			respondError(w, 409, "version_changed")
+			return
+		}
+		if current.Stale {
+			respondError(w, 503, "refresh_required")
 			return
 		}
 		if !current.Text || !utf8.Valid(in.Content) {

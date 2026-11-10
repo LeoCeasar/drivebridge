@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +26,8 @@ type backend struct {
 	mu       sync.Mutex
 	draft    []byte
 	resolved bool
+	stale    bool
+	copyRoot string
 }
 
 func (b *backend) Status(context.Context) (ui.StatusView, error) {
@@ -60,7 +63,46 @@ func (b *backend) Conflict(_ context.Context, id model.ConflictID) (ui.ConflictI
 	base := "# 协作文件夹使用说明\n\n共享目录用于保存产品方案和会议记录。\n\n## 本周安排\n\n- 周三完成初稿\n- 周五评审\n\n联系人：项目负责人\n"
 	local := "# 协作文件夹使用说明\n\n共享目录用于保存产品方案和会议记录。\n\n## 本周安排\n\n- 周四完成初稿\n- 周五评审\n\n联系人：设计负责人\n"
 	remote := "# 协作文件夹使用说明\n\n共享目录用于保存产品方案、会议记录和验收清单。\n\n## 本周安排\n\n- 周三完成初稿\n- 下周一评审\n\n联系人：项目负责人\n"
-	return ui.ConflictInputs{Conflict: model.Conflict{ID: conflictID, EntryID: entryID, Generation: 12, RemoteRevision: "38"}, Entry: model.Entry{ID: entryID, Remote: "产品设计/协作文档.md", Generation: 12}, Base: []byte(base), Local: []byte(local), Remote: []byte(remote), Draft: b.draft, Text: true}, nil
+	return ui.ConflictInputs{Conflict: model.Conflict{ID: conflictID, EntryID: entryID, Generation: 12, RemoteRevision: "38"}, Entry: model.Entry{ID: entryID, Remote: "产品设计/协作文档.md", Generation: 12}, Base: []byte(base), Local: []byte(local), Remote: []byte(remote), Draft: b.draft, Text: true, Stale: b.stale, RefreshWarning: "offline"}, nil
+}
+func (b *backend) Retry(_ context.Context, id model.MountID) error {
+	if id != mountID {
+		return os.ErrNotExist
+	}
+	b.mu.Lock()
+	b.stale = false
+	b.mu.Unlock()
+	return nil
+}
+
+// ExportConflict writes only synthetic preview bytes into this preview's temp
+// root. Production exports use Store.ExportConflictCopies through Manager.
+func (b *backend) ExportConflict(ctx context.Context, id model.ConflictID) (ui.ConflictCopies, error) {
+	in, err := b.Conflict(ctx, id)
+	if err != nil {
+		return ui.ConflictCopies{}, err
+	}
+	dir, err := os.MkdirTemp(b.copyRoot, "synthetic-copies-")
+	if err != nil {
+		return ui.ConflictCopies{}, err
+	}
+	out := ui.ConflictCopies{Directory: dir, Manifest: filepath.Join(dir, "manifest.json")}
+	for _, part := range []struct {
+		name string
+		data []byte
+		dest *string
+	}{{"base.md", in.Base, &out.Base}, {"local.md", in.Local, &out.Local}, {"remote.md", in.Remote, &out.Remote}, {"draft.md", in.Draft, &out.Draft}} {
+		if part.data == nil {
+			continue
+		}
+		*part.dest = filepath.Join(dir, part.name)
+		if err = os.WriteFile(*part.dest, part.data, 0600); err != nil {
+			return ui.ConflictCopies{}, err
+		}
+	}
+	manifest, _ := json.Marshal(map[string]any{"fixture": true, "notice": "synthetic UI preview files only"})
+	err = os.WriteFile(out.Manifest, manifest, 0600)
+	return out, err
 }
 func (b *backend) SaveDraft(_ context.Context, _ model.ConflictID, v []byte) error {
 	b.mu.Lock()
@@ -95,7 +137,7 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	h, err := ui.Start(ctx, ui.Options{Backend: &backend{}, RuntimeDir: dir, ConfigKey: "synthetic-preview", Notifier: silent{}})
+	h, err := ui.Start(ctx, ui.Options{Backend: &backend{copyRoot: dir, stale: os.Getenv("DRIVEBRIDGE_UI_PREVIEW_STALE") == "1"}, RuntimeDir: dir, ConfigKey: "synthetic-preview", Notifier: silent{}})
 	if err != nil {
 		panic(err)
 	}

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <div class="app-shell">
 <aside class="sidebar"><a class="brand" href="/" aria-label="DriveBridge 首页"><span class="brand-mark" aria-hidden="true">桥</span><span>DriveBridge<small>本机文件管理</small></span></a>
@@ -14,8 +14,8 @@
 <div class="page-heading"><div><h1>文件与同步</h1><p>查看本机保存和云端确认，处理需要你决定的差异。</p></div><button id="setup-shortcut" class="button">添加共享目录</button></div>
 <div class="table-wrap"><table class="mount-table"><thead><tr><th>挂载目录</th><th>本机保存</th><th>云端状态</th><th>待处理</th><th>操作</th></tr></thead><tbody id="mount-rows"></tbody></table><div id="mount-empty" class="empty-state"><h2>先连接一个共享目录</h2><p>添加飞书账号和共享文件夹后，选择它在本机显示的位置。</p><button id="start-setup" class="button primary">开始设置</button></div></div>
 <section id="merge" class="merge" hidden>
-<div class="merge-heading"><div><p class="section-label">文件合并</p><h2 id="merge-name"></h2><p id="merge-version" class="quiet"></p></div><div class="merge-actions"><span id="draft-state" class="draft-state" aria-live="polite">草稿未修改</span><button id="save-draft" class="button">保存草稿</button><button id="resolve" class="button primary">复核并提交</button></div></div>
-<p class="merge-hint">三份来源保持只读。在右侧编辑结果，或逐个差异选择内容。提交时会重新检查本地和云端版本。</p>
+<div class="merge-heading"><div><p class="section-label">文件合并</p><h2 id="merge-name"></h2><p id="merge-version" class="quiet"></p></div><div class="merge-actions"><span id="draft-state" class="draft-state" aria-live="polite">草稿未修改</span><button id="refresh-conflict" class="button">刷新差异</button><button id="export-copies" class="button" hidden>保存/查看本地副本</button><button id="save-draft" class="button">保存草稿</button><button id="resolve" class="button primary">复核并提交</button></div></div>
+<p id="source-warning" class="source-warning" role="status" hidden></p><section id="copy-paths" class="copy-paths" aria-label="本地冲突副本" hidden></section><p class="merge-hint">三份来源保持只读。在右侧编辑结果，或逐个差异选择内容。提交时会重新检查本地和云端版本。</p>
 <div class="four-panes"><section class="source-pane"><header><span>共同原版</span><small>上次确认的基线</small></header><div id="base-text" class="code-view" role="region" aria-label="共同原版逐行差异" tabindex="0"></div></section><section class="source-pane"><header><span>本地内容</span><small>这次保存的内容</small></header><div id="local-text" class="code-view" role="region" aria-label="本地内容逐行差异" tabindex="0"></div></section><section class="source-pane"><header><span>云端内容</span><small>冲突时取得的内容</small></header><div id="remote-text" class="code-view" role="region" aria-label="云端内容逐行差异" tabindex="0"></div></section><section class="source-pane result-pane"><header><label for="merged-text">合并结果</label><small>可编辑</small></header><textarea id="merged-text" spellcheck="false" aria-label="合并结果"></textarea></section></div>
 <div class="diff-toolbar"><span id="hunk-count">差异</span><button id="reset-choices" class="text-button">保留草稿并重新选择差异</button></div><div id="hunk-list" class="hunk-list"></div>
 <div class="merge-footer"><span>本机保存成功与飞书确认是两个状态；并发修改仍可能发生。</span><button id="later" class="text-button">稍后处理</button></div>
