@@ -35,9 +35,10 @@ type managedState struct {
 	reservations map[*reservation]struct{}
 }
 type admission struct {
-	m     *managedState
-	path  string
-	write bool
+	m         *managedState
+	path      string
+	write     bool
+	directory bool
 }
 type reservation struct {
 	m     *managedState
@@ -51,7 +52,7 @@ func managedPath(s string) string { return strings.TrimPrefix(path.Clean("/"+s),
 func related(a, b string) bool {
 	return a == b || a == "" || b == "" || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
-func (m *managedState) admit(name string, write bool) (*admission, error) {
+func (m *managedState) admit(name string, write, directory bool) (*admission, error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -68,7 +69,7 @@ func (m *managedState) admit(name string, write bool) (*admission, error) {
 			}
 		}
 	}
-	a := &admission{m, name, write}
+	a := &admission{m: m, path: name, write: write, directory: directory}
 	m.handles[a] = struct{}{}
 	return a, nil
 }
@@ -84,6 +85,17 @@ func (m *managedState) reserve(paths []string, readers bool) (*reservation, erro
 	return m.reserveWithPause(paths, readers, false)
 }
 func (m *managedState) reserveWithPause(paths []string, readers, allowPaused bool) (*reservation, error) {
+	return m.reservePaths(paths, readers, allowPaused, false)
+}
+
+// Local child creation can coexist with enumeration of its ancestors. It still
+// excludes exact-path handles, descendant handles, and all related reservations.
+// External publication and destructive namespace operations keep the full barrier.
+func (m *managedState) reserveCreate(name string) (*reservation, error) {
+	return m.reservePaths([]string{name}, true, false, true)
+}
+
+func (m *managedState) reservePaths(paths []string, readers, allowPaused, creatingChild bool) (*reservation, error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -97,6 +109,9 @@ func (m *managedState) reserveWithPause(paths []string, readers, allowPaused boo
 	}
 	for _, p := range paths {
 		for a := range m.handles {
+			if creatingChild && a.directory && !a.write && a.path != p && (a.path == "" || strings.HasPrefix(p, a.path+"/")) {
+				continue
+			}
 			if related(p, a.path) && (readers || a.write) {
 				return nil, ErrExternalUpdateBusy
 			}
@@ -219,7 +234,7 @@ func (f *File) MaterializeManaged(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
-	a, e := m.admit(f.Path(), false)
+	a, e := m.admit(f.Path(), false, false)
 	if e != nil {
 		return e
 	}
