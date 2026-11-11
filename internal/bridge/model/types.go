@@ -67,6 +67,7 @@ type Remote struct {
 	ProfileID   ProfileID `json:"profile_id"`
 	FolderToken string    `json:"folder_token"`
 	NewMDPolicy string    `json:"new_md_policy"`
+	AccountRoot bool      `json:"account_root,omitempty"`
 }
 type Mount struct {
 	ID            MountID  `json:"id"`

@@ -35,11 +35,25 @@ func virtualContent(m store.Metadata) []byte {
 	return []byte(fmt.Sprintf("This online resource (type %q) is read-only and is not converted by DriveBridge.\nThe provider did not supply a safe HTTPS link. Open it in the provider's application.\n", m.VirtualType))
 }
 func (f *Fs) requireWritable(ctx context.Context, e model.Entry) error {
+	if source, ok := f.source.(accountProtection); ok && source.accountProtected(e) {
+		return fs.ErrorPermissionDenied
+	}
 	m, err := f.store.Metadata(ctx, e.ID)
 	if err != nil {
 		return err
 	}
 	if m.VirtualType != "" {
+		return fs.ErrorPermissionDenied
+	}
+	return nil
+}
+
+func (f *Fs) requireParent(ctx context.Context, remote string) error {
+	e, err := f.directory(ctx, remote)
+	if err != nil {
+		return err
+	}
+	if source, ok := f.source.(accountProtection); ok && source.accountSynthetic(e.Token) {
 		return fs.ErrorPermissionDenied
 	}
 	return nil

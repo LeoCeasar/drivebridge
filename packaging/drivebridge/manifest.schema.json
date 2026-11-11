@@ -20,7 +20,8 @@
     "licenses",
     "files",
     "vendor_metadata",
-    "upgrade_guard"
+    "upgrade_guard",
+    "native_login"
   ],
   "properties": {
     "schema_version": {
@@ -113,7 +114,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9_.@/-]+$"
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9_.@ /-]+$"
           },
           "size": {
             "type": "integer",
@@ -160,6 +161,36 @@
     },
     "desktop": {
       "type": "boolean"
+    },
+    "native_login": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available",
+        "provider",
+        "minimum_os",
+        "verification"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "WKWebView",
+            "unavailable"
+          ]
+        },
+        "minimum_os": {
+          "enum": [
+            "14.0",
+            null
+          ]
+        },
+        "verification": {
+          "const": "not_verified"
+        }
+      }
     }
   }
 }

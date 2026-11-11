@@ -18,6 +18,12 @@ import plistlib
 import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
+SESSION_APP = 'libexec/DriveBridge Session.app'
+SESSION_BINARY = SESSION_APP + '/Contents/MacOS/drivebridge-session-host'
+SESSION_PLIST = SESSION_APP + '/Contents/Info.plist'
+SESSION_BUNDLE_ID = 'org.drivebridge.sessionhost'
+SESSION_MINIMUM_OS = '14.0'
+
 NATIVE_GATES = ('driver', 'install', 'mount_read_write_rename', 'flush_error_feedback',
                 'stop', 'upgrade_preserves_pending', 'uninstall_preserves_userdata', 'user_startup')
 # Public upstream help literals, not build/source-directory prefixes.
@@ -103,10 +109,12 @@ def required_files(target, desktop=False):
                   'libexec/lark/package/package.json', 'libexec/lark/package/LICENSE',
                   'libexec/lark/package/checksums.txt', 'libexec/lark/package/scripts/run.js',
                   'libexec/lark/package/scripts/install.js', 'libexec/lark/package/scripts/install-wizard.js'}
+    if target == 'darwin':
+        files |= {SESSION_BINARY, SESSION_PLIST}
     return files | (desktop_files(target) if desktop else set())
 
 
-def validate_payload(root, target, desktop=False):
+def validate_payload(root, target, desktop=False, arch=None):
     root = Path(root)
     required = required_files(target, desktop)
     found = set()
@@ -120,10 +128,12 @@ def validate_payload(root, target, desktop=False):
             raise ValueError('nonregular payload: ' + rel)
         if rel == 'manifest.json':
             continue
-        if (path.suffix in ('.plist', '.service', '.task') or 'startup' in path.name.lower()) and not (desktop and rel == 'DriveBridge.app/Contents/Info.plist'):
+        allowed_plist = target == 'darwin' and (rel == SESSION_PLIST or desktop and rel == 'DriveBridge.app/Contents/Info.plist')
+        if (path.suffix in ('.plist', '.service', '.task') or 'startup' in path.name.lower()) and not allowed_plist:
             raise ValueError('duplicate/unmanaged startup item: ' + rel)
         allowed_runtime = target == 'windows' and rel == 'libexec/lark/package/bin/lark-cli.exe'
-        allowed_signature = desktop and target == 'darwin' and rel == 'DriveBridge.app/Contents/_CodeSignature/CodeResources'
+        allowed_signature = target == 'darwin' and (rel == SESSION_APP + '/Contents/_CodeSignature/CodeResources' or
+                                                    desktop and rel == 'DriveBridge.app/Contents/_CodeSignature/CodeResources')
         if rel not in required and not allowed_runtime and not allowed_signature:
             raise ValueError('unapproved payload file (accounts/config are never copied): ' + rel)
         if path.stat().st_size == 0:
@@ -153,6 +163,8 @@ def validate_payload(root, target, desktop=False):
     missing = required - found
     if missing:
         raise ValueError('missing payload/license: ' + ', '.join(sorted(missing)))
+    if target == 'darwin':
+        validate_session_bundle(root, arch)
 
 
 def sha(path):
@@ -164,8 +176,9 @@ def sha(path):
 
 
 def inventory(root):
+    root = Path(root)
     return [{'path': p.relative_to(root).as_posix(), 'size': p.stat().st_size, 'sha256': sha(p)}
-            for p in sorted(Path(root).rglob('*')) if p.is_file() and p.name != 'manifest.json']
+            for p in sorted(root.rglob('*')) if p.is_file() and p != root / 'manifest.json']
 
 
 def payload_digest(files):
@@ -173,7 +186,7 @@ def payload_digest(files):
 
 
 def verify_files(root, manifest):
-    validate_payload(root, manifest['platform'], manifest.get('desktop', False))
+    validate_payload(root, manifest['platform'], manifest.get('desktop', False), manifest.get('architecture'))
     if inventory(root) != manifest['files']:
         raise ValueError('payload inventory mismatch; missing, extra, or changed file')
 
@@ -196,7 +209,10 @@ def check_native_evidence(manifest, evidence):
             raise ValueError('release blocked: evidence ' + key + ' mismatch')
     if evidence.get('payload_sha256') != payload_digest(manifest['files']):
         raise ValueError('release blocked: evidence must bind exact payload hashes')
-    for gate in NATIVE_GATES + (('desktop_tray', 'desktop_login', 'desktop_upgrade_exit') if manifest.get('desktop') else ()):
+    gates = NATIVE_GATES + (('desktop_tray', 'desktop_login', 'desktop_upgrade_exit') if manifest.get('desktop') else ())
+    if manifest['platform'] == 'darwin':
+        gates += ('native_login',)
+    for gate in gates:
         if evidence.get('checks', {}).get(gate) != 'passed':
             raise ValueError('release blocked: native evidence not verified: ' + gate)
 
@@ -264,6 +280,7 @@ def stage(args):
     suffix = '.exe' if args.platform == 'windows' else ''
     check_binary(args.binary, args.platform, args.arch)
     check_commands(args.binary, args.platform, args.cli_only)
+    stage_session_host(root, args.platform, args.arch, args.session_host_binary, args.version)
     native = root / ('libexec/lark/lark-cli' + suffix)
     upstream_sha = prepare_cli(args.lark_native_archive, args.platform, args.arch, native)
     if args.signed_cli:
@@ -307,7 +324,42 @@ def stage(args):
         if not args.desktop_binary:
             raise ValueError('desktop mode requires a native desktop binary')
         stage_desktop(root, args.platform, args.arch, args.desktop_binary, args.version)
-    validate_payload(root, args.platform, getattr(args, 'desktop', False))
+    validate_payload(root, args.platform, getattr(args, 'desktop', False), args.arch)
+
+
+def session_info(version):
+    return {'CFBundleExecutable': 'drivebridge-session-host', 'CFBundleIdentifier': SESSION_BUNDLE_ID,
+            'CFBundleName': 'DriveBridge Session', 'CFBundleDisplayName': 'DriveBridge 飞书登录',
+            'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': version, 'CFBundleVersion': version,
+            'LSMinimumSystemVersion': SESSION_MINIMUM_OS, 'NSHighResolutionCapable': True}
+
+
+def validate_session_bundle(root, arch=None):
+    try:
+        info = plistlib.loads((Path(root) / SESSION_PLIST).read_bytes())
+    except (ValueError, plistlib.InvalidFileException) as exc:
+        raise ValueError('invalid native login helper Info.plist') from exc
+    if (not isinstance(info, dict) or info.get('CFBundleIdentifier') != SESSION_BUNDLE_ID or
+            info.get('CFBundleExecutable') != 'drivebridge-session-host' or info.get('CFBundlePackageType') != 'APPL' or
+            info.get('LSMinimumSystemVersion') != SESSION_MINIMUM_OS or info.get('NSHighResolutionCapable') is not True or
+            info.get('LSUIElement') or info.get('LSBackgroundOnly')):
+        raise ValueError('native login helper identity/minimum OS/activation mismatch')
+    if arch:
+        check_binary(Path(root) / SESSION_BINARY, 'darwin', arch)
+
+
+def stage_session_host(root, target, arch, helper, version):
+    if target != 'darwin':
+        if helper:
+            raise ValueError('native login helper is currently macOS-only')
+        return
+    if not helper:
+        raise ValueError('macOS package requires native login helper binary')
+    check_binary(helper, target, arch)
+    copy_file(helper, Path(root) / SESSION_BINARY)
+    (Path(root) / SESSION_BINARY).chmod(0o755)
+    (Path(root) / SESSION_PLIST).write_bytes(plistlib.dumps(session_info(version)))
+    validate_session_bundle(root, arch)
 
 
 def icon_png():
@@ -347,7 +399,8 @@ def stage_desktop(root, target, arch, binary, version):
         info = {'CFBundleExecutable': 'drivebridge-desktop', 'CFBundleIdentifier': 'org.drivebridge.desktop',
                 'CFBundleName': 'DriveBridge', 'CFBundleDisplayName': 'DriveBridge', 'CFBundlePackageType': 'APPL',
                 'CFBundleShortVersionString': version, 'CFBundleVersion': version,
-                'LSUIElement': True, 'CFBundleIconFile': 'drivebridge.icns', 'NSHighResolutionCapable': True}
+                'LSUIElement': True, 'CFBundleIconFile': 'drivebridge.icns', 'NSHighResolutionCapable': True,
+                'LSMinimumSystemVersion': SESSION_MINIMUM_OS}
         (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
         resource = contents / 'Resources/drivebridge.icns'
         resource.parent.mkdir(parents=True)
@@ -365,7 +418,7 @@ def stage_desktop(root, target, arch, binary, version):
 def manifest(args):
     root = Path(args.root)
     check_mode(args.cli_only, args.unsigned, getattr(args, 'desktop', False))
-    validate_payload(root, args.platform, getattr(args, 'desktop', False))
+    validate_payload(root, args.platform, getattr(args, 'desktop', False), args.arch)
     tools = json.loads(Path(args.tools).read_text())
     if not tools or any(not value for value in tools.values()):
         raise ValueError('tool versions must be recorded')
@@ -375,6 +428,8 @@ def manifest(args):
                 'go_version': run(['go', 'version']), 'tools': tools,
                 'runtime': lock, 'cli_binding': {'upstream_sha256': cli_asset(lock, args.platform, args.arch)['native_sha256'], 'artifact_sha256': sha(root / ('libexec/lark/lark-cli.exe' if args.platform == 'windows' else 'libexec/lark/lark-cli'))}, 'vendor_metadata': {'embedded_ci_prefixes': [p.decode() for p in VENDOR_CI_PREFIXES], 'policy': 'Only checksum-verified vendor executables may retain upstream CI source paths; bytes are never rewritten.', 'product_help_examples': [p.decode() for p in PRODUCT_HELP_EXAMPLES]}, 'mount': not args.cli_only,
                 'mount_engine': 'none' if args.cli_only else ('mount2' if args.platform == 'linux' else 'cmount'),
+                'native_login': {'available': args.platform == 'darwin', 'provider': 'WKWebView' if args.platform == 'darwin' else 'unavailable',
+                                 'minimum_os': SESSION_MINIMUM_OS if args.platform == 'darwin' else None, 'verification': 'not_verified'},
                 'signature': args.signature, 'upgrade_guard': 'lifecycle_lease_unverified', 'native_verification': 'not_verified',
                 'release_blockers': ['native installation, upgrade, driver and mount evidence required', 'native installer lease environment/identity/lifetime propagation not verified'],
                 'licenses': sorted(p.relative_to(root).as_posix() for p in (root / 'licenses').iterdir()),
@@ -455,6 +510,7 @@ def main():
         if name == 'stage':
             for key in ('root', 'repo', 'binary', 'lark-package', 'lark-native-archive'):
                 p.add_argument('--' + key, required=True)
+            p.add_argument('--session-host-binary')
             p.add_argument('--desktop-binary')
             p.add_argument('--version', default='0.0.0')
             p.add_argument('--node-archive')

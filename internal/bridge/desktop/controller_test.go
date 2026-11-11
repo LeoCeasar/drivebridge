@@ -154,3 +154,53 @@ func TestRecoveryBoundedAndAuthNeverAutoRetried(t *testing.T) {
 		})
 	}
 }
+
+type accountFixtureBackend struct {
+	fixtureBackend
+	accounts   []AccountView
+	accountErr error
+	rescanned  []model.ProfileID
+}
+
+func (b *accountFixtureBackend) Accounts(context.Context) ([]AccountView, error) {
+	return append([]AccountView(nil), b.accounts...), b.accountErr
+}
+func (b *accountFixtureBackend) RescanAccount(_ context.Context, id model.ProfileID) error {
+	b.rescanned = append(b.rescanned, id)
+	return nil
+}
+func TestOptionalAccountsPollCachedStatusAndRevalidateRescan(t *testing.T) {
+	b := &accountFixtureBackend{accounts: []AccountView{{ID: "a", Name: "账号", State: "complete", Configured: true, Enabled: true, CanRescan: true}, {ID: "b", State: "needs_login"}}}
+	c := NewController(context.Background(), b, ControllerOptions{})
+	state := c.Poll(context.Background())
+	if len(state.Accounts) != 2 || state.Accounts[0].State != "complete" || len(b.rescanned) != 0 {
+		t.Fatal(state, b.rescanned)
+	}
+	if err := c.HandleAccount(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HandleAccount(context.Background(), "b"); err == nil {
+		t.Fatal("login-required rescan admitted")
+	}
+	if err := c.HandleAccount(context.Background(), "missing"); err == nil {
+		t.Fatal("unknown account admitted")
+	}
+	b.accounts[0].CanRescan = false
+	if err := c.HandleAccount(context.Background(), "a"); err == nil {
+		t.Fatal("stale menu rescan admitted")
+	}
+	if len(b.rescanned) != 1 || b.rescanned[0] != "a" {
+		t.Fatal(b.rescanned)
+	}
+	legacy := NewController(context.Background(), &fixtureBackend{}, ControllerOptions{})
+	if err := legacy.HandleAccount(context.Background(), "a"); err == nil {
+		t.Fatal("mount-only backend admitted rescan")
+	}
+}
+func TestAccountReadFailureKeepsSyncStatusIndependent(t *testing.T) {
+	b := &accountFixtureBackend{fixtureBackend: fixtureBackend{mounts: []Mount{{ID: "m"}}, status: map[model.MountID]model.MountStatus{}}, accountErr: errors.New("private detail")}
+	state := NewController(context.Background(), b, ControllerOptions{}).Poll(context.Background())
+	if state.AccountError != "operation_failed" || state.Kind != "stopped" {
+		t.Fatal(state)
+	}
+}

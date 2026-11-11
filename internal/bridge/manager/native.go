@@ -163,7 +163,11 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err = s.Validate(ctx); err != nil {
 		return nil, err
 	}
-	f, err := overlay.New(overlay.Dependencies{Store: s, Cloud: client, ProfileID: spec.Profile.ID, MountID: spec.Mount.ID})
+	account, err := m.accountOptions(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	f, err := overlay.New(overlay.Dependencies{Store: s, Cloud: client, ProfileID: spec.Profile.ID, MountID: spec.Mount.ID, Account: account})
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +248,26 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return nil, err
 	}
 	success = true
-	return &workerServices{store: s, runtime: native, run: engine.Run, refreshConflict: engine.RefreshConflict, resumeCredentials: func(ctx context.Context) error { return resumeVerifiedCredentials(ctx, s) }, resolve: func(ctx context.Context, r model.ResolveRequest) error {
+	return &workerServices{store: s, runtime: native, run: engine.Run, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
+		if err := overlayFS.RefreshDirectories(ctx); err != nil {
+			return err
+		}
+		root, err := v.Root()
+		if err != nil {
+			return err
+		}
+		// VFS retains open and dirty virtual entries while expiring safe rows.
+		root.ForgetAll()
+		// A dirty descendant can prevent ForgetAll from expiring its parents.
+		// Invalidate their timestamps without removing the open/dirty nodes.
+		root.ForgetPath(".drivebridge-refresh", fs.EntryObject)
+		if spec.Remote.AccountRoot {
+			for _, category := range []string{"个人目录", "共享目录", "手动添加"} {
+				root.ForgetPath(category+"/.drivebridge-refresh", fs.EntryObject)
+			}
+		}
+		return nil
+	}, resumeCredentials: func(ctx context.Context) error { return resumeVerifiedCredentials(ctx, s) }, resolve: func(ctx context.Context, r model.ResolveRequest) error {
 		_, _, err := engine.Resolve(ctx, r)
 		return err
 	}, retry: func(ctx context.Context) error {

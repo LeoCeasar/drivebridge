@@ -157,6 +157,7 @@ func Run(ctx context.Context, o Options) error {
 					initializationRelease()
 					initializationRelease = nil
 					ready = true
+					startDiscovery(ctx, o.Manager, &operations)
 					publish()
 					mounts, e := backend.Mounts(ctx)
 					if e == nil && len(mounts) == 0 && !o.Headless {
@@ -177,7 +178,11 @@ func Run(ctx context.Context, o Options) error {
 					defer operations.Done()
 					actionCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 					defer stop()
-					_ = controller.Handle(actionCtx, a.Kind, model.MountID(a.MountID))
+					if a.Kind == "rescan_discovery" {
+						_ = controller.HandleAccount(actionCtx, model.ProfileID(a.ProfileID))
+					} else {
+						_ = controller.Handle(actionCtx, a.Kind, model.MountID(a.MountID))
+					}
 				}()
 			case <-ticker.C:
 				if ready {
@@ -186,12 +191,22 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}
 	}()
+	shutdown := desktopShutdown(cancel, finished, func() error {
+		if host != nil {
+			return host.Close(context.Background())
+		}
+		return nil
+	}, o.Manager.Close, func() {
+		if release != nil {
+			release()
+		}
+	})
 	initial := tray.View{State: "unavailable", Text: "正在启动 DriveBridge"}
 	if o.Headless {
 		actions <- tray.Action{Kind: "ready"}
 		<-ctx.Done()
 	} else {
-		err = tray.Run(ctx, initial, updates, actions)
+		err = tray.RunWithShutdown(ctx, initial, updates, actions, func() { _ = shutdown() })
 		if errors.Is(err, tray.ErrNoDisplay) || errors.Is(err, tray.ErrUnavailable) {
 			// Linux desktop environments without indicators retain the local UI and
 			// sync supervisor. Availability is diagnostic; never claim an icon is visible.
@@ -200,17 +215,8 @@ func Run(ctx context.Context, o Options) error {
 			err = nil
 		}
 	}
-	cancel()
-	loopErr := <-finished
-	// Release the singleton only after all actions and UI ownership have ended.
-	if host != nil {
-		_ = host.Close(context.Background())
-	}
-	if release != nil {
-		release()
-	}
-	if loopErr != nil {
-		return loopErr
+	if shutdownErr := shutdown(); shutdownErr != nil {
+		return shutdownErr
 	}
 	if errors.Is(err, context.Canceled) {
 		return nil
@@ -219,7 +225,10 @@ func Run(ctx context.Context, o Options) error {
 }
 func trayView(s State) tray.View {
 	kind := trayState(s.Kind)
-	v := tray.View{State: kind, Text: s.Text, Autostart: s.Autostart, Busy: s.Busy}
+	v := tray.View{State: kind, Text: s.Text, Autostart: s.Autostart, Busy: s.Busy, AccountError: s.AccountError}
+	for _, account := range s.Accounts {
+		v.Accounts = append(v.Accounts, tray.Account{ID: string(account.ID), Name: account.Name, State: account.State, Configured: account.Configured, Enabled: account.Enabled, CanRescan: account.CanRescan, LastScan: account.LastScan})
+	}
 	for _, m := range s.Mounts {
 		state, _ := mountState(m)
 		v.Mounts = append(v.Mounts, tray.Mount{ID: string(m.ID), Name: m.Name, Mountpoint: m.Mountpoint, State: trayState(state), Running: m.Status.Running, Desired: m.Desired, Pending: m.Status.Queued + m.Status.Inflight + m.Status.VFSPending, Conflicts: m.Status.Conflicts, Error: mountError(m)})
@@ -244,4 +253,33 @@ func mountError(m MountView) string {
 		return m.Error
 	}
 	return m.Status.LastError
+}
+
+// The desktop owns this goroutine and waits for it before releasing its singleton.
+func startDiscovery(ctx context.Context, runner interface{ RunDiscovery(context.Context) }, operations *sync.WaitGroup) {
+	operations.Add(1)
+	go func() { defer operations.Done(); runner.RunDiscovery(ctx) }()
+}
+
+// Stop accepting work, drain its only producer, then close owned resources before
+// native Quit can terminate the process. Concurrent quit paths share one result.
+func desktopShutdown(cancel context.CancelFunc, finished <-chan error, closeUI, closeManager func() error, release func()) func() error {
+	var once sync.Once
+	var result error
+	return func() error {
+		once.Do(func() {
+			cancel()
+			result = <-finished
+			if closeUI != nil {
+				result = errors.Join(result, closeUI())
+			}
+			if closeManager != nil {
+				result = errors.Join(result, closeManager())
+			}
+			if release != nil {
+				release()
+			}
+		})
+		return result
+	}
 }

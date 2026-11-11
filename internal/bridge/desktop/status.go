@@ -3,6 +3,7 @@ package desktop
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 )
@@ -18,13 +19,26 @@ type MountView struct {
 	Status model.MountStatus `json:"status"`
 	Error  string            `json:"error,omitempty"`
 }
+
+// AccountView contains cached discovery status; polling never starts a login or scan.
+type AccountView struct {
+	ID         model.ProfileID `json:"id"`
+	Name       string          `json:"name"`
+	State      string          `json:"state"`
+	Configured bool            `json:"configured"`
+	Enabled    bool            `json:"enabled"`
+	CanRescan  bool            `json:"can_rescan"`
+	LastScan   time.Time       `json:"last_scan,omitempty"`
+}
 type State struct {
-	Kind      string      `json:"kind"`
-	Text      string      `json:"text"`
-	Mounts    []MountView `json:"mounts"`
-	Autostart bool        `json:"autostart"`
-	Busy      bool        `json:"busy"`
-	Error     string      `json:"error,omitempty"`
+	Accounts     []AccountView `json:"accounts,omitempty"`
+	AccountError string        `json:"account_error,omitempty"`
+	Kind         string        `json:"kind"`
+	Text         string        `json:"text"`
+	Mounts       []MountView   `json:"mounts"`
+	Autostart    bool          `json:"autostart"`
+	Busy         bool          `json:"busy"`
+	Error        string        `json:"error,omitempty"`
 }
 
 // Aggregate only reports synced for running mounts with positively confirmed

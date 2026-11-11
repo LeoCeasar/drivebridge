@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -200,5 +201,103 @@ func TestHeadlessRefusesUnclaimedOccupiedStateBeforeUI(t *testing.T) {
 	raw, err := os.ReadFile(unrelated)
 	if err != nil || string(raw) != "preserve" {
 		t.Fatalf("unrelated file changed: %q %v", raw, err)
+	}
+}
+
+type desktopDiscoveryRunner struct {
+	started, stopped chan struct{}
+}
+
+func (r *desktopDiscoveryRunner) RunDiscovery(ctx context.Context) {
+	close(r.started)
+	<-ctx.Done()
+	close(r.stopped)
+}
+func TestDesktopOwnsDiscoveryGoroutineUntilCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner := &desktopDiscoveryRunner{started: make(chan struct{}), stopped: make(chan struct{})}
+	var operations sync.WaitGroup
+	startDiscovery(ctx, runner, &operations)
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not start")
+	}
+	cancel()
+	joined := make(chan struct{})
+	go func() { operations.Wait(); close(joined) }()
+	select {
+	case <-joined:
+	case <-time.After(time.Second):
+		t.Fatal("desktop did not join discovery")
+	}
+	select {
+	case <-runner.stopped:
+	default:
+		t.Fatal("discovery survived desktop ownership")
+	}
+}
+
+func TestDesktopShutdownClosesOwnedResourcesBeforeNativeTermination(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error)
+	events := make(chan string, 8)
+	operationsDone := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		<-operationsDone
+		events <- "operations drained"
+		finished <- nil
+	}()
+	shutdown := desktopShutdown(func() { events <- "app canceled"; cancel() }, finished,
+		func() error { events <- "UI closed"; return nil },
+		func() error { events <- "browser manager closed"; return nil },
+		func() { events <- "singleton released" })
+	terminated := make(chan struct{})
+	go func() {
+		// Model macOS's native exit: cleanup must finish before termination,
+		// because termination does not unwind the caller's Go defers.
+		if err := shutdown(); err != nil {
+			t.Error(err)
+		}
+		events <- "native terminated"
+		close(terminated)
+	}()
+	if got := <-events; got != "app canceled" {
+		t.Fatal(got)
+	}
+	select {
+	case <-terminated:
+		t.Fatal("terminated with active operations")
+	default:
+	}
+	close(operationsDone)
+	select {
+	case <-terminated:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not reach native termination")
+	}
+	for _, want := range []string{"operations drained", "UI closed", "browser manager closed", "singleton released", "native terminated"} {
+		if got := <-events; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+	// A returning native loop and a command-level cleanup can arrive later.
+	// Neither may consume finished again or close the same resources twice.
+	repeated := make(chan error, 1)
+	go func() { repeated <- shutdown() }()
+	select {
+	case err := <-repeated:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cleanup consumed finished twice")
+	}
+	select {
+	case event := <-events:
+		t.Fatal("cleanup repeated", event)
+	default:
 	}
 }

@@ -74,7 +74,7 @@ try {
     $signature = 'unsigned_test'
     if (-not $Unsigned) {
         $signature = 'signed'
-        # Keep official CLI/Node signatures as supplied; only sign our executable.
+        # Keep official CLI/Node signatures as supplied; only sign our executables.
         Invoke-Native signtool @('sign', '/sha1', $env:DRIVEBRIDGE_SIGN_CERT_SHA1, '/fd', 'SHA256', '/tr', $env:DRIVEBRIDGE_TIMESTAMP_URL, '/td', 'SHA256', "$payload/bin/drivebridge.exe")
         Invoke-Native signtool @('verify', '/pa', "$payload/bin/drivebridge.exe")
         if ($Desktop) {

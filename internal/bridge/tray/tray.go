@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 )
 
 var (
@@ -16,6 +18,8 @@ var (
 
 type View struct {
 	State, Text     string
+	Accounts        []Account
+	AccountError    string
 	Mounts          []Mount
 	Autostart, Busy bool
 }
@@ -27,7 +31,13 @@ type Mount struct {
 	Error                       string
 }
 
-type Action struct{ Kind, MountID string }
+type Account struct {
+	ID, Name, State                string
+	Configured, Enabled, CanRescan bool
+	LastScan                       time.Time
+}
+
+type Action struct{ Kind, MountID, ProfileID string }
 
 type menuEntry struct {
 	Key, Parent, Label, Tooltip string
@@ -61,6 +71,31 @@ func menu(v View) []menuEntry {
 		{Key: "status", Label: "DriveBridge · " + text},
 		{Key: "open", Label: "打开管理页", Enabled: true, Action: Action{Kind: "open_manager"}},
 		{Key: "mounts", Label: "挂载", Enabled: len(v.Mounts) > 0},
+	}
+	if len(v.Accounts) > 0 || v.AccountError != "" {
+		entries = append(entries, menuEntry{Key: "accounts", Label: "账号与目录发现", Enabled: true})
+		if v.AccountError != "" {
+			entries = append(entries, menuEntry{Key: "accounts:error", Parent: "accounts", Label: "目录发现状态暂不可用"})
+		}
+	}
+	for _, account := range v.Accounts {
+		parent := "account:" + base64.RawURLEncoding.EncodeToString([]byte(account.ID))
+		name := strings.TrimSpace(account.Name)
+		if name == "" {
+			name = account.ID
+		}
+		lastScan := "尚未扫描"
+		if !account.LastScan.IsZero() {
+			lastScan = account.LastScan.Local().Format("01-02 15:04")
+		}
+		entries = append(entries,
+			menuEntry{Key: parent, Parent: "accounts", Label: name, Enabled: true},
+			menuEntry{Key: parent + ":login", Parent: parent, Label: accountLoginLabel(account)},
+			menuEntry{Key: parent + ":status", Parent: parent, Label: discoveryLabel(account.State)},
+			menuEntry{Key: parent + ":last_scan", Parent: parent, Label: "最近扫描：" + lastScan},
+			menuEntry{Key: parent + ":rescan", Parent: parent, Label: "重新扫描目录", Enabled: !v.Busy && account.CanRescan, Action: Action{Kind: "rescan_discovery", ProfileID: account.ID}},
+			menuEntry{Key: parent + ":manage", Parent: parent, Label: "管理账号与登录窗口", Enabled: true, Action: Action{Kind: "open_manager"}},
+		)
 	}
 	for _, m := range v.Mounts {
 		// Keys contain the ID, never the display name or a filesystem path.
@@ -152,4 +187,82 @@ func serve(ctx context.Context, initial View, updates <-chan View, clicks <-chan
 			pending = pending[1:]
 		}
 	}
+}
+
+func accountLoginLabel(account Account) string {
+	switch account.State {
+	case "needs_login":
+		return "应用登录：需要重新登录"
+	case "login_pending":
+		return "应用登录：等待完成"
+	case "needs_browser":
+		return "应用登录：登录组件暂不可用"
+	case "needs_extension":
+		return "应用登录：需要重新登录"
+	case "browser_disconnected":
+		return "应用登录：需要重新登录，已有同步继续"
+	case "partial", "stale":
+		return "应用登录：会话状态待核验"
+	case "idle", "scanning":
+		return "应用登录：等待目录核验"
+	case "unsupported":
+		return "应用登录：当前平台暂不支持"
+	}
+	if !account.Configured {
+		return "应用登录：尚未设置"
+	}
+	return "应用登录：已保存"
+}
+func discoveryLabel(state string) string {
+	switch state {
+	case "complete":
+		return "目录发现：本次扫描完成"
+	case "partial":
+		return "目录发现：部分完成"
+	case "stale":
+		return "目录发现：保留旧清单"
+	case "scanning":
+		return "目录发现：正在扫描"
+	case "disabled":
+		return "目录发现：未启用"
+	case "unsupported":
+		return "目录发现：来源暂不支持"
+	case "unavailable":
+		return "目录发现：暂不可用"
+	case "needs_extension", "browser_disconnected":
+		return "目录发现：等待重新登录"
+	case "needs_login", "login_pending", "needs_browser", "unconfigured":
+		return "目录发现：等待应用登录"
+	default:
+		return "目录发现：等待扫描"
+	}
+}
+
+// Both normal Quit and the platform's exit callback can request shutdown.
+func shutdownOnce(cleanup func()) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if cleanup != nil {
+				cleanup()
+			}
+		})
+	}
+}
+
+// App cancellation starts cleanup while the native menu remains alive. Native
+// Quit is admitted only after cleanup has finished; its own exit callback uses
+// the same gate when the platform initiates termination first.
+func nativeLifetime(ctx context.Context, cleanup func()) (context.Context, context.CancelFunc, func()) {
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	shutdown := shutdownOnce(cleanup)
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdown()
+			cancel()
+		case <-runCtx.Done():
+		}
+	}()
+	return runCtx, cancel, shutdown
 }

@@ -20,6 +20,12 @@ type Backend interface {
 	SetAutostart(context.Context, bool) error
 	Autostart(context.Context) (bool, error)
 }
+
+// AccountBackend is optional so existing mount-only adapters remain compatible.
+type AccountBackend interface {
+	Accounts(context.Context) ([]AccountView, error)
+	RescanAccount(context.Context, model.ProfileID) error
+}
 type ControllerOptions struct {
 	Now       func() time.Time
 	ErrorCode func(error) string
@@ -89,6 +95,12 @@ func (c *Controller) Poll(ctx context.Context) State {
 		views = append(views, v)
 	}
 	out := Aggregate(views)
+	if accounts, ok := c.b.(AccountBackend); ok {
+		out.Accounts, err = accounts.Accounts(ctx)
+		if err != nil {
+			out.AccountError = c.o.ErrorCode(err)
+		}
+	}
 	out.Autostart, err = c.b.Autostart(ctx)
 	if err != nil {
 		out.Error = c.o.ErrorCode(err)
@@ -226,4 +238,30 @@ func (c *Controller) Handle(ctx context.Context, kind string, id model.MountID) 
 		err = errors.New("unsupported desktop action")
 	}
 	return err
+}
+
+// HandleAccount revalidates the account and login state before a tray rescan.
+func (c *Controller) HandleAccount(ctx context.Context, id model.ProfileID) (err error) {
+	c.mu.Lock()
+	c.busy++
+	c.lastError = ""
+	c.mu.Unlock()
+	defer func() { c.mu.Lock(); c.busy--; c.lastError = c.o.ErrorCode(err); c.mu.Unlock() }()
+	backend, ok := c.b.(AccountBackend)
+	if !ok {
+		return errors.New("account discovery unavailable")
+	}
+	accounts, err := backend.Accounts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		if account.ID == id {
+			if !account.CanRescan {
+				return errors.New("account discovery requires login or is busy")
+			}
+			return backend.RescanAccount(ctx, id)
+		}
+	}
+	return errors.New("unknown configured account")
 }

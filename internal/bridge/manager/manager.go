@@ -46,17 +46,24 @@ type dependencies struct {
 	lifecycleLease func(context.Context) (func(), error)
 }
 type Manager struct {
-	options        Options
-	domain         string
-	factory        workerFactory
-	spawn          func(context.Context, []string, string) (int, error)
-	startLease     func(context.Context) (func(), error)
-	lifecycleLease func(context.Context) (func(), error)
-	mu             sync.Mutex
-	workers        map[model.MountID]*worker
-	auth           *auth.Service
-	ctx            context.Context
-	cancel         context.CancelFunc
+	options           Options
+	domain            string
+	factory           workerFactory
+	spawn             func(context.Context, []string, string) (int, error)
+	startLease        func(context.Context) (func(), error)
+	lifecycleLease    func(context.Context) (func(), error)
+	mu                sync.Mutex
+	workers           map[model.MountID]*worker
+	auth              *auth.Service
+	ctx               context.Context
+	cancel            context.CancelFunc
+	discoveryMu       sync.Mutex
+	discoverySessions map[model.ProfileID]discoverySession
+	discoveryFactory  discoverySessionFactory
+	discoveryClosing  bool
+	discoveryLogins   map[model.ProfileID]context.CancelFunc
+	closeOnce         sync.Once
+	closeErr          error
 }
 
 func New(o Options) (*Manager, error) { return newManager(o, dependencies{}) }
@@ -121,13 +128,19 @@ func newManager(o Options, d dependencies) (*Manager, error) {
 	return m, nil
 }
 func (m *Manager) Close() error {
-	m.cancel()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.auth != nil {
-		return m.auth.Close()
-	}
-	return nil
+	m.closeOnce.Do(func() {
+		// Native tray quit may terminate the process immediately after this returns.
+		// Close discovery transports before canceling their lifetime, and make repeated
+		// callers wait for the same shutdown. Owned login helpers are drained before native tray termination.
+		m.closeDiscoverySessions()
+		m.cancel()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.auth != nil {
+			m.closeErr = m.auth.Close()
+		}
+	})
+	return m.closeErr
 }
 func (m *Manager) ConfigFile() string { return m.options.ConfigFile }
 func (m *Manager) LoadConfig(ctx context.Context) (config.Config, error) {
@@ -337,7 +350,7 @@ func (p profileStore) Bind(ctx context.Context, id model.ProfileID, ref, hash st
 	})
 }
 
-var RequiredScopes = []string{"drive:drive.metadata:readonly", "drive:file:download", "drive:file:upload", "space:folder:create", "space:document:move", "space:document:delete", "docx:document:readonly", "docx:document:create", "docx:document:write_only"}
+var RequiredScopes = []string{"drive:drive.metadata:readonly", "drive:file:download", "drive:file:upload", "space:folder:create", "space:document:move", "space:document:delete", "docx:document:readonly", "docx:document:create", "docx:document:write_only", "search:docs:read"}
 
 func (m *Manager) Auth(ctx context.Context) (*auth.Service, error) {
 	m.mu.Lock()

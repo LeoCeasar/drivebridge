@@ -44,9 +44,12 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
+	if err := f.requireParent(ctx, parentPath(dst)); err != nil {
+		return "", err
+	}
 	source, err := f.store.EntryByRemote(ctx, src)
 	if errors.Is(err, store.ErrNotFound) {
-		if _, err = f.directory(ctx, parentPath(src)); err != nil {
+		if err = f.requireParent(ctx, parentPath(src)); err != nil {
 			return "", err
 		}
 		source, err = f.store.EnsureEntry(ctx, src, newKind(src))
@@ -260,7 +263,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	if _, err := f.directory(ctx, parentPath(dir)); err != nil {
+	if err := f.requireParent(ctx, parentPath(dir)); err != nil {
 		return err
 	}
 	op, err := f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: "mkdir", Dst: dir})

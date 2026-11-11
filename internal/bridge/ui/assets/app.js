@@ -6,10 +6,11 @@
   const queue = window.DriveBridgeBatch.createQueue();
   let activeHunk = null, openSeq = 0, activeView = 'workspace';
   let csrf = '', current = null, choices = new Map(), manual = false;
-  let draftTimer = null, authFlow = '';
+  let draftTimer = null, authFlow = '', authProfile = '';
+  let messageOwner = '';
   const record = () => current && queue.records.get(current.id);
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
-  function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
+  function message(text, error = false, owner = '') { messageOwner = owner; $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
   function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; $('connection').textContent = '本机会话已失效'; }
   async function api(route, method = 'GET', body) {
     const headers = {};
@@ -20,6 +21,7 @@
     if (!response.ok) { if (response.status === 403) showSessionError(); const error = new Error(data.message || '本机服务暂时不可用，请稍后重试。'); error.status = response.status; error.code = data.code; throw error; }
     return data;
   }
+  const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh()});
   function bytes(text) { const data = new TextEncoder().encode(text); let result = ''; for (let i = 0; i < data.length; i += 8192) result += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(result); }
   function view(name) {
     activeView = name;
@@ -74,16 +76,17 @@
     for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
     renderQueue();
   }
-  async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true); } }
+  async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; if (messageOwner === 'status_refresh') message(''); } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true, 'status_refresh'); } }
   $('refresh').addEventListener('click', refresh);
   function options(select, items, label) { select.replaceChildren(); if (!items.length) { const empty = make('option', label); empty.value = ''; select.append(empty); } for (const item of items) { const option = make('option', item.name); option.value = item.id; select.append(option); } }
   async function loadConfig() {
     const config = await api('/api/config'); $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
-    for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); authFlow = flow.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = flow.expires_at ? `请在 ${new Date(flow.expires_at).toLocaleTimeString()} 前完成。` : '等待授权完成；关闭页面不会暴露凭据。'; } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); authFlow = flow.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = '相关挂载已进入保留待上传数据的恢复流程；请完成原身份授权。'; } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
+    for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); authFlow = flow.id; authProfile = p.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = flow.expires_at ? `请在 ${new Date(flow.expires_at).toLocaleTimeString()} 前完成。` : '等待授权完成；关闭页面不会暴露凭据。'; } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); authFlow = flow.id; authProfile = p.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = '相关挂载已进入保留待上传数据的恢复流程；请完成原身份授权。'; } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
+    discovery.setProfiles(config.profiles); await discovery.load();
     return config;
   }
   for (const [id, action] of [['profile-form','profile'],['remote-form','remote'],['mount-form','mount']]) $(id).addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true; const data = Object.fromEntries(new FormData(form)); data.action = action; try { await api('/api/config', 'POST', data); message(action === 'mount' ? '挂载配置已保存，可在“文件与同步”中启动。' : '配置已保存。'); form.reset(); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } });
-  $('auth-complete').addEventListener('click', async () => { if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; message('授权成功，可以选择共享目录。'); await loadConfig(); } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
+  $('auth-complete').addEventListener('click', async () => { if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; const authorizedProfile = authProfile; authProfile = ''; message('用户授权成功，正在打开账号盘的应用登录窗口。'); await loadConfig(); if (authorizedProfile) { const started = await discovery.beginLogin(authorizedProfile); if (!started) message('用户授权成功。请在“账号盘与自动目录发现”中检查账号状态，再打开应用登录窗口继续设置。'); } } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
   function stash(r = record()) {
     if (!r?.input?.text) return;
     try { localStorage.setItem(`draft:${r.id}`,JSON.stringify({text:r.text,generation:r.intent.generation,revision:r.intent.remote_revision})); } catch (_) { /* Keep the in-page and backend copies. */ }
@@ -244,7 +247,7 @@
   window.addEventListener('beforeunload',event => { const unsaved = [...queue.records.values()].filter(r => r.input?.text && r.seq !== r.savedSeq); for (const r of unsaved) stash(r); if (unsaved.length) { event.preventDefault(); event.returnValue = ''; } });
   async function start() {
     const fragment = new URLSearchParams(location.hash.slice(1)); const bootstrap = fragment.get('bootstrap'); history.replaceState(null,'',location.pathname + location.search);
-    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); setInterval(refresh,5000); } catch (_) { showSessionError(); }
+    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); setInterval(() => { refresh(); if (activeView === 'settings') discovery.load(); },5000); } catch (_) { showSessionError(); }
   }
   start();
 })();

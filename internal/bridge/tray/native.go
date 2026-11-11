@@ -25,6 +25,12 @@ func Available() bool { return true }
 // Upstream systray owns a process-wide native loop, so Run may be used only once.
 // Cancellation closes only the tray; the caller owns synchronization workers.
 func Run(ctx context.Context, initial View, updates <-chan View, actions chan<- Action) error {
+	return RunWithShutdown(ctx, initial, updates, actions, nil)
+}
+
+// RunWithShutdown completes the owner's cleanup before native termination.
+// On macOS Quit terminates the process without unwinding Go callers.
+func RunWithShutdown(ctx context.Context, initial View, updates <-chan View, actions chan<- Action, beforeQuit func()) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -38,7 +44,7 @@ func Run(ctx context.Context, initial View, updates <-chan View, actions chan<- 
 		nativeStarted.Store(false)
 		return err
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel, shutdown := nativeLifetime(ctx, beforeQuit)
 	defer cancel()
 	done := make(chan error, 1)
 	systray.Run(func() {
@@ -101,8 +107,12 @@ func Run(ctx context.Context, initial View, updates <-chan View, actions chan<- 
 			}
 		}
 		done <- serve(runCtx, initial, updates, clicks, actions, render)
+		shutdown()
 		systray.Quit()
-	}, cancel)
+	}, func() {
+		shutdown()
+		cancel()
+	})
 	cancel()
 	return <-done
 }

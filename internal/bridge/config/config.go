@@ -219,6 +219,8 @@ func Validate(c Config, p Paths) error {
 			refs[profile.AuthRef] = profile.IdentityHash
 		}
 	}
+	accountRoots := map[model.ProfileID]bool{}
+	accountRemotes := map[model.RemoteID]bool{}
 	for _, remote := range c.Remotes {
 		if err := claim(string(remote.ID)); err != nil {
 			return err
@@ -226,6 +228,15 @@ func Validate(c Config, p Paths) error {
 		remotes[remote.ID] = true
 		if !profiles[remote.ProfileID] || strings.TrimSpace(remote.Name) == "" || strings.TrimSpace(remote.FolderToken) == "" || remote.NewMDPolicy != "docx" {
 			return fmt.Errorf("invalid remote or missing profile")
+		}
+		if remote.AccountRoot {
+			if remote.FolderToken != "drivebridge-account-"+string(remote.ProfileID) || accountRoots[remote.ProfileID] {
+				return fmt.Errorf("invalid or duplicate account directory root")
+			}
+			accountRoots[remote.ProfileID] = true
+			accountRemotes[remote.ID] = true
+		} else if strings.HasPrefix(remote.FolderToken, "drivebridge-account-") {
+			return fmt.Errorf("reserved account directory token")
 		}
 	}
 	privatePaths := []string{filepath.Dir(p.ConfigFile), p.StateDir, p.CacheDir}
@@ -238,12 +249,19 @@ func Validate(c Config, p Paths) error {
 		return fmt.Errorf("state and cache directories overlap")
 	}
 	mounts := []string{}
+	mountedAccounts := map[model.RemoteID]bool{}
 	for _, mount := range c.Mounts {
 		if err := claim(string(mount.ID)); err != nil {
 			return err
 		}
 		if !remotes[mount.RemoteID] || strings.TrimSpace(mount.Name) == "" {
 			return fmt.Errorf("invalid mount or missing remote")
+		}
+		if accountRemotes[mount.RemoteID] {
+			if mountedAccounts[mount.RemoteID] {
+				return fmt.Errorf("account directory already has a mount")
+			}
+			mountedAccounts[mount.RemoteID] = true
 		}
 		path := mount.Mountpoint
 		if !platform.ValidMountpoint(path) {

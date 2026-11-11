@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-11",
+  "scope": "macOS native login compatibility prototype; not integrated into installed product",
+  "platform": {
+    "os": "macOS 26.5.1",
+    "architecture": "arm64",
+    "engine": "WKWebView",
+    "prototype_target": "macOS 14.0"
+  },
+  "source": "8332f1ef8 working tree + ignored owned-login-probe verification source",
+  "login": {
+    "official_login_page_observed": true,
+    "user_completed_login": true,
+    "specific_qr_or_enterprise_sso_variant": "not separately verified",
+    "owner_matches_official_cli": true,
+    "cookies_exported": false,
+    "daily_browser_profiles_accessed": false,
+    "browser_extension_installed": false
+  },
+  "directory_sources": {
+    "personal": {
+      "status": "complete",
+      "count": 3,
+      "pages": 1
+    },
+    "shared_hidden": {
+      "status": "complete",
+      "count": 7,
+      "pages": 1
+    },
+    "shared_visible": {
+      "status": "complete",
+      "count": 3,
+      "pages": 1
+    }
+  },
+  "unique_folder_entrances": 12,
+  "source_scope": "observed personal, shared-visible and shared-hidden entrance lists only; descendants and arbitrary link-accessible folders are not an exhaustive inventory",
+  "checks": {
+    "window_close_keeps_fresh_reads": {
+      "passed": true,
+      "verified_at": "2026-11-11T06:04:08.332577Z"
+    },
+    "helper_restart_keeps_session": {
+      "passed": true,
+      "verified_at": "2026-11-11T06:04:51.662613Z"
+    },
+    "full_verification_program_restart_keeps_session": {
+      "passed": true,
+      "verified_at": "2026-11-11T06:07:11.644964Z"
+    },
+    "separate_store_does_not_inherit_session": {
+      "passed": true,
+      "verified_at": "2026-11-11T06:09:19.417639Z"
+    },
+    "original_store_survives_isolation_probe": {
+      "passed": true,
+      "verified_at": "2026-11-11T06:09:47.784638Z"
+    }
+  },
+  "limitations": [
+    "Cloud drive body was blank or only partially rendered as a loading skeleton; directory requests succeeded. The app login completion view still needs implementation.",
+    "Formal Manager default provider, installed app login entry and packaging have not been switched from the earlier extension development build.",
+    "Windows and Linux native login have not been implemented or tested.",
+    "OS reboot, long-duration expiry, enterprise SSO variants and two fully logged-in real accounts were not tested.",
+    "No upload, writeback, mount or conflict operation was performed by this read-only prototype."
+  ],
+  "screenshot": "../../../../manual/assets/58-owned-login-native-after-restart.png",
+  "verification_tools": {
+    "swift_build": "passed",
+    "go_harness_race_test": "passed; Darwin linker LC_DYSYMTAB warning, exit 0"
+  },
+  "formal_integration": {
+    "status": "macos_development_payload_verified_with_remaining_platform_and_release_limits",
+    "scope": "formal installed-product native login; prototype results do not establish these checks",
+    "platform": "macOS 14+",
+    "bundle_id": "org.drivebridge.sessionhost",
+    "helper_payload": "libexec/DriveBridge Session.app/Contents/MacOS/drivebridge-session-host",
+    "packaging_policy_tests": "passed: 39 unit tests; not a native install check",
+    "checks": {
+      "source_integration_build": "passed: cmount,desktop bridge/cmd block; Feishu backend/larkcli/VFS; manager+ownedlogin race; Windows/Linux CLI cross-build",
+      "installed_app_login_and_fresh_scan": "passed: installed helper + production Manager; first 06:55:04Z, fresh restart 06:59:38Z; same 12 entrances",
+      "hidden_window_fresh_scan": "passed: completion button hid window; fresh read 07:01:06Z still 12 complete entrances",
+      "full_app_restart_session_reuse": "passed: installed desktop stopped/upgraded/restarted; first Rescan action restored native store and completed all three entrance sources without user login",
+      "real_account_isolation": "not verified for two real accounts; prototype independent empty store result remains historical",
+      "helper_shutdown_before_native_quit": "Manager.Close observed helper exit; native tray drain covered by tests, manual Quit not re-run",
+      "account_disk_mount_and_refresh": "passed: running true; Finder personal/shared/manual categories, 9 canonical shared entries; queued0/conflicts0",
+      "upgrade_preserves_session_and_pending_data": "passed: 162 protected files including Store databases unchanged, with prior pending blobs/conflicts retained; current-user development payload, not signed installer"
+    },
+    "other_platforms": {
+      "windows": "native login unavailable; CLI/sync retained",
+      "linux": "native login unavailable; CLI/sync retained"
+    },
+    "signing_notarization_release": "not verified",
+    "observed_at": "2026-11-11T07:06:33.087471Z",
+    "unique_folder_entrances": 12,
+    "directory_sources": {
+      "personal": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      },
+      "shared_hidden": {
+        "status": "complete",
+        "count": 7,
+        "pages": 1
+      },
+      "shared_visible": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      }
+    },
+    "mountpoint": "/Users/rrong/DriveBridge/0523cb31-19ad-48a8-ba6e-78a0c09689bb",
+    "upgrade": {
+      "protected_files": 162,
+      "changed_files": 0,
+      "candidate_matches_installed": true,
+      "includes_store_databases": true
+    },
+    "screenshots": [
+      "../../../../manual/assets/59-owned-account-disk.png",
+      "../../../../manual/assets/60-owned-login-complete.png"
+    ],
+    "first_hidden_rescan_after_desktop_restart": {
+      "passed": true,
+      "verified_at": "2026-11-11T07:06:33.087471Z",
+      "unique_folder_entrances": 12,
+      "sources": {
+        "personal": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        },
+        "shared_hidden": {
+          "status": "complete",
+          "count": 7,
+          "pages": 1
+        },
+        "shared_visible": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        }
+      },
+      "user_reauthentication_required": false,
+      "loading_race_fixed": true
+    }
+  }
+}

@@ -19,9 +19,15 @@ indicator support; actual visibility still requires native session inspection.
 
 `Action{Kind: "ready"}` is an internal lifecycle event emitted after native
 initialization and the initial menu/icon setup, before user actions. It is not a
-menu action. A receiver must consume actions while `Run` is active. Cancellation
-returns `ctx.Err()` and exits the native loop; worker shutdown is the caller's
-separate responsibility.
+menu action. A receiver must consume actions while `Run` is active.
+
+Process owners should use `RunWithShutdown` and supply cleanup that cancels and
+drains application work, closes owned UI/browser resources, and releases their
+singleton. The callback completes once before normal native Quit, and also runs
+for platform exit callbacks. macOS upstream Quit calls `NSApp terminate`, so Go
+callers may never return or run deferred cleanup. Native preflight failures do
+not invoke the callback. The desktop uses this hook; synchronization workers
+remain independent processes and are not stopped when quitting the tray.
 
 PNG and Windows ICO assets are local 32×32 geometric status symbols: check for
 ready, arrows for syncing, cross for conflicts, exclamation for errors, dash for

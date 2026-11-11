@@ -65,6 +65,7 @@ type Dependencies struct {
 	MountID      model.MountID
 	Source       Source
 	TempPatterns []string
+	Account      *AccountOptions
 }
 type Fs struct {
 	store         *store.Store
@@ -109,6 +110,15 @@ func New(d Dependencies) (fs.Fs, error) {
 			return nil, errors.New("missing cloud source")
 		}
 		source = cloudSource{d.Cloud}
+	}
+	if d.Account != nil {
+		if d.Account.AccountToken != sc.FolderToken {
+			return nil, model.ErrIdentityChanged
+		}
+		source, err = newAccountSource(source, *d.Account)
+		if err != nil {
+			return nil, err
+		}
 	}
 	patterns := d.TempPatterns
 	if patterns == nil {
@@ -219,9 +229,16 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	}
 	f.listMu.Lock()
 	defer f.listMu.Unlock()
-	existing, err := f.store.Entries(ctx, dir)
-	if err != nil {
-		return nil, err
+	if catalog, ok := f.source.(accountCatalog); ok {
+		dirs, err := catalog.accountDirectories(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range dirs {
+			if err := f.observeItems(ctx, d.remote, d.token, d.items); err != nil {
+				return nil, err
+			}
+		}
 	}
 	var items []larkcli.DriveItem
 	if parent.Token != "" {
@@ -230,82 +247,8 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 			return nil, err
 		}
 	}
-	type observed struct {
-		item        larkcli.DriveItem
-		kind        model.Kind
-		mtime       time.Time
-		remote      string
-		skip        bool
-		virtualType string
-	}
-	var rows []observed
-	tokens := map[string]bool{}
-	sort.Slice(items, func(i, j int) bool { return items[i].Token < items[j].Token })
-	used := map[string]bool{}
-	for _, e := range existing {
-		used[foldName(path.Base(e.Remote))] = true
-	}
-	for _, item := range items {
-		if item.Token == "" || item.Name == "" || tokens[item.Token] || (item.ParentToken != "" && item.ParentToken != parent.Token) {
-			return nil, errors.New("invalid complete directory metadata")
-		}
-		tokens[item.Token] = true
-		k, err := kindForItem(item.Type)
-		if err != nil {
-			return nil, err
-		}
-		mt, err := modified(item.ModifiedTime)
-		if err != nil {
-			return nil, err
-		}
-		r := observed{item: item, kind: k, mtime: mt}
-		if item.Type != "file" && item.Type != "docx" && item.Type != "folder" {
-			r.virtualType = item.Type
-			r.item.URL = safeSourceURL(item.URL)
-		}
-		prior, err := f.store.EntryByToken(ctx, item.Token)
-		if err == nil {
-			m, err := f.store.Metadata(ctx, prior.ID)
-			if err != nil {
-				return nil, err
-			}
-			if m.Tombstone || parentPath(prior.Remote) != dir {
-				r.skip = true
-			} else {
-				if prior.Kind != k || m.VirtualType != r.virtualType {
-					return nil, model.ErrIdentityChanged
-				}
-				r.remote = prior.Remote
-			}
-		} else if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
-		} else {
-			name := encodeName(item.Name)
-			if k == model.KindDocx {
-				name += ".md"
-			} else if r.virtualType != "" {
-				if r.item.URL != "" {
-					name += ".url"
-				} else {
-					name += ".unsupported.txt"
-				}
-			}
-			name, err = chooseName(name, item.Token, used)
-			if err != nil {
-				return nil, err
-			}
-			used[foldName(name)] = true
-			r.remote = path.Join(dir, name)
-		}
-		rows = append(rows, r)
-	}
-	for _, r := range rows {
-		if r.skip {
-			continue
-		}
-		if _, err = f.store.ObserveEntry(ctx, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime, VirtualType: r.virtualType}); err != nil {
-			return nil, err
-		}
+	if err := f.observeItems(ctx, dir, parent.Token, items); err != nil {
+		return nil, err
 	}
 	entries, err := f.store.Entries(ctx, dir)
 	if err != nil {
@@ -332,6 +275,90 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	f.listed[parent.ID] = true
 	f.activityMu.Unlock()
 	return result, nil
+}
+func (f *Fs) observeItems(ctx context.Context, dir, parentToken string, items []larkcli.DriveItem) error {
+	existing, err := f.store.Entries(ctx, dir)
+	if err != nil {
+		return err
+	}
+	type observed struct {
+		item        larkcli.DriveItem
+		kind        model.Kind
+		mtime       time.Time
+		remote      string
+		skip        bool
+		virtualType string
+	}
+	var rows []observed
+	tokens := map[string]bool{}
+	sort.Slice(items, func(i, j int) bool { return items[i].Token < items[j].Token })
+	used := map[string]bool{}
+	for _, e := range existing {
+		used[foldName(path.Base(e.Remote))] = true
+	}
+	for _, item := range items {
+		if item.Token == "" || item.Name == "" || tokens[item.Token] || (item.ParentToken != "" && item.ParentToken != parentToken) {
+			return errors.New("invalid complete directory metadata")
+		}
+		tokens[item.Token] = true
+		k, err := kindForItem(item.Type)
+		if err != nil {
+			return err
+		}
+		mt, err := modified(item.ModifiedTime)
+		if err != nil {
+			return err
+		}
+		r := observed{item: item, kind: k, mtime: mt}
+		if item.Type != "file" && item.Type != "docx" && item.Type != "folder" {
+			r.virtualType = item.Type
+			r.item.URL = safeSourceURL(item.URL)
+		}
+		prior, err := f.store.EntryByToken(ctx, item.Token)
+		if err == nil {
+			m, err := f.store.Metadata(ctx, prior.ID)
+			if err != nil {
+				return err
+			}
+			if m.Tombstone || parentPath(prior.Remote) != dir {
+				r.skip = true
+			} else {
+				if prior.Kind != k || m.VirtualType != r.virtualType {
+					return model.ErrIdentityChanged
+				}
+				r.remote = prior.Remote
+			}
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
+		} else {
+			name := encodeName(item.Name)
+			if k == model.KindDocx {
+				name += ".md"
+			} else if r.virtualType != "" {
+				if r.item.URL != "" {
+					name += ".url"
+				} else {
+					name += ".unsupported.txt"
+				}
+			}
+			name, err = chooseName(name, item.Token, used)
+			if err != nil {
+				return err
+			}
+			used[foldName(name)] = true
+			r.remote = path.Join(dir, name)
+		}
+		rows = append(rows, r)
+	}
+	for _, r := range rows {
+		if r.skip {
+			continue
+		}
+		if _, err = f.store.ObserveEntry(ctx, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime, VirtualType: r.virtualType}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (f *Fs) find(ctx context.Context, remote string) (model.Entry, error) {
 	if err := validPath(remote, false); err != nil {
@@ -380,7 +407,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	resumedSafeSave := false
 	e, err := f.store.EntryByRemote(ctx, src.Remote())
 	if errors.Is(err, store.ErrNotFound) {
-		if _, err = f.directory(ctx, parentPath(src.Remote())); err != nil {
+		if err = f.requireParent(ctx, parentPath(src.Remote())); err != nil {
 			return nil, err
 		}
 		existing, err := f.store.Entries(ctx, parentPath(src.Remote()))

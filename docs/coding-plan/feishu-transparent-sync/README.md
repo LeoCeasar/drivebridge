@@ -1,6 +1,8 @@
 # DriveBridge 飞书透明同步 v1.2
 
-用户已授权开始开发与多 agent。Task 0 已把参考审核结论纳入设计和任务契约；产品功能尚未实现，v1.2 独立文档复核已通过（见 [review-v1.2.md](review-v1.2.md)），真实能力和平台发布验证尚未完成。
+当前实现（2026-11-11）：CLI、后台桌面管理、Markdown 同步与冲突处理已实现；macOS 已接入应用内登录、目录发现与账号盘。使用与证据见 [操作手册](../../manual/操作手册.html)、[账号盘说明](../feishu-desktop-client/discovery-usage.md)及[原生登录验证](../feishu-desktop-client/owned-login-verification.md)。Windows/Linux 原生登录与实机验收、正式签名公证仍未完成。
+
+以下为 v1.2 设计阶段记录：Task 0 已把参考审核结论纳入设计和任务契约，独立文档复核见 [review-v1.2.md](review-v1.2.md)。历史文档通过不代替产品实测或发布验收。
 
 | 文档 | 用途 |
 |---|---|

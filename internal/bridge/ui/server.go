@@ -49,6 +49,7 @@ func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
+	messages["discovery_unavailable"] = "目录操作暂未完成，已有清单仍保留。请查看账号状态，必要时重新打开应用登录窗口或检查目录访问权限。"
 	respond(w, status, map[string]any{"code": code, "retryable": status == 503, "message": messages[code]})
 }
 func apiError(w http.ResponseWriter, err error) {
@@ -93,7 +94,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -106,7 +107,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/app.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js":
+		case "/app.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -237,6 +238,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "api" && parts[1] == "discovery" {
+		h.discovery(w, r, parts[2:])
+		return
+	}
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "conflicts" && validID(parts[2]) {
 		h.conflict(w, r, parts[2], parts[3:])
 		return

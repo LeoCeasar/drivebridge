@@ -2,6 +2,7 @@
 <installer-gui-script minSpecVersion="2">
   <title>DriveBridge</title>
   <options customize="never" require-scripts="true" hostArchitectures="@ARCH@"/>
+  <volume-check script="true"><allowed-os-versions><os-version min="14.0"/></allowed-os-versions></volume-check>
   <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
   <choices-outline><line choice="default"/></choices-outline>
   <choice id="default" visible="false"><pkg-ref id="org.drivebridge.user"/></choice>

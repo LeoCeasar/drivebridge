@@ -25,13 +25,14 @@ type mountRuntime interface {
 	CachePaths() (string, string)
 }
 type workerServices struct {
-	store             *store.Store
-	runtime           mountRuntime
-	run               func(context.Context) error
-	resolve           func(context.Context, model.ResolveRequest) error
-	retry             func(context.Context) error
-	refreshConflict   func(context.Context, model.ConflictID) (model.Conflict, error)
-	resumeCredentials func(context.Context) error
+	store              *store.Store
+	runtime            mountRuntime
+	run                func(context.Context) error
+	resolve            func(context.Context, model.ResolveRequest) error
+	retry              func(context.Context) error
+	refreshConflict    func(context.Context, model.ConflictID) (model.Conflict, error)
+	refreshDirectories func(context.Context) error
+	resumeCredentials  func(context.Context) error
 }
 type worker struct {
 	manager      *Manager

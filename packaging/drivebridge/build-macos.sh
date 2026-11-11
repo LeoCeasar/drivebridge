@@ -4,7 +4,7 @@ source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 DB_PLATFORM=darwin
 parse_args "$@"
 python3 "$DB_HERE/package.py" preflight --platform darwin --arch "$DB_ARCH" ${DB_MODE[@]+"${DB_MODE[@]}"} \
-  --tools go pkgbuild productbuild hdiutil codesign xcrun tar
+  --tools go swiftc pkgbuild productbuild hdiutil codesign xcrun tar
 DB_CGO=0 DB_TAGS=''
 if ! $DB_CLI_ONLY; then
   DB_FUSE="${DRIVEBRIDGE_FUSE_INCLUDE:-}"
@@ -45,13 +45,15 @@ for name in ('pkgbuild', 'productbuild', 'codesign'):
     with open(shutil.which(name), 'rb') as f:
         digest = hashlib.sha256(f.read()).hexdigest()
     result[name] = 'Apple system tool, macOS %s (%s); standalone version not exposed; sha256:%s' % (os_version, os_build, digest)
-for name, command in {'hdiutil': ['hdiutil','info'], 'sdk': ['xcrun','--show-sdk-version']}.items():
+for name, command in {'hdiutil': ['hdiutil','info'], 'sdk': ['xcrun','--show-sdk-version'], 'swift': ['xcrun','swiftc','--version']}.items():
     result[name] = subprocess.check_output(command, stderr=subprocess.STDOUT, text=True).strip().splitlines()[0]
 open(sys.argv[1],'w').write(json.dumps(result))
 PY
 if ! $DB_UNSIGNED; then
   codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/bin/drivebridge"
   codesign --verify --strict --verbose=2 "$DB_PAYLOAD/bin/drivebridge"
+  codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/libexec/DriveBridge Session.app"
+  codesign --verify --strict --verbose=2 "$DB_PAYLOAD/libexec/DriveBridge Session.app"
   if $DB_DESKTOP; then
     codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/DriveBridge.app"
     codesign --verify --strict --verbose=2 "$DB_PAYLOAD/DriveBridge.app"

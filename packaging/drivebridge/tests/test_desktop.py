@@ -44,6 +44,7 @@ class DesktopPackagingTests(unittest.TestCase):
                 dest.write_bytes(b'fixture')
             binary = pathlib.Path(d) / 'desktop'
             binary.write_bytes(self.binary('darwin'))
+            p.stage_session_host(root, 'darwin', 'arm64', binary, '1.2.3')
             with mock.patch.object(p, 'run', side_effect=['enable-autostart', json.dumps({'native_tray_compiled': True, 'platform': 'darwin', 'architecture': 'arm64'})]) as run:
                 p.stage_desktop(root, 'darwin', 'arm64', binary, '1.2.3')
             self.assertEqual(run.call_args_list, [mock.call([binary, 'desktop', '--help']), mock.call([binary, 'desktop', 'capabilities'])])
@@ -51,6 +52,7 @@ class DesktopPackagingTests(unittest.TestCase):
             self.assertIs(info['LSUIElement'], True)
             self.assertEqual(info['CFBundleExecutable'], 'drivebridge-desktop')
             self.assertEqual(info['CFBundleVersion'], '1.2.3')
+            self.assertEqual(info['LSMinimumSystemVersion'], '14.0')
             icon = (root / 'DriveBridge.app/Contents/Resources/drivebridge.icns').read_bytes()
             self.assertEqual(icon[:4], b'icns')
             self.assertEqual(struct.unpack('>I', icon[4:8])[0], len(icon))
@@ -173,6 +175,9 @@ class DesktopPackagingTests(unittest.TestCase):
             p.check_native_evidence(manifest, evidence)
         for gate in ('desktop_tray', 'desktop_login', 'desktop_upgrade_exit'):
             evidence['checks'][gate] = 'passed'
+        with self.assertRaisesRegex(ValueError, 'native_login'):
+            p.check_native_evidence(manifest, evidence)
+        evidence['checks']['native_login'] = 'passed'
         p.check_native_evidence(manifest, evidence)
 
     def test_build_scripts_request_native_tray_and_windows_gui_separately(self):

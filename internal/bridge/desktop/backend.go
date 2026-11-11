@@ -93,3 +93,33 @@ func openFolder(ctx context.Context, path string) error {
 	}
 	return command.Run()
 }
+
+func (b *managerBackend) Accounts(ctx context.Context) ([]AccountView, error) {
+	views, err := b.manager.DiscoveryViews(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := b.manager.LoadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := map[model.ProfileID]string{}
+	for _, profile := range cfg.Profiles {
+		names[profile.ID] = profile.Name
+	}
+	out := make([]AccountView, 0, len(views))
+	for _, view := range views {
+		canRescan := view.Configured && view.Enabled
+		state := view.State
+		switch state {
+		case "needs_login", "login_pending", "scanning", "needs_browser", "needs_extension", "browser_disconnected", "unconfigured", "disabled", "unsupported":
+			canRescan = false
+		}
+		out = append(out, AccountView{ID: view.ProfileID, Name: names[view.ProfileID], State: state, Configured: view.Configured, Enabled: view.Enabled, CanRescan: canRescan, LastScan: view.LastScan})
+	}
+	return out, nil
+}
+func (b *managerBackend) RescanAccount(ctx context.Context, id model.ProfileID) error {
+	_, err := b.manager.RescanDiscovery(ctx, id)
+	return err
+}

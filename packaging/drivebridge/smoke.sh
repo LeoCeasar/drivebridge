@@ -59,6 +59,7 @@ if $DB_RELEASE; then
   case "$(uname -s)" in
     Darwin)
       codesign --verify --strict "$DB_PAYLOAD/bin/drivebridge"
+      codesign --verify --strict "$DB_PAYLOAD/libexec/DriveBridge Session.app"
       codesign --verify --strict "$DB_PAYLOAD/libexec/lark/lark-cli"
       if [ -d "$DB_PAYLOAD/DriveBridge.app" ]; then codesign --verify --strict "$DB_PAYLOAD/DriveBridge.app"; fi
       for pkg in "$DB_ARTIFACTS"/*.pkg; do pkgutil --check-signature "$pkg"; xcrun stapler validate "$pkg"; done

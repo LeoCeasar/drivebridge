@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/discovery-view.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <div class="app-shell">
 <aside class="sidebar"><a class="brand" href="/" aria-label="DriveBridge 首页"><span class="brand-mark" aria-hidden="true">桥</span><span>DriveBridge<small>本机文件管理</small></span></a>
@@ -26,7 +26,24 @@
 </section>
 </section>
 <section id="settings" class="page" hidden>
-<div class="page-heading"><div><h1>账号与目录</h1><p>设置保存在当前系统用户下，浏览器不会取得飞书凭据。</p></div></div>
+<div class="page-heading"><div><h1>账号与目录</h1><p>设置保存在当前系统用户下，本机管理页不会取得飞书凭据。</p></div></div>
+<section class="discovery-panel" aria-labelledby="discovery-title">
+<div class="queue-heading"><div><h2 id="discovery-title">账号盘与自动目录发现</h2><p class="quiet">先授权账号，再在应用独立登录窗口中登录飞书。自动发现个人、可见共享和隐藏共享入口。</p></div></div>
+<label class="discovery-account">已授权账号<select id="discovery-profile"></select></label>
+<p id="discovery-status" class="quiet" role="status" aria-live="polite"></p><p id="discovery-last-scan" class="field-help"></p>
+<section id="discovery-login-window" class="discovery-login-window" aria-label="应用登录会话" hidden><h3>应用独立登录窗口</h3><p id="discovery-login-session" role="status" aria-live="polite"></p><p id="discovery-login-component"></p></section>
+<section id="discovery-login-result" class="discovery-login-result" aria-labelledby="discovery-result-title" role="status" aria-live="polite" hidden><h3 id="discovery-result-title">登录完成</h3><p id="discovery-result-summary"></p><p id="discovery-result-mountpoint" class="discovery-result-mountpoint"></p><p id="discovery-result-guidance"></p></section>
+<fieldset id="discovery-controls" class="discovery-controls" disabled><legend class="visually-hidden">当前账号的目录操作</legend>
+<label>企业云文档地址（可选）<input id="discovery-origin" type="url" placeholder="留空时从账号自动识别，例如 https://企业域名.feishu.cn" maxlength="2048" autocomplete="off"></label>
+<div class="merge-actions"><button id="discovery-login" type="button" class="button">打开应用登录窗口</button><button id="discovery-complete" type="button" class="button primary">我已登录，重新验证</button><button id="discovery-rescan" type="button" class="button">重新扫描</button></div>
+<div class="discovery-manual"><form id="discovery-search-form"><label>按名称查找新增或未见目录<input id="discovery-query" placeholder="输入飞书中的目录名称" required maxlength="30" autocomplete="off"></label><button class="button">搜索目录</button></form><form id="discovery-add-form"><label>按目录链接或标识补录<input id="discovery-input" placeholder="粘贴有权访问的飞书文件夹链接或 token" required maxlength="4096" autocomplete="off"></label><button class="button">核验并添加目录</button></form></div>
+<div id="discovery-candidates" aria-label="候选目录"></div>
+</fieldset>
+<p id="discovery-feedback" role="status" aria-live="polite" class="discovery-feedback" hidden></p>
+<ul id="discovery-sources" class="discovery-sources"></ul>
+<details class="discovery-inventory"><summary id="discovery-entry-count">目录入口清单</summary><p id="discovery-empty" class="quiet">尚无目录入口。完成应用登录后扫描，或手动补录有权访问的目录。</p><ul id="discovery-entries" class="discovery-entries"></ul></details>
+<p class="field-help discovery-help">相同资源只挂载一次，隐藏共享也纳入清单。这里展示一级目录入口及各来源的分页结果；子目录元数据在打开时按需读取，不代表整棵目录树已扫描。补录只保存经核验的入口，目录名称沿用飞书；新建或改名请在飞书中操作。扫描失败时保留已有清单。</p>
+</section>
 <div class="setup-grid"><section class="setup-section"><div class="step-title"><span>1</span><h2>添加并授权账号</h2></div><form id="profile-form"><label>账号名称<input name="name" placeholder="例如：工作飞书" required maxlength="100"></label><label>服务<select name="brand"><option value="feishu">飞书</option><option value="lark">Lark</option></select></label><button class="button">添加账号</button></form><div id="profiles" class="profile-list"></div><div id="auth-flow" class="auth-flow" hidden><p>在飞书授权页面完成登录，然后返回此处确认。</p><a id="auth-link" class="button primary" target="_blank" rel="noopener noreferrer">打开授权页面</a><button id="auth-complete" class="button">我已完成授权</button><p id="auth-state" class="quiet"></p></div></section>
 <section class="setup-section"><div class="step-title"><span>2</span><h2>选择共享文件夹</h2></div><form id="remote-form"><label>显示名称<input name="name" placeholder="例如：团队文档" required maxlength="100"></label><label>已授权账号<select name="profile_id" id="profile-select" required></select></label><label>共享文件夹标识<input name="folder_token" placeholder="飞书共享文件夹的 token" required autocomplete="off"></label><p class="field-help">使用该账号有权限访问的文件夹标识。目录权限由飞书决定。</p><button class="button">添加共享目录</button></form></section>
 <section class="setup-section"><div class="step-title"><span>3</span><h2>选择本机挂载位置</h2></div><form id="mount-form"><label>挂载名称<input name="name" placeholder="例如：团队文档" required maxlength="100"></label><label>共享目录<select name="remote_id" id="remote-select" required></select></label><label>本机路径或 Windows 盘符<input name="mountpoint" placeholder="完整目录路径，或 X:" required autocomplete="off"></label><p class="field-help">使用当前用户可访问的位置。首次挂载会检查可用驱动。</p><label id="macos-backend-field" hidden>macOS 挂载方式<select name="macos_backend"><option value="">macFUSE 默认</option><option value="fskit">FSKit（用户空间，需启用系统扩展）</option></select></label><button class="button primary">保存挂载配置</button></form></section></div>

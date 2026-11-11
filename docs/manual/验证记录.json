@@ -2,10 +2,10 @@
   "title": "DriveBridge 操作手册与实机验证",
   "date": "2026-11-10 ～ 2026-11-11",
   "platform": "macOS 26.5.1 / Apple Silicon",
-  "version": "0.1.0 开发版",
+  "version": "0.1.0 开发版；macOS 14+ 原生登录与账号盘正式接入已实测",
   "source_head": "dd5819985",
   "overall": "partial",
-  "summary": "macOS核心同步链路已实测通过：kernel真实挂载、MD长短变化自动回读、TextEdit保持原Token写回、两份真实冲突的网页草稿/批量合并及云端确认、安全停止与恢复。最新dd5819985已安装，升级保留84个既有Store/Blob文件。整体仍为部分验收：全部共享目录自动发现、托盘视觉/登录自启动、Windows/Linux原生验收及正式签名尚未完成。",
+  "summary": "本机 macOS 开发载荷已接入应用内登录；登录后自动核验身份并扫描个人、可见共享、隐藏共享入口，12个去重目录入口自动挂载。原生完成页替代云盘空白/骨架；隐藏后新读取、Manager/helper整体重启复用通过，162个受保护同步文件升级前后不变。Finder显示个人目录、共享目录、手动添加。Windows/Linux原生登录、双真实账号隔离及正式签名公证仍未完成。",
   "steps": [
     {
       "id": "install",
@@ -49,6 +49,24 @@
         {
           "src": "assets/12-account-authorized.png",
           "caption": "官方授权完成后的本机账号状态。"
+        }
+      ],
+      "scope": "official CLI authorization; formal native-login flow is recorded separately"
+    },
+    {
+      "id": "owned-login",
+      "title": "应用内登录与后台目录发现",
+      "status": "verified",
+      "body": "macOS 14+ 正式应用使用自有 WKWebView helper，不安装浏览器扩展。",
+      "observed": "已安装开发载荷使用正式 Manager 与 WKWebView helper 自动完成账号核验和12个目录入口扫描，账号盘运行、队列0、冲突0；关闭结果窗口后新扫描和完整 Manager/helper 重启复用通过。Finder根目录与共享分组已实测。此项不等于Windows/Linux或正式签名发布验收。",
+      "screenshots": [
+        {
+          "src": "assets/60-owned-login-complete.png",
+          "caption": "真实应用原生完成页：账号核验与目录发现已完成，云盘网页已隐藏。"
+        },
+        {
+          "src": "assets/59-owned-account-disk.png",
+          "caption": "真实 Finder 账号盘：个人目录、共享目录、手动添加三个分组。"
         }
       ]
     },
@@ -171,9 +189,27 @@
           "caption": "最新kernel挂载显示已确认、队列0/在途0/冲突0；旧实例的历史待处理记录仍保留。"
         }
       ]
+    },
+    {
+      "id": "owned-login-prototype",
+      "title": "macOS 应用内登录兼容原型（历史实测范围）",
+      "status": "verified",
+      "body": "此项仅记录已执行的 macOS WKWebView 原型，不代表正式安装 App 验收。",
+      "observed": "用户在原生窗口完成官方页面登录；按官方CLI user_id核对网页owner_id。个人3项、可见共享3项、隐藏共享7项，去重12个入口；隐藏窗口、helper重启和完整验证程序重启后均有新读取。新UUID存储未登录且0入口，原存储仍正常；没有安装浏览器扩展或读取日常浏览器Cookie。",
+      "checks": [
+        "当前租户原型只读目录与身份核验通过，未执行上传、覆盖、删除或挂载",
+        "云盘正文空白/加载骨架，不宣称整站内嵌兼容",
+        "正式安装、其他SSO、长期过期和Windows/Linux原生登录没有由本项证明"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/58-owned-login-native-after-restart.png",
+          "caption": "真实macOS原型重启后的原生窗口；云盘正文仅部分框架和骨架。目录API另行核对读到12个入口，截图不代表正式App或整站兼容。"
+        }
+      ]
     }
   ],
-  "candidate_source_head": "dd5819985",
+  "candidate_source_head": "feature/feishu-transparent-sync native-login working tree",
   "history": [
     {
       "title": "早期候选包的失败与修复记录",
@@ -353,6 +389,232 @@
       "Windows/Linux原生安装、挂载与同步未完成实测",
       "开发包未签名/公证；子目录首次上传及非TXT二进制格式尚未实测",
       "Feishu接口没有CAS，本地合并不提供原子多人事务保证"
-    ]
+    ],
+    "owned_login": {
+      "schema_version": 1,
+      "date": "2026-11-11",
+      "scope": "macOS native login compatibility prototype; not integrated into installed product",
+      "platform": {
+        "os": "macOS 26.5.1",
+        "architecture": "arm64",
+        "engine": "WKWebView",
+        "prototype_target": "macOS 14.0"
+      },
+      "source": "8332f1ef8 working tree + ignored owned-login-probe verification source",
+      "login": {
+        "official_login_page_observed": true,
+        "user_completed_login": true,
+        "specific_qr_or_enterprise_sso_variant": "not separately verified",
+        "owner_matches_official_cli": true,
+        "cookies_exported": false,
+        "daily_browser_profiles_accessed": false,
+        "browser_extension_installed": false
+      },
+      "directory_sources": {
+        "personal": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        },
+        "shared_hidden": {
+          "status": "complete",
+          "count": 7,
+          "pages": 1
+        },
+        "shared_visible": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        }
+      },
+      "unique_folder_entrances": 12,
+      "source_scope": "observed personal, shared-visible and shared-hidden entrance lists only; descendants and arbitrary link-accessible folders are not an exhaustive inventory",
+      "checks": {
+        "window_close_keeps_fresh_reads": {
+          "passed": true,
+          "verified_at": "2026-11-11T06:04:08.332577Z"
+        },
+        "helper_restart_keeps_session": {
+          "passed": true,
+          "verified_at": "2026-11-11T06:04:51.662613Z"
+        },
+        "full_verification_program_restart_keeps_session": {
+          "passed": true,
+          "verified_at": "2026-11-11T06:07:11.644964Z"
+        },
+        "separate_store_does_not_inherit_session": {
+          "passed": true,
+          "verified_at": "2026-11-11T06:09:19.417639Z"
+        },
+        "original_store_survives_isolation_probe": {
+          "passed": true,
+          "verified_at": "2026-11-11T06:09:47.784638Z"
+        }
+      },
+      "limitations": [
+        "Cloud drive body was blank or only partially rendered as a loading skeleton; directory requests succeeded. The app login completion view still needs implementation.",
+        "Formal Manager default provider, installed app login entry and packaging have not been switched from the earlier extension development build.",
+        "Windows and Linux native login have not been implemented or tested.",
+        "OS reboot, long-duration expiry, enterprise SSO variants and two fully logged-in real accounts were not tested.",
+        "No upload, writeback, mount or conflict operation was performed by this read-only prototype."
+      ],
+      "screenshot": "../../../../manual/assets/58-owned-login-native-after-restart.png",
+      "verification_tools": {
+        "swift_build": "passed",
+        "go_harness_race_test": "passed; Darwin linker LC_DYSYMTAB warning, exit 0"
+      }
+    },
+    "owned_login_formal": "macOS development payload verified; see separate formal checks and limits"
+  },
+  "owned_login_formal": {
+    "status": "macos_development_payload_verified_with_remaining_platform_and_release_limits",
+    "scope": "formal installed-product native login; prototype results do not establish these checks",
+    "platform": "macOS 14+",
+    "bundle_id": "org.drivebridge.sessionhost",
+    "helper_payload": "libexec/DriveBridge Session.app/Contents/MacOS/drivebridge-session-host",
+    "packaging_policy_tests": "passed: 39 unit tests; not a native install check",
+    "checks": {
+      "source_integration_build": "passed: cmount,desktop bridge/cmd block; Feishu backend/larkcli/VFS; manager+ownedlogin race; Windows/Linux CLI cross-build",
+      "installed_app_login_and_fresh_scan": "passed: installed helper + production Manager; first 06:55:04Z, fresh restart 06:59:38Z; same 12 entrances",
+      "hidden_window_fresh_scan": "passed: completion button hid window; fresh read 07:01:06Z still 12 complete entrances",
+      "full_app_restart_session_reuse": "passed: installed desktop stopped/upgraded/restarted; first Rescan action restored native store and completed all three entrance sources without user login",
+      "real_account_isolation": "not verified for two real accounts; prototype independent empty store result remains historical",
+      "helper_shutdown_before_native_quit": "Manager.Close observed helper exit; native tray drain covered by tests, manual Quit not re-run",
+      "account_disk_mount_and_refresh": "passed: running true; Finder personal/shared/manual categories, 9 canonical shared entries; queued0/conflicts0",
+      "upgrade_preserves_session_and_pending_data": "passed: 162 protected files including Store databases unchanged, with prior pending blobs/conflicts retained; current-user development payload, not signed installer"
+    },
+    "other_platforms": {
+      "windows": "native login unavailable; CLI/sync retained",
+      "linux": "native login unavailable; CLI/sync retained"
+    },
+    "signing_notarization_release": "not verified",
+    "observed_at": "2026-11-11T07:06:33.087471Z",
+    "unique_folder_entrances": 12,
+    "directory_sources": {
+      "personal": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      },
+      "shared_hidden": {
+        "status": "complete",
+        "count": 7,
+        "pages": 1
+      },
+      "shared_visible": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      }
+    },
+    "mountpoint": "/Users/rrong/DriveBridge/0523cb31-19ad-48a8-ba6e-78a0c09689bb",
+    "upgrade": {
+      "protected_files": 162,
+      "changed_files": 0,
+      "candidate_matches_installed": true,
+      "includes_store_databases": true
+    },
+    "screenshots": [
+      "../../../../manual/assets/59-owned-account-disk.png",
+      "../../../../manual/assets/60-owned-login-complete.png"
+    ],
+    "first_hidden_rescan_after_desktop_restart": {
+      "passed": true,
+      "verified_at": "2026-11-11T07:06:33.087471Z",
+      "unique_folder_entrances": 12,
+      "sources": {
+        "personal": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        },
+        "shared_hidden": {
+          "status": "complete",
+          "count": 7,
+          "pages": 1
+        },
+        "shared_visible": {
+          "status": "complete",
+          "count": 3,
+          "pages": 1
+        }
+      },
+      "user_reauthentication_required": false,
+      "loading_race_fixed": true
+    }
+  },
+  "owned_login_prototype": {
+    "schema_version": 1,
+    "date": "2026-11-11",
+    "scope": "macOS native login compatibility prototype; not integrated into installed product",
+    "platform": {
+      "os": "macOS 26.5.1",
+      "architecture": "arm64",
+      "engine": "WKWebView",
+      "prototype_target": "macOS 14.0"
+    },
+    "source": "8332f1ef8 working tree + ignored owned-login-probe verification source",
+    "login": {
+      "official_login_page_observed": true,
+      "user_completed_login": true,
+      "specific_qr_or_enterprise_sso_variant": "not separately verified",
+      "owner_matches_official_cli": true,
+      "cookies_exported": false,
+      "daily_browser_profiles_accessed": false,
+      "browser_extension_installed": false
+    },
+    "directory_sources": {
+      "personal": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      },
+      "shared_hidden": {
+        "status": "complete",
+        "count": 7,
+        "pages": 1
+      },
+      "shared_visible": {
+        "status": "complete",
+        "count": 3,
+        "pages": 1
+      }
+    },
+    "unique_folder_entrances": 12,
+    "source_scope": "observed personal, shared-visible and shared-hidden entrance lists only; descendants and arbitrary link-accessible folders are not an exhaustive inventory",
+    "checks": {
+      "window_close_keeps_fresh_reads": {
+        "passed": true,
+        "verified_at": "2026-11-11T06:04:08.332577Z"
+      },
+      "helper_restart_keeps_session": {
+        "passed": true,
+        "verified_at": "2026-11-11T06:04:51.662613Z"
+      },
+      "full_verification_program_restart_keeps_session": {
+        "passed": true,
+        "verified_at": "2026-11-11T06:07:11.644964Z"
+      },
+      "separate_store_does_not_inherit_session": {
+        "passed": true,
+        "verified_at": "2026-11-11T06:09:19.417639Z"
+      },
+      "original_store_survives_isolation_probe": {
+        "passed": true,
+        "verified_at": "2026-11-11T06:09:47.784638Z"
+      }
+    },
+    "limitations": [
+      "Cloud drive body was blank or only partially rendered as a loading skeleton; directory requests succeeded. The app login completion view still needs implementation.",
+      "Formal Manager default provider, installed app login entry and packaging have not been switched from the earlier extension development build.",
+      "Windows and Linux native login have not been implemented or tested.",
+      "OS reboot, long-duration expiry, enterprise SSO variants and two fully logged-in real accounts were not tested.",
+      "No upload, writeback, mount or conflict operation was performed by this read-only prototype."
+    ],
+    "screenshot": "../../../../manual/assets/58-owned-login-native-after-restart.png",
+    "verification_tools": {
+      "swift_build": "passed",
+      "go_harness_race_test": "passed; Darwin linker LC_DYSYMTAB warning, exit 0"
+    }
   }
 }

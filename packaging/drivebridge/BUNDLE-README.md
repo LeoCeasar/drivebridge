@@ -19,3 +19,15 @@ If `manifest.json` contains `desktop:true`, launch `DriveBridge.app` on macOS, `
 Desktop controls: `bin/drivebridge desktop start|status|stop|enable-autostart|disable-autostart` (use `.exe` on Windows). Exiting the tray or `desktop stop` keeps sync workers running; stopping all sync is a separate action. Login startup is opt-in and belongs to the current user: macOS LaunchAgent, limited Windows interactive logon task, or Linux XDG graphical session autostart. Disable it before moving or removing this directory. Build and installer scripts never enable it.
 
 Desktop native tray, login startup and upgrade exit require platform evidence in addition to the existing mount and lifecycle gates. A desktop binary in an archive is not proof that those native checks passed.
+
+## Application-owned login and directory discovery
+
+On macOS 14 or later, the complete bundle includes `libexec/DriveBridge Session.app`, an application-owned WKWebView login helper with bundle ID `org.drivebridge.sessionhost`. Use **账号与目录 → 账号盘与自动目录发现** to finish the official CLI authorization, then choose **网页登录** and sign in through the application-provided native window. Check its displayed HTTPS address. Choose **网页登录完成并挂载** after signing in with the same account. Personal Chrome/Edge/Safari sessions and browser extensions are not required, read or imported.
+
+The login window is for authentication and directory discovery. Closing it hides the window; background directory requests can continue while the desktop runs. Website data remains outside the installation, isolated per OS user and product account. Cookie values are not exported to configuration. Session expiry or SSO/MFA can require logging in again. The cloud-drive page body may render only partly; this helper does not promise full website browsing compatibility. File reads, synchronization and writes continue through the official CLI.
+
+Use **重新扫描** in the management page or tray to refresh later-added folders, or search a folder name (up to 30 characters) and select its verified result. Folder links/tokens can also be verified and saved. Missing or failed list entries never imply cloud deletion. One token has one writable path, with its observed memberships retained. The desktop checks eligible catalogs every five minutes without starting stopped mounts.
+
+Personal, visible shared and hidden shared entrance pagination does not prove all descendants or every link-accessible directory have been inventoried. Current ownership is checked each scan; a personal resource page may provide evidence when the folder list is empty. No current personal evidence means new shared entries remain blocked and old entries are retained.
+
+Windows/Linux packages preserve existing CLI and sync functions, but application-owned web login is currently unavailable there. No nonexistent helper or browser extension is required. The macOS compatibility prototype passed read-only login/restart/isolation checks; formal installed-app login, account-disk integration, signing and other-platform validation require separate evidence. An unsigned development package is not a release.

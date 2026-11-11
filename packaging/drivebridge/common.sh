@@ -48,6 +48,13 @@ build_stage() {
   local cgo="$1" tags="$2"
   (cd "$DB_REPO" && GOOS="$DB_PLATFORM" GOARCH="$DB_ARCH" CGO_ENABLED="$cgo" \
     go build -trimpath -tags "$tags" -ldflags "-s -w ${DB_EXTRA_LDFLAGS:-}" -o "$DB_WORK/drivebridge" .)
+  if [ "$DB_PLATFORM" = darwin ]; then
+    local swift_arch="$DB_ARCH"
+    if [ "$swift_arch" = amd64 ]; then swift_arch=x86_64; fi
+    (cd "$DB_REPO" && xcrun swiftc -swift-version 6 -O -target "$swift_arch-apple-macos14.0" \
+      -framework Cocoa -framework WebKit native/session-host/main.swift -o "$DB_WORK/drivebridge-session-host")
+    DB_STAGE_EXTRA_ARGS+=(--session-host-binary "$DB_WORK/drivebridge-session-host" --version "$DB_VERSION")
+  fi
   if $DB_DESKTOP; then
     local desktop_cgo=1
     local desktop_tags="${tags:+$tags,}desktop"

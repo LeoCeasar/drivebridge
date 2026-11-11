@@ -266,7 +266,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
-	case "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict":
+	case "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
 		controlCtx, release, err := w.beginControl(ctx)
 		if err != nil {
 			return nil, err
@@ -275,6 +275,15 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		ctx = controlCtx
 	}
 	switch r.URL.Path {
+	case "/refresh-directories":
+		var in struct{}
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		if s.refreshDirectories == nil {
+			return nil, ErrDriver
+		}
+		return struct{}{}, s.refreshDirectories(ctx)
 	case "/stop", "/recovery/stop":
 		var input struct {
 			Wait int64 `json:"wait_ns"`

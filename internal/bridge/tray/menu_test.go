@@ -3,6 +3,7 @@ package tray
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,5 +111,101 @@ func TestServeRejectsDisabledAndStaleClicks(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no open action")
+	}
+}
+
+func TestAccountMenuShowsLoginStatusAndKeepsProfileIdentity(t *testing.T) {
+	entries := menu(View{Accounts: []Account{{ID: "a", Name: "同名", State: "complete", Configured: true, Enabled: true, CanRescan: true}, {ID: "b", Name: "同名", State: "needs_login", Configured: true, Enabled: true}}})
+	rescan := map[string]menuEntry{}
+	login := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Action.Kind == "rescan_discovery" {
+			rescan[entry.Action.ProfileID] = entry
+		}
+		if entry.Label == "应用登录：需要重新登录" || entry.Label == "应用登录：已保存" {
+			login[entry.Label] = true
+		}
+	}
+	if len(rescan) != 2 || !rescan["a"].Enabled || rescan["b"].Enabled || len(login) != 2 {
+		t.Fatal(entries)
+	}
+	if rescan["a"].Key == rescan["b"].Key || rescan["a"].Action.MountID != "" {
+		t.Fatal(rescan)
+	}
+	for _, entry := range menu(View{Busy: true, Accounts: []Account{{ID: "a", CanRescan: true}}}) {
+		if entry.Action.Kind == "rescan_discovery" && entry.Enabled {
+			t.Fatal("rescan enabled while busy")
+		}
+		if entry.Action.Kind == "open_manager" && !entry.Enabled {
+			t.Fatal("management disabled while busy")
+		}
+	}
+}
+
+func TestShutdownWaitsForOwnerCleanupAcrossNativeQuitAndExit(t *testing.T) {
+	entered, allowClose := make(chan struct{}), make(chan struct{})
+	browserClosed := make(chan struct{})
+	shutdown := shutdownOnce(func() { close(entered); <-allowClose; close(browserClosed) })
+	normalQuit, nativeExit := make(chan struct{}), make(chan struct{})
+	go func() { shutdown(); close(normalQuit) }()
+	<-entered
+	go func() { shutdown(); close(nativeExit) }()
+	select {
+	case <-normalQuit:
+		t.Fatal("Quit passed unfinished owner cleanup")
+	default:
+	}
+	select {
+	case <-nativeExit:
+		t.Fatal("native exit passed unfinished owner cleanup")
+	default:
+	}
+	close(allowClose)
+	for _, done := range []chan struct{}{normalQuit, nativeExit} {
+		select {
+		case <-done:
+			select {
+			case <-browserClosed:
+			default:
+				t.Fatal("exit preceded browser close")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("native shutdown path did not finish")
+		}
+	}
+}
+
+func TestNativeLifetimeOutlivesCanceledAppUntilCleanupCompletes(t *testing.T) {
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	entered, finishCleanup := make(chan struct{}), make(chan struct{})
+	nativeCtx, cancelNative, shutdown := nativeLifetime(appCtx, func() { close(entered); <-finishCleanup })
+	defer cancelNative()
+	cancelApp()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("app cancellation did not start cleanup")
+	}
+	if nativeCtx.Err() != nil {
+		t.Fatal("native loop canceled before owner cleanup")
+	}
+	close(finishCleanup)
+	select {
+	case <-nativeCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("native loop did not stop after owner cleanup")
+	}
+	shutdown()
+}
+
+func TestAccountLoginLabelsUseApplicationWindow(t *testing.T) {
+	for _, state := range []string{"needs_extension", "browser_disconnected", "needs_login"} {
+		label := accountLoginLabel(Account{State: state, Configured: true})
+		if !strings.Contains(label, "重新登录") || strings.Contains(label, "扩展") || strings.Contains(label, "浏览器") {
+			t.Fatalf("unexpected login guidance for %s: %s", state, label)
+		}
+	}
+	if got := discoveryLabel("browser_disconnected"); got != "目录发现：等待重新登录" {
+		t.Fatal(got)
 	}
 }
