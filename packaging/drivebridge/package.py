@@ -23,6 +23,9 @@ SESSION_BINARY = SESSION_APP + '/Contents/MacOS/drivebridge-session-host'
 SESSION_PLIST = SESSION_APP + '/Contents/Info.plist'
 SESSION_BUNDLE_ID = 'org.drivebridge.sessionhost'
 SESSION_MINIMUM_OS = '14.0'
+WINDOWS_SESSION_BINARY = 'libexec/drivebridge-session-host.exe'
+WINDOWS_SESSION_LICENSE = 'licenses/native-login.LICENSES'
+WINDOWS_SESSION_MINIMUM_OS = '10.0.17763'
 
 NATIVE_GATES = ('driver', 'install', 'mount_read_write_rename', 'flush_error_feedback',
                 'stop', 'upgrade_preserves_pending', 'uninstall_preserves_userdata', 'user_startup')
@@ -105,7 +108,7 @@ def required_files(target, desktop=False):
              'licenses/NOTICE.md', 'licenses/THIRD_PARTY_NOTICES.md', 'README.md',
              'upgrade.ps1' if target == 'windows' else 'upgrade.sh'}
     if target == 'windows':
-        files |= {'libexec/node/node.exe', 'licenses/node.LICENSE',
+        files |= {WINDOWS_SESSION_BINARY, WINDOWS_SESSION_LICENSE, 'libexec/node/node.exe', 'licenses/node.LICENSE',
                   'libexec/lark/package/package.json', 'libexec/lark/package/LICENSE',
                   'libexec/lark/package/checksums.txt', 'libexec/lark/package/scripts/run.js',
                   'libexec/lark/package/scripts/install.js', 'libexec/lark/package/scripts/install-wizard.js'}
@@ -165,6 +168,8 @@ def validate_payload(root, target, desktop=False, arch=None):
         raise ValueError('missing payload/license: ' + ', '.join(sorted(missing)))
     if target == 'darwin':
         validate_session_bundle(root, arch)
+    elif target == 'windows' and arch:
+        check_windows_gui_binary(root / WINDOWS_SESSION_BINARY, arch)
 
 
 def sha(path):
@@ -210,7 +215,7 @@ def check_native_evidence(manifest, evidence):
     if evidence.get('payload_sha256') != payload_digest(manifest['files']):
         raise ValueError('release blocked: evidence must bind exact payload hashes')
     gates = NATIVE_GATES + (('desktop_tray', 'desktop_login', 'desktop_upgrade_exit') if manifest.get('desktop') else ())
-    if manifest['platform'] == 'darwin':
+    if manifest['platform'] in ('darwin', 'windows'):
         gates += ('native_login',)
     for gate in gates:
         if evidence.get('checks', {}).get(gate) != 'passed':
@@ -280,7 +285,8 @@ def stage(args):
     suffix = '.exe' if args.platform == 'windows' else ''
     check_binary(args.binary, args.platform, args.arch)
     check_commands(args.binary, args.platform, args.cli_only)
-    stage_session_host(root, args.platform, args.arch, args.session_host_binary, args.version)
+    stage_session_host(root, args.platform, args.arch, args.session_host_binary, args.version,
+                       getattr(args, 'session_host_licenses', None))
     native = root / ('libexec/lark/lark-cli' + suffix)
     upstream_sha = prepare_cli(args.lark_native_archive, args.platform, args.arch, native)
     if args.signed_cli:
@@ -348,10 +354,30 @@ def validate_session_bundle(root, arch=None):
         check_binary(Path(root) / SESSION_BINARY, 'darwin', arch)
 
 
-def stage_session_host(root, target, arch, helper, version):
+def check_windows_gui_binary(binary, arch):
+    check_binary(binary, 'windows', arch)
+    data = Path(binary).read_bytes()
+    pe = struct.unpack_from('<I', data, 60)[0]
+    if len(data) < pe + 94 or struct.unpack_from('<H', data, pe + 92)[0] != 2:
+        raise ValueError('Windows native window binary must use windowsgui subsystem')
+
+
+def stage_session_host(root, target, arch, helper, version, licenses=None):
+    if target == 'windows':
+        if not helper or not licenses:
+            raise ValueError('Windows package requires native login helper binary and licenses')
+        check_windows_gui_binary(helper, arch)
+        capabilities = json.loads(run([helper, '--capabilities']))
+        if (capabilities.get('protocol') != 1 or capabilities.get('bundle_id') != SESSION_BUNDLE_ID or
+                capabilities.get('persistent_per_account') is not True or
+                capabilities.get('operations') != ['show', 'hide', 'fetch', 'complete', 'shutdown']):
+            raise ValueError('Windows native login helper identity/protocol mismatch')
+        copy_file(helper, Path(root) / WINDOWS_SESSION_BINARY)
+        copy_file(licenses, Path(root) / WINDOWS_SESSION_LICENSE)
+        return
     if target != 'darwin':
-        if helper:
-            raise ValueError('native login helper is currently macOS-only')
+        if helper or licenses:
+            raise ValueError('native login helper is unavailable for this platform')
         return
     if not helper:
         raise ValueError('macOS package requires native login helper binary')
@@ -379,10 +405,7 @@ def icon_png():
 def stage_desktop(root, target, arch, binary, version):
     check_binary(binary, target, arch)
     if target == 'windows':
-        data = Path(binary).read_bytes()
-        pe = struct.unpack_from('<I', data, 60)[0]
-        if len(data) < pe + 94 or struct.unpack_from('<H', data, pe + 92)[0] != 2:
-            raise ValueError('Windows desktop binary must use windowsgui subsystem')
+        check_windows_gui_binary(binary, arch)
     # Explicit help args avoid launching a real tray during a build.
     help_text = run([binary, 'desktop', '--help'])
     if 'enable-autostart' not in help_text:
@@ -428,8 +451,10 @@ def manifest(args):
                 'go_version': run(['go', 'version']), 'tools': tools,
                 'runtime': lock, 'cli_binding': {'upstream_sha256': cli_asset(lock, args.platform, args.arch)['native_sha256'], 'artifact_sha256': sha(root / ('libexec/lark/lark-cli.exe' if args.platform == 'windows' else 'libexec/lark/lark-cli'))}, 'vendor_metadata': {'embedded_ci_prefixes': [p.decode() for p in VENDOR_CI_PREFIXES], 'policy': 'Only checksum-verified vendor executables may retain upstream CI source paths; bytes are never rewritten.', 'product_help_examples': [p.decode() for p in PRODUCT_HELP_EXAMPLES]}, 'mount': not args.cli_only,
                 'mount_engine': 'none' if args.cli_only else ('mount2' if args.platform == 'linux' else 'cmount'),
-                'native_login': {'available': args.platform == 'darwin', 'provider': 'WKWebView' if args.platform == 'darwin' else 'unavailable',
-                                 'minimum_os': SESSION_MINIMUM_OS if args.platform == 'darwin' else None, 'verification': 'not_verified'},
+                'native_login': {'available': args.platform in ('darwin', 'windows'),
+                                 'provider': {'darwin': 'WKWebView', 'windows': 'WebView2'}.get(args.platform, 'unavailable'),
+                                 'minimum_os': {'darwin': SESSION_MINIMUM_OS, 'windows': WINDOWS_SESSION_MINIMUM_OS}.get(args.platform),
+                                 'verification': 'not_verified'},
                 'signature': args.signature, 'upgrade_guard': 'lifecycle_lease_unverified', 'native_verification': 'not_verified',
                 'release_blockers': ['native installation, upgrade, driver and mount evidence required', 'native installer lease environment/identity/lifetime propagation not verified'],
                 'licenses': sorted(p.relative_to(root).as_posix() for p in (root / 'licenses').iterdir()),
@@ -511,6 +536,7 @@ def main():
             for key in ('root', 'repo', 'binary', 'lark-package', 'lark-native-archive'):
                 p.add_argument('--' + key, required=True)
             p.add_argument('--session-host-binary')
+            p.add_argument('--session-host-licenses')
             p.add_argument('--desktop-binary')
             p.add_argument('--version', default='0.0.0')
             p.add_argument('--node-archive')

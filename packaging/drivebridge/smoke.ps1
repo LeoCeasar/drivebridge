@@ -48,7 +48,7 @@ try {
 $gate = '--native'
 if ($Release) {
     $gate = '--release'
-    $executables = @((Join-Path $Payload 'bin/drivebridge.exe'))
+    $executables = @((Join-Path $Payload 'bin/drivebridge.exe'), (Join-Path $Payload 'libexec/drivebridge-session-host.exe'))
     if (Test-Path (Join-Path $Payload 'bin/drivebridge-desktop.exe')) { $executables += (Join-Path $Payload 'bin/drivebridge-desktop.exe') }
     foreach ($file in $executables + @(Get-ChildItem $Artifacts -File | Where-Object Extension -In '.msi','.exe' | Select-Object -ExpandProperty FullName)) {
         if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'Valid') { throw "Invalid signature: $file" }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -64,7 +65,7 @@ func helperExecutable(path string) (string, error) {
 		path = filepath.Join(path, "Contents", "MacOS", "drivebridge-session-host")
 	}
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode()&0111 == 0) {
 		return "", ErrUnavailable
 	}
 	return path, nil
@@ -75,6 +76,7 @@ func startHelper(path, profile, origin string) (*process, error) {
 		return nil, err
 	}
 	cmd := exec.Command(exe, "--origin", origin, "--profile-id", profile)
+	configureHelperProcess(cmd)
 	cmd.Stderr = io.Discard
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -124,10 +126,15 @@ func (p *process) dispatch(data []byte) {
 		Protocol   int    `json:"protocol"`
 		BundleID   string `json:"bundle_id"`
 		Persistent bool   `json:"persistent"`
+		Error      string `json:"error"`
 	}
 	if json.Unmarshal(data, &event) == nil && event.Event == "ready" {
 		err := error(nil)
-		if event.Protocol != ProtocolVersion || event.BundleID != BundleID || !event.Persistent {
+		if event.Protocol != ProtocolVersion || event.BundleID != BundleID {
+			err = ErrUnavailable
+		} else if event.Error == "missing_runtime" && !event.Persistent {
+			err = ErrRuntimeUnavailable
+		} else if !event.Persistent || event.Error != "" {
 			err = ErrUnavailable
 		}
 		p.readyOnce.Do(func() { p.ready <- err })

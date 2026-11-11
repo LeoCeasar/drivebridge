@@ -42,7 +42,7 @@
     const labels = {waiting_authorization:'请在飞书页面完成授权，后台会自动继续。',opening_login:'授权已验证，正在自动打开应用登录窗口…',waiting_login:'请在应用窗口登录飞书；登录后自动挂载，无需选择目录。',ready:'账号盘已自动挂载。'};
     $('auth-state').textContent = labels[progress.state] || '正在接续登录…';
     if (progress.state === 'failed') {
-      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',unsupported:'当前平台尚未接入应用内网页登录组件。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:'授权身份与已有账号不一致，请核对账号。',driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
+      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime，再从账号盘区域重新打开登录窗口。',unsupported:'应用内登录组件不可用，请检查系统版本和完整安装包。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:'授权身份与已有账号不一致，请核对账号。',driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
       const reason = errors[progress.error] || '自动登录或挂载尚未完成，请查看账号盘状态后重试。';
       $('auth-state').textContent = reason + ' 已保存的授权和同步数据会保留。';
       message($('auth-state').textContent,true);

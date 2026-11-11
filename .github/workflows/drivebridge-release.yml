@@ -1,7 +1,7 @@
 name: DriveBridge verification and native release gates
 on:
   pull_request:
-    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'packaging/drivebridge/**', 'cmd/feishu/**', 'cmd/desktop/**', 'rclone.go', 'go.mod', 'go.sum', '.github/workflows/drivebridge-release.yml']
+    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'native/session-host/**', 'packaging/drivebridge/**', 'cmd/feishu/**', 'cmd/desktop/**', 'rclone.go', 'go.mod', 'go.sum', '.github/workflows/drivebridge-release.yml']
   workflow_dispatch:
     inputs:
       native:
@@ -40,8 +40,47 @@ jobs:
       - name: Reject a release request without native gates
         if: inputs.release && !inputs.native
         run: echo 'NOT VERIFIED - release requires all native runners'; exit 1
+  windows-session:
+    # Hosted compilation/protocol checks do not replace the protected real-user
+    # login, WinFsp mount, installer and startup evidence below.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build native Windows login and run protocol tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet run --project native/session-host/windows/ProtocolTests/ProtocolTests.csproj -c Release
+          if ($LASTEXITCODE) { throw 'Native login protocol tests failed' }
+          dotnet publish native/session-host/windows/DriveBridge.SessionHost.csproj -c Release -r win-x64 --self-contained true -o "$env:RUNNER_TEMP/session" "-p:PathMap=$env:GITHUB_WORKSPACE=/_/DriveBridge" -p:DebugType=None -p:DebugSymbols=false
+          if ($LASTEXITCODE) { throw 'Native login build failed' }
+          python packaging/drivebridge/session-licenses.py --assets native/session-host/windows/obj/project.assets.json --output "$env:RUNNER_TEMP/native-login.LICENSES"
+          if ($LASTEXITCODE) { throw 'Native login license collection failed' }
+          python -c "import importlib.util,pathlib; s=importlib.util.spec_from_file_location('p','packaging/drivebridge/package.py'); p=importlib.util.module_from_spec(s); s.loader.exec_module(p); import os; t=pathlib.Path(os.environ['RUNNER_TEMP']); p.stage_session_host(t/'session-stage','windows','amd64',t/'session/drivebridge-session-host.exe','0.0.0',t/'native-login.LICENSES')"
+          if ($LASTEXITCODE) { throw 'Native login identity/payload check failed' }
+          & native/session-host/windows/smoke.ps1 -Helper "$env:RUNNER_TEMP/session/drivebridge-session-host.exe"
+      - name: Test Windows process integration and build tray
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test ./internal/bridge/ownedlogin ./internal/bridge/desktop ./internal/bridge/desktopstartup ./internal/bridge/platform ./lib/larkcli -count=1
+          if ($LASTEXITCODE) { throw 'Windows process tests failed' }
+          go build -trimpath -tags cmount,desktop -ldflags '-s -w -H=windowsgui' -o "$env:RUNNER_TEMP/drivebridge-desktop.exe" .
+          if ($LASTEXITCODE) { throw 'Windows tray build failed' }
   native:
-    needs: unit
+    needs: [unit, windows-session]
     # Never expose release keys or native machines to PR code. Configure protected release tags/environments.
     if: github.event_name == 'workflow_dispatch' && inputs.native && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/drivebridge-v'))
     strategy:
@@ -79,6 +118,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        if: matrix.platform == 'windows'
+        with:
+          dotnet-version: '10.0.x'
       - name: Build native Unix installers
         if: matrix.platform != 'windows'
         shell: bash
@@ -122,7 +165,7 @@ jobs:
           path: ${{ runner.temp }}/db-artifacts
           if-no-files-found: error
   release-gate:
-    needs: [unit, native]
+    needs: [unit, windows-session, native]
     if: always() && inputs.release
     runs-on: ubuntu-latest
     steps:
@@ -130,6 +173,7 @@ jobs:
         env:
           NATIVE_RESULT: ${{ needs.native.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          WINDOWS_RESULT: ${{ needs.windows-session.result }}
         run: |
-          test "$NATIVE_RESULT" = success && test "$UNIT_RESULT" = success || { echo 'NOT VERIFIED - platform release blocked'; exit 1; }
+          test "$NATIVE_RESULT" = success && test "$UNIT_RESULT" = success && test "$WINDOWS_RESULT" = success || { echo 'NOT VERIFIED - platform release blocked'; exit 1; }
           echo 'All native gates passed. Artifacts are ready for a separately authorized publish step.'

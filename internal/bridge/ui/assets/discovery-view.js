@@ -5,7 +5,7 @@
   else root.DriveBridgeDiscovery = view;
 })(typeof window === 'object' ? window : globalThis, function () {
   const sources = {personal:'个人目录',shared_visible:'可见共享',shared_hidden:'隐藏共享',manual:'手动补录'};
-  const states = {complete:'本次入口分页完成',partial:'部分完成，清单仍有遗漏',stale:'保留旧清单，等待更新',needs_login:'需要重新登录飞书',needs_browser:'应用登录组件暂不可用，请重试或安装最新完整应用包',needs_extension:'需要重新打开应用登录窗口',browser_disconnected:'需要重新登录，已有清单仍保留',unsupported:'暂不支持此来源',idle:'等待扫描',login_pending:'请在应用独立登录窗口中完成飞书登录',scanning:'正在扫描入口',unconfigured:'尚未完成应用登录',disabled:'自动发现未启用',unavailable:'暂时无法读取'};
+  const states = {complete:'本次入口分页完成',partial:'部分完成，清单仍有遗漏',stale:'保留旧清单，等待更新',needs_login:'需要重新登录飞书',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime 后重新打开应用登录窗口',needs_browser:'应用登录组件暂不可用，请重试或安装最新完整应用包',needs_extension:'需要重新打开应用登录窗口',browser_disconnected:'需要重新登录，已有清单仍保留',unsupported:'暂不支持此来源',idle:'等待扫描',login_pending:'请在应用独立登录窗口中完成飞书登录',scanning:'正在扫描入口',unconfigured:'尚未完成应用登录',disabled:'自动发现未启用',unavailable:'暂时无法读取'};
   function stateLabel(state) { return states[state] || '等待发现目录'; }
   function membershipLabels(entry) { const memberships = entry.memberships || []; const labels = memberships.map(s => sources[s] || '其他来源').join('、') || '保留的目录入口'; return memberships.some(s => ['personal','shared_visible','shared_hidden'].includes(s)) ? labels : labels + '（归属待核实，请重新扫描后重试）'; }
   function hiddenSharedOnly(entry) {
@@ -36,8 +36,9 @@
       const status = !supported ? '此管理入口暂不支持自动目录发现。' : !id ? '请先添加账号并完成用户授权。' : active ? '正在处理此账号的目录操作…' : v?.state === 'unsupported' ? '当前平台的应用登录功能暂不支持，请使用支持的平台版本。' : stateLabel(v?.state);
       $('discovery-status').textContent = status;
       $('discovery-status').classList.toggle('error',!!v?.error);
+      $('discovery-runtime-help').hidden = v?.state !== 'needs_runtime' && v?.error !== 'needs_runtime';
       const browser = v?.browser; $('discovery-login-window').hidden = !browser;
-      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : v?.state === 'complete' && v?.snapshot?.complete ? '已保留上次登录与目录清单，后台将自动恢复会话并复核。' : '请打开应用独立登录窗口，使用已授权的飞书账号登录。'; $('discovery-login-component').textContent = browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
+      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : v?.state === 'complete' && v?.snapshot?.complete ? '已保留上次登录与目录清单，后台将自动恢复会话并复核。' : '请打开应用独立登录窗口，使用已授权的飞书账号登录。'; $('discovery-login-component').textContent = v?.state === 'needs_runtime' ? '请安装 Microsoft Edge WebView2 Runtime，再点击打开应用登录窗口；已有账号和文件会保留。' : browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
       const result = loginResult(v); $('discovery-login-result').hidden = !result.visible;
       $('discovery-result-title').textContent = result.title; $('discovery-result-summary').textContent = result.summary; $('discovery-result-mountpoint').textContent = result.mountpoint; $('discovery-result-guidance').textContent = result.guidance;
       $('discovery-last-scan').textContent = `最近扫描：${scanTime(v)}${v?.mountpoint ? '；账号盘：' + v.mountpoint : ''}`;

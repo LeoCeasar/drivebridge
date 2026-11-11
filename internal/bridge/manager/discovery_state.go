@@ -132,6 +132,8 @@ func discoveryStateError(err error) string {
 		return "browser_disconnected"
 	case errors.Is(err, discovery.ErrIdentity), errors.Is(err, model.ErrIdentityChanged), errors.Is(err, larkcli.ErrIdentity):
 		return "stale"
+	case errors.Is(err, ownedlogin.ErrRuntimeUnavailable):
+		return "needs_runtime"
 	case errors.Is(err, discovery.ErrProtocol), errors.Is(err, ownedlogin.ErrUnavailable):
 		return "unsupported"
 	default:

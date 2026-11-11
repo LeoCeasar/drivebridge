@@ -18,9 +18,11 @@ function Invoke-Native([string]$Command, [string[]]$Arguments) {
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Native command failed ($LASTEXITCODE): $Command" }
 }
-foreach ($tool in @('python', 'go', 'wix', 'ISCC')) {
+foreach ($tool in @('python', 'go', 'dotnet', 'wix', 'ISCC')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "missing tool: $tool" }
 }
+$dotnetVersion = (& dotnet --version | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $dotnetVersion -notmatch '^10\.\d+\.\d+$') { throw 'Stable .NET 10 SDK is required to build native login' }
 $mode = @()
 if ($Unsigned) { $mode += '--unsigned' }
 if ($CliOnly) { $mode += '--cli-only' }
@@ -57,6 +59,17 @@ try {
     Push-Location $repo
     try { Invoke-Native go @('build', '-trimpath', '-tags', $tags, '-ldflags', '-s -w', '-o', "$work/drivebridge.exe", '.') }
     finally { Pop-Location }
+    $sessionOutput = Join-Path $work 'session'
+    Invoke-Native dotnet @('publish', "$repo/native/session-host/windows/DriveBridge.SessionHost.csproj",
+        '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $sessionOutput,
+        '-p:EnableWindowsTargeting=true', "-p:Version=$Version",
+        "-p:PathMap=$repo=/_/DriveBridge", '-p:DebugType=None', '-p:DebugSymbols=false')
+    $sessionFiles = @(Get-ChildItem -LiteralPath $sessionOutput -Recurse -File)
+    if ($sessionFiles.Count -ne 1 -or $sessionFiles[0].Name -ne 'drivebridge-session-host.exe') {
+        throw 'Native login must publish exactly one self-contained executable; unexpected dependencies cannot be omitted'
+    }
+    Invoke-Native python @("$here/session-licenses.py", '--assets', "$repo/native/session-host/windows/obj/project.assets.json", '--output', "$work/native-login.LICENSES")
+    $sessionStage = @('--session-host-binary', "$sessionOutput/drivebridge-session-host.exe", '--session-host-licenses', "$work/native-login.LICENSES")
     $desktopStage = @()
     if ($Desktop) {
         Push-Location $repo
@@ -66,10 +79,10 @@ try {
     }
     Invoke-Native python (@("$here/package.py", 'stage', '--platform', 'windows', '--arch', $Arch,
         '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--consume-binary', '--lark-package', $LarkPackage,
-        '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode + $desktopStage)
+        '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode + $desktopStage + $sessionStage)
     $innoVersion = (& ISCC '/?' 2>&1 | Out-String).Trim().Split("`n")[0]
     if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Inno Setup version' }
-    $versions = @{ wix = $wixVersion; inno = $innoVersion; powershell = $PSVersionTable.PSVersion.ToString() }
+    $versions = @{ wix = $wixVersion; inno = $innoVersion; powershell = $PSVersionTable.PSVersion.ToString(); dotnet = $dotnetVersion }
     $versions | ConvertTo-Json | Set-Content "$work/tools.json" -Encoding utf8NoBOM
     $signature = 'unsigned_test'
     if (-not $Unsigned) {
@@ -77,6 +90,8 @@ try {
         # Keep official CLI/Node signatures as supplied; only sign our executables.
         Invoke-Native signtool @('sign', '/sha1', $env:DRIVEBRIDGE_SIGN_CERT_SHA1, '/fd', 'SHA256', '/tr', $env:DRIVEBRIDGE_TIMESTAMP_URL, '/td', 'SHA256', "$payload/bin/drivebridge.exe")
         Invoke-Native signtool @('verify', '/pa', "$payload/bin/drivebridge.exe")
+        Invoke-Native signtool @('sign', '/sha1', $env:DRIVEBRIDGE_SIGN_CERT_SHA1, '/fd', 'SHA256', '/tr', $env:DRIVEBRIDGE_TIMESTAMP_URL, '/td', 'SHA256', "$payload/libexec/drivebridge-session-host.exe")
+        Invoke-Native signtool @('verify', '/pa', "$payload/libexec/drivebridge-session-host.exe")
         if ($Desktop) {
             Invoke-Native signtool @('sign', '/sha1', $env:DRIVEBRIDGE_SIGN_CERT_SHA1, '/fd', 'SHA256', '/tr', $env:DRIVEBRIDGE_TIMESTAMP_URL, '/td', 'SHA256', "$payload/bin/drivebridge-desktop.exe")
             Invoke-Native signtool @('verify', '/pa', "$payload/bin/drivebridge-desktop.exe")

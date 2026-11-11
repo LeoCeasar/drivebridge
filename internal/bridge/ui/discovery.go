@@ -12,6 +12,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/discovery"
 	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/ownedlogin"
 )
 
 // DiscoveryBackend is optional so offline and fixture hosts keep their existing capabilities.
@@ -32,7 +33,7 @@ type HiddenSharedSyncConfigurer interface {
 
 func discoveryCode(s string) string {
 	switch s {
-	case "", "complete", "partial", "stale", "needs_login", "needs_browser", "needs_extension", "browser_disconnected", "unsupported", "idle", "login_pending", "scanning", "unconfigured", "disabled":
+	case "", "complete", "partial", "stale", "needs_login", "needs_browser", "needs_extension", "browser_disconnected", "unsupported", "needs_runtime", "idle", "login_pending", "scanning", "unconfigured", "disabled":
 		return s
 	default:
 		return "unavailable"
@@ -183,6 +184,10 @@ func (h *Host) discovery(w http.ResponseWriter, r *http.Request, tail []string) 
 	}
 	if errors.Is(err, manager.ErrDiscoveryUnclassified) {
 		respondError(w, 409, "discovery_unclassified")
+		return
+	}
+	if errors.Is(err, ownedlogin.ErrRuntimeUnavailable) {
+		respondError(w, 503, "needs_runtime")
 		return
 	}
 	if err != nil {

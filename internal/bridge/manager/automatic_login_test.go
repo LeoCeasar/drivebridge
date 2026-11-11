@@ -190,7 +190,7 @@ func TestAutomaticLoginRequiresActuallyReadyMount(t *testing.T) {
 }
 
 func TestAutomaticLoginBrowserErrorUsesOnlyKnownState(t *testing.T) {
-	for _, state := range []string{"unsupported", "needs_browser", "needs_login", "token=secret"} {
+	for _, state := range []string{"needs_runtime", "unsupported", "needs_browser", "needs_login", "token=secret"} {
 		t.Run(state, func(t *testing.T) {
 			m, a, p, _ := automaticFixture(t, []auth.AuthFlow{{ID: "official", Kind: "user_auth"}})
 			m.automaticDeps.open = func(context.Context, model.ProfileID) (DiscoveryView, error) {

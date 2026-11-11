@@ -129,6 +129,8 @@ func automaticError(err error) string {
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, auth.ErrFlowExpired):
 		return "expired"
+	case errors.Is(err, ownedlogin.ErrRuntimeUnavailable):
+		return "needs_runtime"
 	case errors.Is(err, ownedlogin.ErrUnavailable):
 		return "unsupported"
 	case errors.Is(err, ErrDriver):
@@ -248,6 +250,10 @@ func (m *Manager) runAutomaticLogin(ctx context.Context, task *automaticLogin, r
 			return
 		}
 		switch view.State {
+		case "needs_runtime":
+			failureCode = "needs_runtime"
+			result = ownedlogin.ErrRuntimeUnavailable
+			return
 		case "unsupported":
 			failureCode = "unsupported"
 			result = ownedlogin.ErrUnavailable
@@ -273,7 +279,7 @@ func automaticDiscoveryCode(view DiscoveryView) string {
 	// Only fixed protocol states are returned; persisted or provider strings
 	// must not become an error surface containing credentials or response bodies.
 	switch view.State {
-	case "unsupported", "needs_browser", "needs_login", "browser_disconnected", "stale", "partial":
+	case "needs_runtime", "unsupported", "needs_browser", "needs_login", "browser_disconnected", "stale", "partial":
 		return view.State
 	default:
 		return ""

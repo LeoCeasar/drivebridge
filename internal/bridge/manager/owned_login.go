@@ -12,14 +12,21 @@ import (
 )
 
 func (m *Manager) ownedLoginPath() string {
-	return filepath.Clean(filepath.Join(filepath.Dir(m.options.Executable), "..", "libexec", "DriveBridge Session.app", "Contents", "MacOS", "drivebridge-session-host"))
+	return ownedLoginPathForOS(runtime.GOOS, m.options.Executable)
+}
+func ownedLoginPathForOS(goos, executable string) string {
+	root := filepath.Join(filepath.Dir(executable), "..", "libexec")
+	if goos == "windows" {
+		return filepath.Clean(filepath.Join(root, "drivebridge-session-host.exe"))
+	}
+	return filepath.Clean(filepath.Join(root, "DriveBridge Session.app", "Contents", "MacOS", "drivebridge-session-host"))
 }
 func (m *Manager) browserBridgeView(id model.ProfileID) *BrowserBridgeView {
 	view := &BrowserBridgeView{}
 	helper := m.ownedLoginPath()
-	if runtime.GOOS == "darwin" && platform.CheckNoSymlinks(helper) == nil {
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "windows") && platform.CheckNoSymlinks(helper) == nil {
 		info, err := os.Stat(helper)
-		view.HelperAvailable = err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
+		view.HelperAvailable = err == nil && info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0111 != 0)
 	}
 	m.discoveryMu.Lock()
 	defer m.discoveryMu.Unlock()

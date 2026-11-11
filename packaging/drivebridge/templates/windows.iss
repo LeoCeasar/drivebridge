@@ -6,6 +6,7 @@ DefaultDirName={localappdata}\Programs\DriveBridge
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
 DisableProgramGroupPage=yes
 OutputBaseFilename=drivebridge
 Compression=lzma2

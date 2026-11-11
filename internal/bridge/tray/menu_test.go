@@ -209,3 +209,22 @@ func TestAccountLoginLabelsUseApplicationWindow(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestMissingRuntimeTrayDoesNotClaimSavedLogin(t *testing.T) {
+	entries := menu(View{Accounts: []Account{{ID: "a", Name: "工作账号", State: "needs_runtime", Configured: true, Enabled: true}}})
+	found := false
+	for _, entry := range entries {
+		if entry.Label == "应用登录：已保存" {
+			t.Fatal("missing runtime falsely claims login saved")
+		}
+		if strings.Contains(entry.Label, "WebView2") {
+			found = true
+		}
+		if entry.Action.Kind == "rescan_discovery" && entry.Enabled {
+			t.Fatal("scan enabled without runtime")
+		}
+	}
+	if !found {
+		t.Fatal("runtime recovery guidance missing")
+	}
+}

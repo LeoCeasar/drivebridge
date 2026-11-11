@@ -195,6 +195,8 @@ func accountLoginLabel(account Account) string {
 		return "应用登录：需要重新登录"
 	case "login_pending":
 		return "应用登录：等待完成"
+	case "needs_runtime":
+		return "应用登录：需要安装 WebView2 Runtime"
 	case "needs_browser":
 		return "应用登录：登录组件暂不可用"
 	case "needs_extension":
@@ -231,6 +233,8 @@ func discoveryLabel(state string) string {
 		return "目录发现：暂不可用"
 	case "needs_extension", "browser_disconnected":
 		return "目录发现：等待重新登录"
+	case "needs_runtime":
+		return "目录发现：等待安装 WebView2 Runtime"
 	case "needs_login", "login_pending", "needs_browser", "unconfigured":
 		return "目录发现：等待应用登录"
 	default:

@@ -200,3 +200,19 @@ func TestLoadingSessionRespectsExistingRequestDeadline(t *testing.T) {
 		t.Fatalf("loading extended request deadline: calls=%d err=%v", calls.Load(), err)
 	}
 }
+
+func TestReadyEventReportsMissingRuntimeWithoutCredentialDetails(t *testing.T) {
+	p := &process{ready: make(chan error, 1)}
+	p.dispatch([]byte(`{"event":"ready","protocol":1,"bundle_id":"org.drivebridge.sessionhost","persistent":false,"error":"missing_runtime","private":"secret"}`))
+	err := <-p.ready
+	if err == nil || err.Error() != "app-owned login requires Microsoft Edge WebView2 Runtime" {
+		t.Fatalf("missing runtime is not actionable: %v", err)
+	}
+}
+func TestInvalidReadyEventCannotClaimRuntimeError(t *testing.T) {
+	p := &process{ready: make(chan error, 1)}
+	p.dispatch([]byte(`{"event":"ready","protocol":2,"bundle_id":"other","persistent":false,"error":"missing_runtime"}`))
+	if err := <-p.ready; !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+}

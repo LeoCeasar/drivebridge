@@ -28,7 +28,7 @@ func validateStartup(s StartupSpec) error {
 	return nil
 }
 func runStartup(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := BackgroundCommand(ctx, name, args...)
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard

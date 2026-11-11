@@ -1,5 +1,5 @@
 // Package ownedlogin owns an app-native, per-account login session. Directory
-// discovery stays inside WebKit; browser credentials are never exported.
+// discovery stays inside the native WebView; browser credentials are never exported.
 package ownedlogin
 
 import (
@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	ErrUnavailable  = errors.New("app-owned login requires the macOS 14 native helper")
-	ErrProtocol     = discovery.ErrProtocol
-	ErrDisconnected = discovery.ErrBrowserDisconnected
-	ErrClosed       = errors.New("app-owned login session closed")
+	ErrUnavailable        = errors.New("app-owned login requires the platform native helper")
+	ErrRuntimeUnavailable = errors.New("app-owned login requires Microsoft Edge WebView2 Runtime")
+	ErrProtocol           = discovery.ErrProtocol
+	ErrDisconnected       = discovery.ErrBrowserDisconnected
+	ErrClosed             = errors.New("app-owned login session closed")
 )
 
 type Options struct{ HelperPath, ProfileID, Origin string }
@@ -32,7 +33,7 @@ type Session struct {
 }
 
 // Start launches only the supplied app-owned helper. It starts hidden and uses
-// ProfileID as its persistent WKWebsiteDataStore identifier.
+// ProfileID as its isolated persistent WebView store identifier.
 func Start(ctx context.Context, o Options) (*Session, error) {
 	if ctx == nil {
 		return nil, ErrProtocol
@@ -51,7 +52,7 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	readyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	select {
 	case err = <-p.ready:
@@ -64,6 +65,9 @@ func Start(ctx context.Context, o Options) (*Session, error) {
 		stop()
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if errors.Is(err, ErrRuntimeUnavailable) {
+			return nil, ErrRuntimeUnavailable
 		}
 		return nil, ErrUnavailable
 	}

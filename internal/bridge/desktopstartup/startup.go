@@ -11,12 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/rclone/rclone/internal/bridge/platform"
 )
 
 const label = "org.drivebridge.desktop"
@@ -45,7 +46,7 @@ func current() (backend, error) {
 		config = filepath.Join(home, ".config")
 	}
 	return backend{runtime.GOOS, home, config, u.Uid, func(ctx context.Context, command string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, command, args...).CombinedOutput()
+		return platform.BackgroundCommand(ctx, command, args...).CombinedOutput()
 	}}, nil
 }
 func Set(ctx context.Context, s Spec, enabled bool) error {

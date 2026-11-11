@@ -14,6 +14,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/discovery"
 	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/ownedlogin"
 )
 
 type fakeDiscoveryBackend struct {
@@ -162,5 +163,26 @@ func TestManualFolderUnclassifiedIsExplicitAndSanitized(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if response.StatusCode != 409 || !strings.Contains(string(body), "discovery_unclassified") || strings.Contains(string(body), "raw-private-proof") {
 		t.Fatalf("unclassified response: %d %s", response.StatusCode, body)
+	}
+}
+
+func TestDiscoveryMissingRuntimeIsActionable(t *testing.T) {
+	h, original, client, csrf, _ := fixture(t)
+	id := model.ProfileID(uuid.NewString())
+	h.backend = &fakeDiscoveryBackend{fakeBackend: original, err: ownedlogin.ErrRuntimeUnavailable}
+	res := request(t, client, h, "POST", "/api/discovery/"+string(id)+"/login", map[string]string{}, csrf, h.URL())
+	defer res.Body.Close()
+	var result map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != 503 || result["code"] != "needs_runtime" || !strings.Contains(result["message"].(string), "WebView2") {
+		t.Fatal(res.Status, result)
+	}
+	if got := publicAutomaticLogin(manager.AutomaticLoginView{State: "failed", Error: "needs_runtime"}); got.Error != "needs_runtime" {
+		t.Fatal(got)
+	}
+	if got := publicDiscovery(manager.DiscoveryView{State: "needs_runtime", Error: "needs_runtime"}); got.State != "needs_runtime" || got.Error != "needs_runtime" {
+		t.Fatal(got)
 	}
 }

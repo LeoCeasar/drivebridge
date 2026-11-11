@@ -32,7 +32,7 @@ func (m *Manager) watchDiscoveryLogin(id model.ProfileID) {
 				return true
 			}
 			switch view.State {
-			case "unsupported", "stale", "browser_disconnected", "partial":
+			case "needs_runtime", "unsupported", "stale", "browser_disconnected", "partial":
 				return true
 			default:
 				return false

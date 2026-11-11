@@ -3,6 +3,10 @@
   <Package Name="DriveBridge" Manufacturer="DriveBridge" Version="@VERSION@"
            UpgradeCode="F819E0A4-CFD1-4BDF-928A-2524844F1717" Scope="perUser" InstallerVersion="500">
     <MajorUpgrade DowngradeErrorMessage="A newer DriveBridge is installed. Preserve user state and use its migration workflow."/>
+    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+      <RegistrySearch Id="BuildNumberSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64"/>
+    </Property>
+    <Launch Condition="Installed OR (WINDOWSBUILDNUMBER &gt;= 17763)" Message="DriveBridge requires Windows 10 version 1809 or newer with the Microsoft Edge WebView2 Runtime."/>
     <MediaTemplate EmbedCab="yes"/>
     <StandardDirectory Id="LocalAppDataFolder"><Directory Id="ProgramsFolder" Name="Programs"><Directory Id="INSTALLFOLDER" Name="DriveBridge"/></Directory></StandardDirectory>
     <Feature Id="Product" Title="DriveBridge" Level="1"><ComponentGroupRef Id="Payload"/></Feature>

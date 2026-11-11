@@ -103,6 +103,7 @@ func managedEnvironment(base []string, authRoot string, caseInsensitive bool) []
 
 func (r *Runner) command(ctx context.Context, args []string, dir string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, r.executable, args...)
+	configureCommand(cmd)
 	cmd.Env = r.environment()
 	cmd.Dir = dir
 	return cmd

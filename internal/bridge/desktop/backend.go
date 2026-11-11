@@ -112,7 +112,7 @@ func (b *managerBackend) Accounts(ctx context.Context) ([]AccountView, error) {
 		canRescan := view.Configured && view.Enabled
 		state := view.State
 		switch state {
-		case "needs_login", "login_pending", "scanning", "needs_browser", "needs_extension", "browser_disconnected", "unconfigured", "disabled", "unsupported":
+		case "needs_runtime", "needs_login", "login_pending", "scanning", "needs_browser", "needs_extension", "browser_disconnected", "unconfigured", "disabled", "unsupported":
 			canRescan = false
 		}
 		out = append(out, AccountView{ID: view.ProfileID, Name: names[view.ProfileID], State: state, Configured: view.Configured, Enabled: view.Enabled, CanRescan: canRescan, LastScan: view.LastScan})

@@ -3,10 +3,12 @@ package manager
 import (
 	"context"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/internal/bridge/discovery"
+	"github.com/rclone/rclone/internal/bridge/ownedlogin"
 )
 
 type disconnectedDirectorySession struct{}
@@ -45,5 +47,30 @@ func TestOwnedLoginHelperMissingIsActionable(t *testing.T) {
 	view := m.browserBridgeView(c.Profiles[0].ID)
 	if view.ExtensionID != "" || view.ExtensionPath != "" || view.Connected || view.HelperAvailable {
 		t.Fatalf("unexpected owned login status: %+v", view)
+	}
+}
+
+func TestMissingWebViewRuntimeHasRecoverableState(t *testing.T) {
+	err := ownedlogin.ErrRuntimeUnavailable
+	if got := discoveryStateError(err); got != "needs_runtime" {
+		t.Fatal(got)
+	}
+	if got := automaticError(err); got != "needs_runtime" {
+		t.Fatal(got)
+	}
+	if got := automaticDiscoveryCode(DiscoveryView{State: "needs_runtime"}); got != "needs_runtime" {
+		t.Fatal(got)
+	}
+}
+func TestOwnedLoginPlatformPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct{ goos, relative string }{
+		{"windows", "libexec/drivebridge-session-host.exe"},
+		{"darwin", "libexec/DriveBridge Session.app/Contents/MacOS/drivebridge-session-host"},
+	} {
+		got := ownedLoginPathForOS(tc.goos, filepath.Join(root, "bin", "drivebridge"))
+		if got != filepath.Join(root, filepath.FromSlash(tc.relative)) {
+			t.Fatalf("%s: %s", tc.goos, got)
+		}
 	}
 }

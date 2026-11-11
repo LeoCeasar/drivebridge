@@ -55,6 +55,7 @@ func respondError(w http.ResponseWriter, status int, code string) {
 	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
+	messages["needs_runtime"] = "请先安装 Microsoft Edge WebView2 Runtime，再重新打开应用登录窗口。已有目录、文件和授权会保留。"
 	messages["discovery_unclassified"] = "暂时无法核验目录属于个人还是共享；旧清单已保留，请重新扫描后重试。"
 	messages["discovery_unavailable"] = "目录操作暂未完成，已有清单仍保留。请查看账号状态，必要时重新打开应用登录窗口或检查目录访问权限。"
 	respond(w, status, map[string]any{"code": code, "retryable": status == 503, "message": messages[code]})

@@ -178,12 +178,14 @@
         "provider": {
           "enum": [
             "WKWebView",
+            "WebView2",
             "unavailable"
           ]
         },
         "minimum_os": {
           "enum": [
             "14.0",
+            "10.0.17763",
             null
           ]
         },
