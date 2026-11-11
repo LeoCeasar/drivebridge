@@ -253,13 +253,10 @@ func Validate(c Config, p Paths) error {
 		if filepath.Separator == '\\' && len(path) == 2 && path[1] == ':' {
 			path += string(filepath.Separator)
 		}
-		// Windows mount paths can be active reparse-backed drives/directories.
-		// Their runtime targets are not private-storage ancestors to probe here.
-		if filepath.Separator != '\\' {
-			if err := platform.CheckNoSymlinks(path); err != nil {
-				return err
-			}
-		}
+		// Mountpoints are runtime targets, not private-storage paths. Never stat
+		// them while loading config: a mount request can reload this config for
+		// identity checks, and probing its own root would reenter the filesystem.
+		// Startup checks the selected target's availability and Unix symlinks.
 		for _, other := range append(privatePaths, mounts...) {
 			if overlaps(path, other) {
 				return fmt.Errorf("mountpoint overlaps mount or private directory")

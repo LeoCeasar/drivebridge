@@ -111,6 +111,12 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 		w.recordError(err)
 		return err
 	}
+	// Recheck in the worker as well as its spawning parent: direct _worker
+	// invocation must not bypass the selected runtime target's safety checks.
+	if err = validateMountpoint(spec.Mount.Mountpoint); err != nil {
+		w.recordError(err)
+		return err
+	}
 	if err = m.recordOwner(spec); err != nil {
 		return err
 	}
@@ -430,6 +436,13 @@ func (m *Manager) waitEndpoint(ctx context.Context, id model.MountID) error {
 func validateMountpoint(path string) error {
 	if !filepath.IsAbs(path) && !isDrive(path) {
 		return ErrConfig
+	}
+	// Runtime targets may be active mounts; inspect only the explicitly selected
+	// target at startup, never every configured target during config reads.
+	if filepath.Separator != '\\' {
+		if err := platform.CheckNoSymlinks(path); err != nil {
+			return err
+		}
 	}
 	info, err := os.Stat(path)
 	if err == nil {
