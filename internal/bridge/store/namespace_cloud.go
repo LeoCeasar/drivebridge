@@ -8,9 +8,11 @@ import (
 )
 
 type NamespaceWork struct {
-	LocalReceipt  bool
-	LocalCancel   bool
-	TemporaryName string
+	SafeSaveBackup    bool
+	SafeSaveCompleted bool
+	LocalReceipt      bool
+	LocalCancel       bool
+	TemporaryName     string
 
 	Op         model.NamespaceOp
 	Before     []model.Entry
@@ -25,7 +27,7 @@ func (s *Store) NamespaceJournal(ctx context.Context, id string) (out NamespaceW
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		out = NamespaceWork{LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
+		out = NamespaceWork{SafeSaveBackup: r.SafeSaveBackup, SafeSaveCompleted: r.SafeSaveCompleted, LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
 		return nil
 	})
 	return
@@ -40,6 +42,9 @@ func (s *Store) BeginNamespaceDispatch(ctx context.Context, id, step string) err
 		var r namespaceRecord
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
+		}
+		if r.SafeSaveBackup {
+			return ErrSafeSavePending
 		}
 		if r.WaitFor != "" {
 			var parent namespaceRecord

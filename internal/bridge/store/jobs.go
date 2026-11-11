@@ -100,6 +100,9 @@ func (s *Store) stageBlob(tx *bolt.Tx, id model.EntryID, expected *uint64, b mod
 		return
 	}
 	err = saveJob(tx, jobRecord{Job: j, StagedAt: time.Now().UTC()})
+	if err == nil {
+		err = completeSafeSave(tx, e)
+	}
 	return
 }
 

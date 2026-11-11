@@ -137,6 +137,9 @@ func (f *Fs) LocalOnly(remote string) bool {
 	kind := model.KindFile
 	if entry, err := f.store.EntryByRemote(context.Background(), remote); err == nil {
 		kind = entry.Kind
+		if metadata, err := f.store.Metadata(context.Background(), entry.ID); err == nil && metadata.SafeSaveOriginal != "" {
+			return true
+		}
 	}
 	return f.localOnlyPath(remote, kind)
 }
@@ -374,6 +377,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	// Existing mappings are authoritative. Unknown local paths are creations,
 	// not a reason to perform network I/O on a durable local write.
+	resumedSafeSave := false
 	e, err := f.store.EntryByRemote(ctx, src.Remote())
 	if errors.Is(err, store.ErrNotFound) {
 		if _, err = f.directory(ctx, parentPath(src.Remote())); err != nil {
@@ -388,7 +392,10 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 				return nil, errors.New("local name collides after normalization")
 			}
 		}
-		e, err = f.store.EnsureEntry(ctx, src.Remote(), newKind(src.Remote()))
+		e, resumedSafeSave, err = f.store.ResumeSafeSave(ctx, src.Remote(), newKind(src.Remote()))
+		if err == nil && !resumedSafeSave {
+			e, err = f.store.EnsureEntry(ctx, src.Remote(), newKind(src.Remote()))
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -402,6 +409,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	if err = o.Update(ctx, in, src, options...); err != nil {
 		return o, err
+	}
+	if o.m.SafeSavePending != "" {
+		if err := f.store.AcceptSafeSaveReplacement(ctx, o.e.ID, o.e.Generation); err != nil {
+			return o, &CommittedError{Err: err}
+		}
 	}
 	return o, nil
 }

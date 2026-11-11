@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/internal/bridge/cloud"
 	"path"
 
@@ -49,6 +50,13 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 	work, err := e.store.NamespaceJournal(ctx, op.ID)
 	if err != nil {
 		return err
+	}
+	if work.SafeSaveBackup {
+		if work.SafeSaveCompleted {
+			return nil
+		}
+		fs.Debugf(nil, "safe_save_pending: backup rename awaits durable replacement")
+		return store.ErrSafeSavePending
 	}
 	en, err := e.store.Entry(ctx, id)
 	if err != nil {

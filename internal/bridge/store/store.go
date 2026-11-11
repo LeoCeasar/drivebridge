@@ -47,11 +47,14 @@ type Scope struct {
 	FolderToken  string          `json:"folder_token"`
 }
 type Metadata struct {
-	FirstObserved time.Time `json:"first_observed"`
-	ModTime       time.Time `json:"mod_time"`
-	SourceURL     string    `json:"source_url,omitempty"`
-	VirtualType   string    `json:"virtual_type,omitempty"`
-	Tombstone     bool      `json:"tombstone,omitempty"`
+	SafeSavePending  string        `json:"safe_save_pending,omitempty"`
+	SafeSaveParked   bool          `json:"safe_save_parked,omitempty"`
+	SafeSaveOriginal model.EntryID `json:"safe_save_original,omitempty"`
+	FirstObserved    time.Time     `json:"first_observed"`
+	ModTime          time.Time     `json:"mod_time"`
+	SourceURL        string        `json:"source_url,omitempty"`
+	VirtualType      string        `json:"virtual_type,omitempty"`
+	Tombstone        bool          `json:"tombstone,omitempty"`
 }
 type Observation struct {
 	Remote                      string

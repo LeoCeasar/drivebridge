@@ -14,21 +14,24 @@ import (
 )
 
 type namespaceRecord struct {
-	LocalReceipt     bool                     `json:"local_receipt,omitempty"`
-	ResultLocalOnly  map[model.EntryID]bool   `json:"result_local_only,omitempty"`
-	PromoteLocalOnly map[model.EntryID]bool   `json:"promote_local_only,omitempty"`
-	WaitFor          string                   `json:"wait_for,omitempty"`
-	Ordinal          uint64                   `json:"ordinal,omitempty"`
-	TemporaryName    string                   `json:"temporary_name,omitempty"`
-	CloudStep        string                   `json:"cloud_step,omitempty"`
-	Dispatched       bool                     `json:"dispatched,omitempty"`
-	CompletedSteps   map[string]bool          `json:"completed_steps,omitempty"`
-	Op               model.NamespaceOp        `json:"op"`
-	Before           []model.Entry            `json:"before"`
-	Sealed           map[model.EntryID]uint64 `json:"sealed,omitempty"`
-	LocalCancel      bool                     `json:"local_cancel,omitempty"`
-	ActionPending    bool                     `json:"action_pending,omitempty"`
-	ResultKind       model.Kind               `json:"result_kind,omitempty"`
+	SafeSaveCompleted bool                     `json:"safe_save_completed,omitempty"`
+	SafeSaveBackup    bool                     `json:"safe_save_backup,omitempty"`
+	SafeSaveRestore   bool                     `json:"safe_save_restore,omitempty"`
+	LocalReceipt      bool                     `json:"local_receipt,omitempty"`
+	ResultLocalOnly   map[model.EntryID]bool   `json:"result_local_only,omitempty"`
+	PromoteLocalOnly  map[model.EntryID]bool   `json:"promote_local_only,omitempty"`
+	WaitFor           string                   `json:"wait_for,omitempty"`
+	Ordinal           uint64                   `json:"ordinal,omitempty"`
+	TemporaryName     string                   `json:"temporary_name,omitempty"`
+	CloudStep         string                   `json:"cloud_step,omitempty"`
+	Dispatched        bool                     `json:"dispatched,omitempty"`
+	CompletedSteps    map[string]bool          `json:"completed_steps,omitempty"`
+	Op                model.NamespaceOp        `json:"op"`
+	Before            []model.Entry            `json:"before"`
+	Sealed            map[model.EntryID]uint64 `json:"sealed,omitempty"`
+	LocalCancel       bool                     `json:"local_cancel,omitempty"`
+	ActionPending     bool                     `json:"action_pending,omitempty"`
+	ResultKind        model.Kind               `json:"result_kind,omitempty"`
 }
 
 func under(p, root string) bool { return p == root || (root != "" && strings.HasPrefix(p, root+"/")) }
@@ -80,6 +83,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 		if namespaceReserved(tx, op.Src) || namespaceReserved(tx, op.Dst) {
 			return ErrFrozen
 		}
+		restoreParked := false
 		var src, dst model.Entry
 		var er error
 		if op.Kind != "mkdir" {
@@ -94,6 +98,19 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 		}
 		if op.Kind != "delete" {
 			dst, er = byPath(tx, op.Dst)
+			if errors.Is(er, ErrNotFound) && op.Kind == "rename" && src.Token == "" && src.Kind != model.KindFolder {
+				var found bool
+				dst, found, er = parkedSafeSave(tx, op.Dst)
+				if er != nil {
+					return er
+				}
+				if found {
+					restoreParked = true
+					op.Kind = "replace"
+				} else {
+					er = ErrNotFound
+				}
+			}
 			if er == nil {
 				op.DstExists = true
 				op.DstID = dst.ID
@@ -124,7 +141,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 		if er != nil {
 			return er
 		}
-		r := namespaceRecord{Op: op, Ordinal: sequence}
+		r := namespaceRecord{Op: op, Ordinal: sequence, SafeSaveRestore: restoreParked}
 		if op.Kind == "mkdir" {
 			r.TemporaryName = "DriveBridge-pending-" + op.ID
 		}
@@ -134,7 +151,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 				if er := get(tx, "metadata", string(e.ID), &m); er != nil {
 					return er
 				}
-				if m.Tombstone {
+				if m.Tombstone && !(restoreParked && e.ID == dst.ID) {
 					return nil
 				}
 				if e.FrozenBy != "" {
@@ -253,6 +270,16 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 		if er := put(tx, "recovery", "namespace:"+id, recoveryRecord{NamespaceID: id, Entries: r.Before}); er != nil {
 			return er
 		}
+		if r.SafeSaveBackup {
+			shadow, err := commitSafeSaveBackup(tx, r)
+			if err != nil {
+				return err
+			}
+			out = shadow
+			r.Op.ResultID = shadow.ID
+			r.Op.State = "committed"
+			return put(tx, "namespace", id, r)
+		}
 		switch r.Op.Kind {
 		case "replace":
 			src, er := entryTx(tx, r.Op.SrcID)
@@ -304,7 +331,15 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 					}
 				}
 			}
+			if r.SafeSaveRestore {
+				if err := restoreSafeSaveMapping(tx, dst); err != nil {
+					return err
+				}
+			}
 			if er = saveEntry(tx, dst); er != nil {
+				return er
+			}
+			if er = completeSafeSave(tx, dst); er != nil {
 				return er
 			}
 			out = dst
@@ -346,8 +381,20 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 								return err
 							}
 						}
-					} else if err := promoteLocalReceipt(tx, &e); err != nil {
-						return err
+					} else {
+						var metadata Metadata
+						if err := get(tx, "metadata", string(e.ID), &metadata); err != nil {
+							return err
+						}
+						if metadata.SafeSaveOriginal != "" {
+							metadata.SafeSaveOriginal = ""
+							if err := put(tx, "metadata", string(e.ID), metadata); err != nil {
+								return err
+							}
+						}
+						if err := promoteLocalReceipt(tx, &e); err != nil {
+							return err
+						}
 					}
 				}
 				if er = tx.Bucket([]byte("paths")).Put([]byte(e.Remote), []byte(e.ID)); er != nil {

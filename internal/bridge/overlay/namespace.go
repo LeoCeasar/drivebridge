@@ -18,6 +18,10 @@ type CommittedError struct{ Err error }
 func (e *CommittedError) Error() string   { return "local namespace committed: " + e.Err.Error() }
 func (e *CommittedError) Unwrap() error   { return e.Err }
 func (e *CommittedError) Committed() bool { return true }
+func safeSaveSibling(src, dst string) bool {
+	return parentPath(src) == parentPath(dst) && strings.HasPrefix(path.Base(dst), path.Base(src)+".sb-") && safeSaveDirectory.MatchString(path.Base(dst))
+}
+
 func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, error) {
 	if err := validPath(src, false); err != nil {
 		return "", err
@@ -72,9 +76,17 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
+	safeSaveBackup := kind == "rename" && source.Kind == model.KindFile && source.Token != "" && safeSaveSibling(src, dst)
 	op, err := f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: kind, Src: src, Dst: dst})
 	if err != nil {
 		return "", err
+	}
+	kind = op.Kind
+	if safeSaveBackup {
+		if err = f.store.ConfigureSafeSaveBackup(ctx, op.ID); err != nil {
+			_ = f.store.AbortNamespace(ctx, op.ID)
+			return "", err
+		}
 	}
 	if kind == "rename" && source.Token == "" && source.Kind != model.KindFolder {
 		if err = f.store.ConfigureNamespaceKind(ctx, op.ID, newKind(dst)); err != nil {
@@ -99,6 +111,17 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 			}
 		}
 		locality[before.ID] = f.localOnlyPath(destination, kind)
+		if metadata, err := f.store.Metadata(ctx, before.ID); err != nil {
+			_ = f.store.AbortNamespace(ctx, op.ID)
+			return "", err
+		} else if metadata.SafeSaveOriginal != "" {
+			original, err := f.store.Entry(ctx, metadata.SafeSaveOriginal)
+			if err != nil {
+				_ = f.store.AbortNamespace(ctx, op.ID)
+				return "", err
+			}
+			locality[before.ID] = locality[before.ID] || safeSaveSibling(original.Remote, destination)
+		}
 		promotion[before.ID] = f.localOnlyPath(before.Remote, before.Kind) && !locality[before.ID]
 	}
 	if err = f.store.ConfigureNamespaceLocality(ctx, op.ID, locality, promotion); err != nil {
