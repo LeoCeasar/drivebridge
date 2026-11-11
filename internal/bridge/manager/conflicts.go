@@ -125,16 +125,24 @@ func (m *Manager) findConflict(ctx context.Context, id model.ConflictID) (Confli
 	if err != nil {
 		return ConflictView{}, err
 	}
+	var failures []error
 	for _, mount := range c.Mounts {
+		if err := ctx.Err(); err != nil {
+			return ConflictView{}, err
+		}
 		list, err := m.Conflicts(ctx, mount.ID)
 		if err != nil {
-			return ConflictView{}, err
+			failures = append(failures, err)
+			continue
 		}
 		for _, view := range list {
 			if view.Conflict.ID == id {
 				return view, nil
 			}
 		}
+	}
+	if len(failures) > 0 {
+		return ConflictView{}, errors.Join(failures...)
 	}
 	return ConflictView{}, store.ErrNotFound
 }
