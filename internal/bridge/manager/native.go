@@ -301,8 +301,11 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		}
 		return v.TryExternalUpdate(ctx, entry.Remote, func() (fs.Object, error) { return overlayFS.Publish(ctx, c) })
 	}), ShouldRefresh: func(ctx context.Context, id model.EntryID) (bool, error) {
+		if allowed, err := overlayFS.SyncEntryAllowed(ctx, id); err != nil || !allowed {
+			return allowed, err
+		}
 		return backgroundPullAllowed(ctx, m.LoadConfig, s.Entry, spec.Mount.ID, id)
-	}, ShouldSync: overlayFS.ShouldSync, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
+	}, ShouldSync: overlayFS.ShouldSync, ShouldSyncPath: overlayFS.SyncPathAllowed, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
 	if err != nil {
 		native.Unmount()
 		return nil, err

@@ -82,6 +82,9 @@ func (f *Fs) RefreshDirectory(ctx context.Context, dir string) error {
 }
 
 func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) error {
+	if allowed, err := f.SyncPathAllowed(ctx, dir); err != nil || !allowed {
+		return err
+	}
 	if err := validPath(dir, true); err != nil {
 		return err
 	}
@@ -262,7 +265,15 @@ func (f *Fs) warmDirectoryBatch(ctx context.Context, limit int, notifications ..
 		delete(f.warmQueued, id)
 		e, err := f.store.Entry(ctx, id)
 		if err == nil {
-			err = f.RefreshDirectory(ctx, e.Remote)
+			allowed, policyErr := f.SyncPathAllowed(ctx, e.Remote)
+			if policyErr != nil {
+				err = policyErr
+			} else if !allowed {
+				f.warmSeen[id] = true
+				continue
+			} else {
+				err = f.RefreshDirectory(ctx, e.Remote)
+			}
 		}
 		if ctx.Err() != nil {
 			f.warmQueue = append([]model.EntryID{id}, f.warmQueue...)

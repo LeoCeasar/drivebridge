@@ -292,6 +292,11 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 func (o *Object) Remove(ctx context.Context) error { return o.f.remove(ctx, o.Remote(), false) }
 
 func (f *Fs) MaterializeManaged(ctx context.Context, remote string) (fs.Object, error) {
+	if allowed, err := f.SyncPathAllowed(ctx, remote); err != nil {
+		return nil, err
+	} else if !allowed {
+		return nil, fs.ErrorObjectNotFound
+	}
 	e, err := f.find(ctx, remote)
 	if err != nil {
 		return nil, mapNotFound(err)

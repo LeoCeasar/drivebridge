@@ -77,12 +77,22 @@ var sources = []sourceSpec{
 	{SharedHidden, "/space/api/explorer/v2/share/folder/list/", "1", "5", "1"},
 }
 
+// ScanOptions controls source discovery without deleting previously observed
+// entries. The zero value preserves the historical all-sources scan.
+type ScanOptions struct {
+	ExcludeHiddenShared bool
+}
+
 // Scan preserves prior entries even when a list no longer contains them: a
 // missing entrance is not proof of deletion or revoked access. The caller must
 // load previous only from its trusted per-binding cache. Identity always requires
 // current personal evidence; historical entries never verify the current browser.
 // An empty folder list falls back to current personal objects for owner proof.
 func Scan(ctx context.Context, b Binding, f Fetcher, previous Snapshot) (Snapshot, error) {
+	return ScanWithOptions(ctx, b, f, previous, ScanOptions{})
+}
+
+func ScanWithOptions(ctx context.Context, b Binding, f Fetcher, previous Snapshot, options ScanOptions) (Snapshot, error) {
 	out := Snapshot{Binding: b, ScannedAt: time.Now().UTC(), Entries: []Entry{}, Sources: map[string]SourceState{}}
 	if !validBinding(b) || (!emptySnapshot(previous) && previous.Binding != b) {
 		return out, ErrIdentity
@@ -98,6 +108,12 @@ func Scan(ctx context.Context, b Binding, f Fetcher, previous Snapshot) (Snapsho
 	var failures []error
 	observedNames := map[string]string{}
 	for _, spec := range sources {
+		if spec.name == SharedHidden && options.ExcludeHiddenShared {
+			state := previous.Sources[SharedHidden]
+			state.Status, state.Error = "disabled", ""
+			out.Sources[SharedHidden] = state
+			continue
+		}
 		if spec.name != Personal && !verified {
 			out.Sources[spec.name] = SourceState{Status: "partial", Error: ErrIdentity.Error()}
 			failures = append(failures, fmt.Errorf("%s: %w", spec.name, ErrIdentity))

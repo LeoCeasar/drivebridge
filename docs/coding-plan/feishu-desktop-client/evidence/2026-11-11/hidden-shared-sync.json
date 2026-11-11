@@ -1,0 +1,43 @@
+{
+  "disabled_saved": true,
+  "disabled_source_status": true,
+  "raw_catalog_retained": true,
+  "shared_roots_before": 9,
+  "shared_roots_disabled": 2,
+  "pending_inflight_conflicts": [
+    13,
+    0,
+    5
+  ],
+  "reenabled_saved": true,
+  "shared_roots_restored": 9,
+  "original_preference_restored": true,
+  "installed_sha256": "472fee9102d56bc48fead1bddf71c56d93f574bf6c21e7c75d71cc19dce090a2",
+  "date": "2026-11-11",
+  "base_head": "3c994c499",
+  "cua": {
+    "checkbox_visible": true,
+    "disable_feedback": true,
+    "reenable_feedback": true
+  },
+  "upgrade": {
+    "protected_files": 219,
+    "changed_files": 0,
+    "candidate_matches_installed": true
+  },
+  "tests": {
+    "bridge_feishu_desktop": "passed",
+    "discovery_manager_overlay_sync_ui_integration_race": "passed",
+    "frontend": 13,
+    "mac_native_build": "passed",
+    "windows_cmount_cli_cross_build": "passed",
+    "linux_amd64_cli_cross_build": "passed",
+    "functional_vfs_queued_retention_visible_sync_and_resume": "passed"
+  },
+  "real_cloud_mutations": false,
+  "limits": [
+    "Already-dispatched requests may complete; protected open/dirty nodes may remain visible temporarily.",
+    "Explicit personal/visible/manual access keeps a resource and any necessary canonical anchor active.",
+    "Windows/Linux cross-builds do not establish native acceptance."
+  ]
+}

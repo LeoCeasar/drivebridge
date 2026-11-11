@@ -62,6 +62,13 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 	if err != nil {
 		return err
 	}
+	if e.deps.ShouldSyncPath != nil {
+		for _, remote := range []string{op.Src, op.Dst, en.Remote} {
+			if allowed, err := e.deps.ShouldSyncPath(ctx, remote); err != nil || !allowed {
+				return err
+			}
+		}
+	}
 	if e.deps.LocalOnly != nil && e.deps.LocalOnly(en.Remote) {
 		return e.store.AcknowledgeNamespaceAction(ctx, op.ID)
 	}

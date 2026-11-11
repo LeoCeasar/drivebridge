@@ -139,7 +139,7 @@ func discoveryStateError(err error) string {
 	}
 }
 func scanDiscoveryState(ctx context.Context, settings *discoverySettings, session discoverySession, previous discovery.Snapshot) discovery.Snapshot {
-	next, err := discovery.Scan(ctx, settings.Binding, session, previous)
+	next, err := discovery.ScanWithOptions(ctx, settings.Binding, session, previous, discovery.ScanOptions{ExcludeHiddenShared: !settings.hiddenSharedEnabled()})
 	settings.Attempted = next.ScannedAt
 	settings.Error = discoveryStateError(err)
 	settings.State = "complete"
@@ -164,7 +164,7 @@ func scanDiscoveryState(ctx context.Context, settings *discoverySettings, sessio
 	return next
 }
 func (m *Manager) discoveryView(ctx context.Context, profile model.Profile) (DiscoveryView, error) {
-	out := DiscoveryView{ProfileID: profile.ID, State: "unconfigured", Browser: m.browserBridgeView(profile.ID), Snapshot: discovery.Snapshot{Entries: []discovery.Entry{}, Sources: map[string]discovery.SourceState{}}}
+	out := DiscoveryView{SyncHiddenShared: true, ProfileID: profile.ID, State: "unconfigured", Browser: m.browserBridgeView(profile.ID), Snapshot: discovery.Snapshot{Entries: []discovery.Entry{}, Sources: map[string]discovery.SourceState{}}}
 	settings, snapshot, err := m.readDiscovery(ctx, profile.ID)
 	if err != nil {
 		return out, err
@@ -172,11 +172,20 @@ func (m *Manager) discoveryView(ctx context.Context, profile model.Profile) (Dis
 	if settings.Binding.ProfileID != "" {
 		out.Configured = true
 		out.Enabled = settings.Enabled
+		out.SyncHiddenShared = settings.hiddenSharedEnabled()
 		out.Origin = settings.Binding.Origin
 		out.State = settings.State
 		out.Error = settings.Error
 		out.LastScan = settings.Attempted
 		out.Snapshot = snapshot
+		if !out.SyncHiddenShared {
+			if out.Snapshot.Sources == nil {
+				out.Snapshot.Sources = map[string]discovery.SourceState{}
+			}
+			state := out.Snapshot.Sources[discovery.SharedHidden]
+			state.Status, state.Error = "disabled", ""
+			out.Snapshot.Sources[discovery.SharedHidden] = state
+		}
 		if settings.Binding.ProfileID != string(profile.ID) || settings.Binding.IdentityHash != profile.IdentityHash {
 			out.State = "stale"
 			out.Error = "stale"
@@ -209,7 +218,7 @@ func (m *Manager) DiscoveryViews(ctx context.Context) ([]DiscoveryView, error) {
 	for _, profile := range c.Profiles {
 		view, e := m.discoveryView(ctx, profile)
 		if e != nil {
-			view = DiscoveryView{ProfileID: profile.ID, State: "stale", Error: "stale"}
+			view = DiscoveryView{SyncHiddenShared: true, ProfileID: profile.ID, State: "stale", Error: "stale"}
 		}
 		out = append(out, view)
 	}
@@ -282,12 +291,26 @@ func (m *Manager) accountOptions(ctx context.Context, spec mountSpec) (*overlay.
 		return nil, model.ErrIdentityChanged
 	}
 	binding := settings.Binding
-	return &overlay.AccountOptions{AccountToken: spec.Remote.FolderToken, PersonalToken: settings.RootToken, ReadSnapshot: func(ctx context.Context) (discovery.Snapshot, error) {
+	rootToken := settings.RootToken
+	return &overlay.AccountOptions{AccountToken: spec.Remote.FolderToken, PersonalToken: settings.RootToken, SyncHiddenShared: func(ctx context.Context) (bool, error) {
+		profile, err := m.ResolveProfile(ctx, string(spec.Profile.ID))
+		if err != nil {
+			return false, err
+		}
+		settings, snapshot, err := m.readDiscovery(ctx, spec.Profile.ID)
+		if err != nil {
+			return false, err
+		}
+		if profile.IdentityHash != binding.IdentityHash || settings.Binding != binding || snapshot.Binding != binding || settings.RootToken != rootToken {
+			return false, model.ErrIdentityChanged
+		}
+		return settings.hiddenSharedEnabled(), nil
+	}, ReadSnapshot: func(ctx context.Context) (discovery.Snapshot, error) {
 		settings, snapshot, err := m.readDiscovery(ctx, spec.Profile.ID)
 		if err != nil {
 			return snapshot, err
 		}
-		if settings.Binding != binding || snapshot.Binding != binding {
+		if settings.Binding != binding || snapshot.Binding != binding || settings.RootToken != rootToken {
 			return discovery.Snapshot{}, model.ErrIdentityChanged
 		}
 		return snapshot, nil

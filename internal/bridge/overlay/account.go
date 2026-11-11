@@ -14,9 +14,10 @@ import (
 // AccountOptions projects a local discovery catalog and the official personal
 // root into one account namespace. AccountToken must match the store scope.
 type AccountOptions struct {
-	AccountToken  string
-	PersonalToken string
-	ReadSnapshot  func(context.Context) (discovery.Snapshot, error)
+	AccountToken     string
+	PersonalToken    string
+	ReadSnapshot     func(context.Context) (discovery.Snapshot, error)
+	SyncHiddenShared func(context.Context) (bool, error)
 }
 
 type accountDirectory struct {

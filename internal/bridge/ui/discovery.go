@@ -24,6 +24,12 @@ type DiscoveryBackend interface {
 	AddDiscoveryFolder(context.Context, model.ProfileID, string) (manager.DiscoveryView, error)
 }
 
+// HiddenSharedSyncConfigurer is optional so older fixture and offline backends
+// can keep discovery without accepting new account-policy mutations.
+type HiddenSharedSyncConfigurer interface {
+	SetHiddenSharedSync(context.Context, model.ProfileID, bool) (manager.DiscoveryView, error)
+}
+
 func discoveryCode(s string) string {
 	switch s {
 	case "", "complete", "partial", "stale", "needs_login", "needs_browser", "needs_extension", "browser_disconnected", "unsupported", "idle", "login_pending", "scanning", "unconfigured", "disabled":
@@ -91,7 +97,7 @@ func (h *Host) discovery(w http.ResponseWriter, r *http.Request, tail []string) 
 		return
 	}
 	action := tail[1]
-	if action != "login" && action != "complete" && action != "rescan" && action != "search" && action != "add" {
+	if action != "login" && action != "complete" && action != "rescan" && action != "search" && action != "add" && action != "hidden-sync" {
 		respondError(w, 400, "invalid_request")
 		return
 	}
@@ -99,6 +105,33 @@ func (h *Host) discovery(w http.ResponseWriter, r *http.Request, tail []string) 
 		method(w, "POST")
 		return
 	}
+	if action == "hidden-sync" {
+		var in struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if decode(w, r, &in) != nil || in.Enabled == nil {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		policy, ok := h.backend.(HiddenSharedSyncConfigurer)
+		if !ok {
+			respondError(w, 503, "unavailable")
+			return
+		}
+		view, err := policy.SetHiddenSharedSync(r.Context(), model.ProfileID(tail[0]), *in.Enabled)
+		if err != nil {
+			if errors.Is(err, manager.ErrPending) || errors.Is(err, manager.ErrConfig) {
+				apiError(w, err)
+			} else {
+				// A settings failure is not a document merge/readback failure.
+				respondError(w, 503, "discovery_unavailable")
+			}
+			return
+		}
+		respond(w, 200, publicDiscovery(view))
+		return
+	}
+
 	var in struct {
 		Origin string `json:"origin,omitempty"`
 		Input  string `json:"input,omitempty"`

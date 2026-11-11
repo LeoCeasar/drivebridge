@@ -28,6 +28,7 @@ type Dependencies struct {
 	Publisher          Publisher
 	LocalOnly          func(string) bool
 	ShouldSync         func(context.Context, model.EntryID) (bool, error)
+	ShouldSyncPath     func(context.Context, string) (bool, error)
 	ShouldRefresh      func(context.Context, model.EntryID) (bool, error)
 	ActiveEntries      func() []model.EntryID
 	RefreshDirectories func(context.Context) error

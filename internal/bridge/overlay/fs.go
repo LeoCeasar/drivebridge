@@ -186,6 +186,9 @@ func (f *Fs) localOnlyPath(remote string, kind model.Kind) bool {
 	return false
 }
 func (f *Fs) ShouldSync(ctx context.Context, id model.EntryID) (bool, error) {
+	if allowed, err := f.SyncEntryAllowed(ctx, id); err != nil || !allowed {
+		return allowed, err
+	}
 	e, err := f.store.Entry(ctx, id)
 	if err != nil {
 		return false, err
@@ -240,6 +243,11 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	if err := validPath(dir, true); err != nil {
 		return nil, err
 	}
+	if allowed, err := f.SyncPathAllowed(ctx, dir); err != nil {
+		return nil, err
+	} else if !allowed {
+		return nil, fs.ErrorDirNotFound
+	}
 	parent, err := f.directory(ctx, dir)
 	if err != nil {
 		return nil, err
@@ -282,8 +290,15 @@ func (f *Fs) cachedDirectory(ctx context.Context, parent model.Entry) (fs.DirEnt
 	if err != nil {
 		return nil, err
 	}
+	policy, err := f.accountPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var result fs.DirEntries
 	for _, e := range entries {
+		if !policy.allows(e.Remote) {
+			continue
+		}
 		if account, ok := f.source.(*accountSource); ok && parent.Token == account.options.AccountToken && e.Token == account.options.AccountToken+"-manual" {
 			legacy, err := f.store.Entries(ctx, e.Remote)
 			if err != nil {

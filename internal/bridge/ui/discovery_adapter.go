@@ -27,3 +27,9 @@ func (b *ManagerBackend) AddDiscoveryFolder(ctx context.Context, id model.Profil
 }
 
 var _ DiscoveryBackend = (*ManagerBackend)(nil)
+
+func (b *ManagerBackend) SetHiddenSharedSync(ctx context.Context, id model.ProfileID, enabled bool) (manager.DiscoveryView, error) {
+	return b.manager.SetHiddenSharedSync(ctx, id, enabled)
+}
+
+var _ HiddenSharedSyncConfigurer = (*ManagerBackend)(nil)
