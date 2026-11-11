@@ -1,0 +1,219 @@
+{
+  "date": "2026-11-11",
+  "source_head": "054042a558cba621bfaf46e059b30f195a7b7e92",
+  "official_cli": "1.0.99",
+  "scope": "Read-only current authenticated account. Directory metadata only; no cloud mutations or document-body downloads.",
+  "execution": {
+    "official": "Product Manager.Auth.ManagedRunner; existing verified per-user identity and credential locks",
+    "web": "Native Chrome through Cua. GET responses saved with browser Save to ignored private directory; no cookie/token export.",
+    "ui": "Existing Feishu personal, visible shared and expanded hidden shared sidebar compared with API names",
+    "identity_root_user_matches_web_personal_owners": true
+  },
+  "root_inventory": {
+    "personal_memberships": 3,
+    "shared_visible_memberships": 3,
+    "shared_hidden_memberships": 7,
+    "shared_memberships": 10,
+    "unique_folder_tokens": 12,
+    "personal_shared_overlap": 1,
+    "ui_comparison": {
+      "personal": {
+        "api_count": 3,
+        "ui_name_matches": 3,
+        "all_names_present_in_ui": true
+      },
+      "shared_visible": {
+        "api_count": 3,
+        "ui_name_matches": 3,
+        "all_names_present_in_ui": true
+      },
+      "shared_hidden": {
+        "api_count": 7,
+        "ui_name_matches": 7,
+        "all_names_present_in_ui": true
+      }
+    },
+    "current_account_ui_root_inventory_verified": true,
+    "universal_complete_inventory_verified": false
+  },
+  "official_root": {
+    "application_success": true,
+    "requested_page_size": 1,
+    "returned_items": 7,
+    "returned_folders": 3,
+    "has_more": false,
+    "personal_matches": 3,
+    "shared_matches": 1,
+    "shared_missing": 9,
+    "conclusion": "Fails current account complete shared root discovery"
+  },
+  "official_search": {
+    "empty_folder_search": [
+      {
+        "data_keys": [
+          "results",
+          "total",
+          "has_more",
+          "page_token"
+        ],
+        "elapsed_ms": 672,
+        "has_more": false,
+        "items": 0,
+        "label": "search-folders-01",
+        "success": true,
+        "total": 0
+      },
+      {
+        "data_keys": [
+          "has_more",
+          "page_token",
+          "results",
+          "total"
+        ],
+        "elapsed_ms": 638,
+        "has_more": false,
+        "items": 0,
+        "label": "search-mine-01",
+        "success": true,
+        "total": 0
+      },
+      {
+        "has_more": false,
+        "items": 0,
+        "label": "search-empty-folder-size20",
+        "success": true,
+        "total": 0
+      },
+      {
+        "has_more": false,
+        "items": 0,
+        "label": "search-empty-folder-size20-mine",
+        "success": true,
+        "total": 0
+      }
+    ],
+    "known_name_queries": [
+      {
+        "returned": 1,
+        "expected_folder_token_present": true
+      },
+      {
+        "returned": 1,
+        "expected_folder_token_present": true
+      }
+    ],
+    "unfiltered_empty_query_first_page": {
+      "returned": 20,
+      "total": 57,
+      "has_more": true,
+      "all_pages_fetched": false
+    },
+    "conclusion": "Known-name folder lookup works; empty-query folder inventory returned zero. Not a complete discovery source."
+  },
+  "web_pagination": {
+    "personal": {
+      "page_counts": [
+        1,
+        1,
+        1
+      ],
+      "has_more": [
+        true,
+        true,
+        false
+      ],
+      "unique_count": 3,
+      "matches_length50_response": true,
+      "duplicate_count": 0,
+      "terminal": true,
+      "query": {
+        "rank": 5,
+        "asc": 1,
+        "length": 1
+      },
+      "cursor_parameter": "last_label"
+    },
+    "shared_visible": {
+      "page_counts": [
+        1,
+        1,
+        1
+      ],
+      "has_more": [
+        true,
+        true,
+        false
+      ],
+      "unique_count": 3,
+      "matches_length50_response": true,
+      "duplicate_count": 0,
+      "terminal": true,
+      "query": {
+        "rank": 3,
+        "asc": 0,
+        "length": 1
+      },
+      "cursor_parameter": "last_label"
+    },
+    "shared_hidden": {
+      "page_counts": [
+        3,
+        3,
+        1
+      ],
+      "has_more": [
+        true,
+        true,
+        false
+      ],
+      "unique_count": 7,
+      "matches_length50_response": true,
+      "duplicate_count": 0,
+      "terminal": true,
+      "query": {
+        "rank": 5,
+        "asc": 1,
+        "length": 3
+      },
+      "cursor_parameter": "last_label"
+    }
+  },
+  "negative_case": {
+    "description": "hidden=1, rank=3, asc=0, length=3, then last_label continuation did not recover remaining entries",
+    "page_counts": [
+      3,
+      0
+    ],
+    "has_more": [
+      true,
+      false
+    ],
+    "same_cursor_with_length50_count": 0,
+    "reference_count": 7,
+    "interpretation": "This parameter combination is unsuitable for complete traversal in this sample. No upstream-bug claim; rank5/asc1 alternative separately verified."
+  },
+  "official_recursive_sample": {
+    "roots": 12,
+    "all_discovered_roots_listed_successfully": true,
+    "unique_folders_visited": 300,
+    "all_visited_folder_lists_complete": true,
+    "unique_folder_tokens_discovered": 737,
+    "unvisited_known_folders": 437,
+    "stop_reason": "Explicit read-only probe budget: 100 + 200 folders. No cloud failure or permission error in visited folder lists.",
+    "entire_descendant_tree_verified": false
+  },
+  "recommendation": "Prototype hybrid browser-session directory discovery + official CLI file operations. Current-account root inventory passes; background session lifecycle and universal completeness are unverified.",
+  "not_verified": [
+    "New dedicated app browser login and subsequent headless refresh",
+    "Expired sessions, SSO/MFA, account switching and revoked resource access",
+    "More than 50 actual root folders, large-tenant consistency, and concurrent root changes",
+    "All 737 known descendant folders; only 300 visited",
+    "Private endpoint future compatibility; no supported public contract"
+  ],
+  "privacy": {
+    "raw_evidence_ignored": true,
+    "raw_file_count": 338,
+    "raw_bundle_sha256": "b85481ae3d2481005861054501a560c4c92b2e425f7b22c569cd4ec472d1cf3f",
+    "contains_cloud_names_tokens_or_credentials": false
+  }
+}
