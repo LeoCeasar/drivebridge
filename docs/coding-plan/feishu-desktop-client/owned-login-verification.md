@@ -56,3 +56,11 @@
 已观察的云盘正文空白/加载骨架仍是兼容边界。正式交互应以本机“登录完成”结果为准，而非承诺整个飞书网页可以内嵌浏览。原型机器证据保持原样，正式验收状态另加记录，不改写历史通过项。
 
 实际截图：[账号盘分组](../../manual/assets/59-owned-account-disk.png)、[原生完成页](../../manual/assets/60-owned-login-complete.png)。自动化终端对新挂载目录的直接 ls 返回 EPERM，Finder 实测可正常展开；未修改系统权限，也不以该 ls 结果声称终端文件访问通过。
+
+## 登录组件 Dock 交互修复（2026-11-11）
+
+原生 helper 先前调用 `.regular`，打包也未设置 `LSUIElement`，因此关闭窗口后仍作为额外普通应用留在 Dock。本轮改为 `.accessory`，打包显式要求布尔 `LSUIElement=true`，仍允许主动显示和激活登录窗口。Bundle ID、每账号 WebKit 存储、通信协议和关闭窗口保留进程的行为保持。该模式不创建独立 Dock 图标，用户从主管理页重新打开登录窗口。
+
+39 项打包测试、Swift6/macOS14 编译及 ownedlogin/manager/ui 测试通过。本机更新后，Computer Use 验证打开登录窗口、复用既有会话自动核验、隐藏、新一轮扫描成功（12 个去重入口）、再次打开及再次隐藏。两份实际挂载运行，既有待处理任务 13、冲突 5 保留；升级 219 个受保护文件哈希不变。Dock 本身的辅助功能目标超时，因此不将配置检查或窗口操作结果标为 Dock 视觉验收。
+
+[机器证据](evidence/2026-11-11/session-agent.json)。实现依据：[Apple accessory activation policy](https://developer.apple.com/documentation/appkit/nsapplication/activationpolicy-swift.enum/accessory)。

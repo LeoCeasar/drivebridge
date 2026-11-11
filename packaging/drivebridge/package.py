@@ -331,7 +331,7 @@ def session_info(version):
     return {'CFBundleExecutable': 'drivebridge-session-host', 'CFBundleIdentifier': SESSION_BUNDLE_ID,
             'CFBundleName': 'DriveBridge Session', 'CFBundleDisplayName': 'DriveBridge 飞书登录',
             'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': version, 'CFBundleVersion': version,
-            'LSMinimumSystemVersion': SESSION_MINIMUM_OS, 'NSHighResolutionCapable': True}
+            'LSMinimumSystemVersion': SESSION_MINIMUM_OS, 'NSHighResolutionCapable': True, 'LSUIElement': True}
 
 
 def validate_session_bundle(root, arch=None):
@@ -342,7 +342,7 @@ def validate_session_bundle(root, arch=None):
     if (not isinstance(info, dict) or info.get('CFBundleIdentifier') != SESSION_BUNDLE_ID or
             info.get('CFBundleExecutable') != 'drivebridge-session-host' or info.get('CFBundlePackageType') != 'APPL' or
             info.get('LSMinimumSystemVersion') != SESSION_MINIMUM_OS or info.get('NSHighResolutionCapable') is not True or
-            info.get('LSUIElement') or info.get('LSBackgroundOnly')):
+            info.get('LSUIElement') is not True or info.get('LSBackgroundOnly')):
         raise ValueError('native login helper identity/minimum OS/activation mismatch')
     if arch:
         check_binary(Path(root) / SESSION_BINARY, 'darwin', arch)

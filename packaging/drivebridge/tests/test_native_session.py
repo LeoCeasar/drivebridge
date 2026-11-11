@@ -49,7 +49,7 @@ class NativeSessionPackagingTests(unittest.TestCase):
             self.assertEqual(info['LSMinimumSystemVersion'], '14.0')
             self.assertEqual(info['CFBundleVersion'], '1.2.3')
             self.assertIs(info['NSHighResolutionCapable'], True)
-            self.assertNotIn('LSUIElement', info)
+            self.assertIs(info['LSUIElement'], True)
             self.assertTrue((payload / p.SESSION_BINARY).stat().st_mode & 0o100)
             self.assertEqual({item['path'] for item in p.inventory(payload)}, {p.SESSION_BINARY, p.SESSION_PLIST})
 
@@ -74,7 +74,7 @@ class NativeSessionPackagingTests(unittest.TestCase):
             p.validate_payload(root, 'darwin', arch='arm64')
             original = plistlib.loads((root / p.SESSION_PLIST).read_bytes())
             for change in ({'CFBundleIdentifier': 'foreign.bundle'}, {'LSMinimumSystemVersion': '13.0'},
-                           {'CFBundleExecutable': 'foreign'}, {'LSUIElement': True}, {'LSBackgroundOnly': True}):
+                           {'CFBundleExecutable': 'foreign'}, {'LSUIElement': False}, {'LSUIElement': 1}, {'LSBackgroundOnly': True}):
                 info = dict(original, **change)
                 (root / p.SESSION_PLIST).write_bytes(plistlib.dumps(info))
                 with self.assertRaisesRegex(ValueError, 'identity/minimum OS/activation'):

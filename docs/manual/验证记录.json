@@ -959,5 +959,38 @@
       "windows_cmount_cli_cross_build": "passed",
       "linux_cli_cross_build": "passed"
     }
+  },
+  "native_login_accessory": {
+    "date": "2026-11-11",
+    "scope": "macOS installed native login helper",
+    "helper_sha256": "82209a1ca32c86abc67fcaaa1aee3c19163c49e25f639cb7769fcf28fdae990d",
+    "bundle_identity_preserved": true,
+    "ls_ui_element": true,
+    "swift_activation_policy": "accessory",
+    "packaging_tests": 39,
+    "swift_build": "passed",
+    "go_ownedlogin_manager_ui": "passed",
+    "cua": {
+      "open_window": true,
+      "auto_verified_existing_session": true,
+      "hide_window": true,
+      "rescan_after_hide": true,
+      "reopen_window": true,
+      "final_window_hidden": true,
+      "dock_accessibility_observation": "unavailable; Dock target timed out"
+    },
+    "fresh_login_required": false,
+    "directory_entrances": 12,
+    "active_mounts": 2,
+    "pending_inflight_conflicts": [
+      13,
+      0,
+      5
+    ],
+    "upgrade": {
+      "protected_files": 219,
+      "changed_files": 0,
+      "candidate_matches_installed": true
+    }
   }
 }

@@ -267,7 +267,10 @@ final class SessionHost: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 }
 MainActor.assumeIsolated {
     let application = NSApplication.shared
-    application.setActivationPolicy(.regular)
+    // A login window belongs to the tray app, not a second Dock application.
+    // Accessory mode still permits explicit activation while keeping the
+    // hidden WebView session alive for background directory discovery.
+    application.setActivationPolicy(.accessory)
     let host = SessionHost(origin: origin, originURL: originURL, profileUUID: profileUUID)
     application.delegate = host
     withExtendedLifetime(host) { application.run() }
