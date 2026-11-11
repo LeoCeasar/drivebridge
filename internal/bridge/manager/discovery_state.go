@@ -257,9 +257,9 @@ func (m *Manager) ensureAccountMount(ctx context.Context, profile model.Profile)
 		mount.Mountpoint = filepath.Join(home, "DriveBridge", string(profile.ID))
 		mount.CacheMode = "full"
 		mount.Autostart = true
-		// Create only this managed mount's empty target. Runtime startup still checks
-		// platform availability and mountpoint ownership using the normal path.
-		if err = platform.EnsurePrivateDir(mount.Mountpoint); err != nil {
+		// Prepare the automatic target for the native mount implementation; WinFsp
+		// requires the leaf to remain absent, while Unix mounts need an empty folder.
+		if err = prepareAccountMountpoint(mount.Mountpoint); err != nil {
 			return ErrConfig
 		}
 		c.Mounts = append(c.Mounts, mount)

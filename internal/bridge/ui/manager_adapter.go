@@ -76,18 +76,13 @@ func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (Config
 	return b.Config(ctx)
 }
 func (b *ManagerBackend) AuthStart(ctx context.Context, id model.ProfileID) (auth.AuthFlow, error) {
-	service, err := b.manager.Auth(ctx)
-	if err != nil {
-		return auth.AuthFlow{}, err
-	}
-	return service.Start(ctx, id)
+	return b.manager.StartAutomaticLogin(ctx, id, false)
 }
 func (b *ManagerBackend) AuthStartRecovery(ctx context.Context, id model.ProfileID) (auth.AuthFlow, error) {
-	service, err := b.manager.Auth(ctx)
-	if err != nil {
-		return auth.AuthFlow{}, err
-	}
-	return service.StartRecovery(ctx, id)
+	return b.manager.StartAutomaticLogin(ctx, id, true)
+}
+func (b *ManagerBackend) AuthProgress(ctx context.Context, id string) (manager.AutomaticLoginView, error) {
+	return b.manager.AutomaticLoginStatus(ctx, id)
 }
 func (b *ManagerBackend) AuthComplete(ctx context.Context, id string) error {
 	service, err := b.manager.Auth(ctx)

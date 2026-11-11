@@ -43,8 +43,8 @@
       "id": "login",
       "title": "登录飞书账号",
       "status": "verified",
-      "body": "在本机管理页添加账号，打开飞书官方授权页；用户完成登录与授权后返回应用核验。",
-      "observed": "首次配置顺序修复后新增账号成功。通过官方页面选择已有飞书 CLI 应用，完成应用配置；再次发起用户授权，授权页明确为此前已授予权限的重用。返回管理页完成身份核验后，账号显示已授权。没有复制此前验证工具的凭据，未记录授权码或二维码。",
+      "body": "在飞书官方页面完成用户授权，后台自动核验并接续应用内登录，不需点击完成确认。",
+      "observed": "首次配置顺序修复后新增账号成功。通过官方页面选择已有飞书 CLI 应用，完成应用配置；再次发起用户授权，授权页明确为此前已授予权限的重用。返回管理页完成身份核验后，账号显示已授权。没有复制此前验证工具的凭据，未记录授权码或二维码。上述人工确认是历史版本实测。新自动接续通过后台生命周期、模拟官方结果、HTTP与前端流程回归测试；本轮未重置现有账号重做首次真实授权。",
       "screenshots": [
         {
           "src": "assets/12-account-authorized.png",
@@ -72,9 +72,9 @@
     },
     {
       "id": "mount",
-      "title": "挂载共享文件夹",
+      "title": "登录后自动挂载账号盘",
       "status": "verified",
-      "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
+      "body": "正常账号盘由登录流程自动创建或复用，用户无需选择挂载目录。自定义目录仅在高级设置中提供。",
       "observed": "再次重启后，kmutil确认io.macfuse.filesystems.macfuse.25（5.5.0）已加载。专用Kernel验收挂载后台启动成功，Finder能列出真实卷内的sync-check.md、conflict-B.md与sync-check.txt。旧FSKit挂载保持停用，未清理其待处理数据。此处使用指定共享目录，不代表自动发现全部共享目录。本轮升级后，真实账号盘以“DriveBridge — 本机验收账号”出现在Finder“位置”；个人根7项、共享9入口，3个个人子目录均可读取。",
       "checks": [
         "内核驱动实际加载，真实卷可读取",
@@ -852,6 +852,61 @@
     "verification_tools": {
       "swift_build": "passed",
       "go_harness_race_test": "passed; Darwin linker LC_DYSYMTAB warning, exit 0"
+    }
+  },
+  "automatic_onboarding": {
+    "base_head": "2fd85f1fe",
+    "auto_complete_confirmation_removed": true,
+    "manual_mount_selection_required": false,
+    "backend_lifetime_survives_page_close": "covered by tests",
+    "frontend_tests": 11,
+    "ui_manager_race": "passed",
+    "bridge_feishu_desktop_tests": "passed",
+    "windows_mountpoint_strategy": "parent created, final target absent; tests and cross-build passed",
+    "fresh_real_authorization_replayed": false,
+    "windows_linux_native_web_login": "not implemented",
+    "system_login_autostart_enabled_by_this_change": false,
+    "existing_session_helper_not_running_copy": "retained login/catalog; background revalidation, not forced login",
+    "installed_verification": {
+      "checked_at": "2026-11-11T09:18:13.839579+00:00",
+      "auto_auth_module_served": true,
+      "progress_endpoint_validates_input": true,
+      "unknown_progress_returns_404": true,
+      "completion_button_hidden": true,
+      "custom_mount_settings_collapsed": true,
+      "active_mounts": 2,
+      "active_mount_queues_inflight_conflicts": [
+        0,
+        0,
+        0
+      ],
+      "fresh_official_authorization_performed": false,
+      "installed_sha256": "c016863a6117d78e804c874ee7e270ac101a21e00c792a3601de3786fdebd5ad",
+      "upgrade": {
+        "protected_files": 218,
+        "changed_files": 0,
+        "candidate_matches_installed": true
+      },
+      "base_head": "2fd85f1fe",
+      "cua": {
+        "default_custom_mount_settings_collapsed": true,
+        "manual_login_verification_collapsed": true,
+        "stored_session_not_misreported_as_logout": true
+      },
+      "tests": {
+        "frontend": 11,
+        "bridge_feishu_desktop": "passed",
+        "ui_manager_race": "passed",
+        "automatic_login_target_race_after_timeout_alignment": "passed",
+        "windows_manager_target_race_and_test_cross_compile": "passed",
+        "windows_cmount_cli_cross_build": "passed",
+        "linux_amd64_cli_cross_build": "passed"
+      },
+      "limits": [
+        "Fresh real official authorization was not replayed; no account credentials were reset.",
+        "Windows/Linux native web login remains unimplemented; cross-build is not full native acceptance.",
+        "System-login startup was not enabled or retested in this change."
+      ]
     }
   }
 }

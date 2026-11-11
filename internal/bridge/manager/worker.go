@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -441,37 +442,7 @@ func (m *Manager) waitEndpoint(ctx context.Context, id model.MountID) error {
 	}
 }
 func validateMountpoint(path string) error {
-	if !filepath.IsAbs(path) && !isDrive(path) {
-		return ErrConfig
-	}
-	// Runtime targets may be active mounts; inspect only the explicitly selected
-	// target at startup, never every configured target during config reads.
-	if filepath.Separator != '\\' {
-		if err := platform.CheckNoSymlinks(path); err != nil {
-			return err
-		}
-	}
-	info, err := os.Stat(path)
-	if err == nil {
-		if !info.IsDir() {
-			return ErrConfig
-		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-		if len(entries) > 0 {
-			return ErrPending
-		}
-		return nil
-	}
-	if os.IsNotExist(err) {
-		if isDrive(path) {
-			return nil
-		}
-		return os.MkdirAll(path, 0700)
-	}
-	return err
+	return prepareMountpointForOS(path, runtime.GOOS, false)
 }
 
 func (w *worker) beginControl(parent context.Context) (context.Context, func(), error) {

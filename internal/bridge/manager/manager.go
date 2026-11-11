@@ -62,6 +62,13 @@ type Manager struct {
 	discoveryFactory  discoverySessionFactory
 	discoveryClosing  bool
 	discoveryLogins   map[model.ProfileID]context.CancelFunc
+	discoveryWG       sync.WaitGroup
+	automaticMu       sync.Mutex
+	automaticClosing  bool
+	automaticWG       sync.WaitGroup
+	automaticProfiles map[model.ProfileID]*automaticLogin
+	automaticFlows    map[string]*automaticLogin
+	automaticDeps     *automaticLoginDependencies
 	closeOnce         sync.Once
 	closeErr          error
 }
@@ -129,6 +136,7 @@ func newManager(o Options, d dependencies) (*Manager, error) {
 }
 func (m *Manager) Close() error {
 	m.closeOnce.Do(func() {
+		m.closeAutomaticLogins()
 		// Native tray quit may terminate the process immediately after this returns.
 		// Close discovery transports before canceling their lifetime, and make repeated
 		// callers wait for the same shutdown. Owned login helpers are drained before native tray termination.

@@ -21,12 +21,22 @@ func (m *Manager) watchDiscoveryLogin(id model.ProfileID) {
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, 5*time.Minute)
 	m.discoveryLogins[id] = cancel
+	m.discoveryWG.Add(1)
 	m.discoveryMu.Unlock()
 	go func() {
+		defer m.discoveryWG.Done()
 		defer cancel()
 		waitDiscoveryLogin(ctx, 3*time.Second, func(ctx context.Context) bool {
-			view, _ := m.CompleteDiscoveryLogin(ctx, id)
-			return view.Snapshot.Complete
+			view, err := m.CompleteDiscoveryLogin(ctx, id)
+			if err == nil && discoveryLoginReady(ctx, view, m.Status) {
+				return true
+			}
+			switch view.State {
+			case "unsupported", "stale", "browser_disconnected", "partial":
+				return true
+			default:
+				return false
+			}
 		})
 	}()
 }

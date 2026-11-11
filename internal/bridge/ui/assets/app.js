@@ -6,7 +6,7 @@
   const queue = window.DriveBridgeBatch.createQueue();
   let activeHunk = null, openSeq = 0, activeView = 'workspace';
   let csrf = '', current = null, choices = new Map(), manual = false;
-  let draftTimer = null, authFlow = '', authProfile = '';
+  let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '';
   let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false;
   const record = () => current && queue.records.get(current.id);
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
@@ -22,6 +22,36 @@
     return data;
   }
   const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh()});
+  const authMonitor = window.DriveBridgeAuth.create({api,storage:window.localStorage,onProgress:renderAuthProgress,onError:(error,terminal) => {
+    $('auth-flow').hidden = false;
+    $('auth-state').textContent = terminal ? '上次授权进度会话已结束；已保存账号和挂载状态以当前页面为准。' : '进度连接暂未更新；后台会继续等待授权，稍后自动重试。';
+    $('auth-complete').hidden = terminal;
+  }});
+  function showAuthFlow(flow,profileID) {
+    authFlow = flow.id; authProfile = profileID; authAutomatic = flow.auto_complete === true; authConfigFlow = '';
+    $('auth-flow').hidden = false; $('auth-link').hidden = false; $('auth-link').href = flow.url;
+    $('auth-complete').hidden = authAutomatic;
+    $('auth-state').textContent = authAutomatic ? '请在飞书页面完成授权，后台将自动继续，无需返回确认。' : '请在飞书页面授权后检查结果。';
+    if (authAutomatic) authMonitor.track(flow,profileID);
+  }
+  async function renderAuthProgress(progress) {
+    authFlow = progress.flow_id; authProfile = progress.profile_id; authAutomatic = true;
+    $('auth-flow').hidden = progress.state === 'ready'; $('auth-complete').hidden = true;
+    $('auth-link').hidden = progress.state !== 'waiting_authorization';
+    if (progress.flow?.url) $('auth-link').href = progress.flow.url;
+    const labels = {waiting_authorization:'请在飞书页面完成授权，后台会自动继续。',opening_login:'授权已验证，正在自动打开应用登录窗口…',waiting_login:'请在应用窗口登录飞书；登录后自动挂载，无需选择目录。',ready:'账号盘已自动挂载。'};
+    $('auth-state').textContent = labels[progress.state] || '正在接续登录…';
+    if (progress.state === 'failed') {
+      const errors = {expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',unsupported:'当前平台尚未接入应用内网页登录组件。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:'授权身份与已有账号不一致，请核对账号。',driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
+      const reason = errors[progress.error] || '自动登录或挂载尚未完成，请查看账号盘状态后重试。';
+      $('auth-state').textContent = reason + ' 已保存的授权和同步数据会保留。';
+      message($('auth-state').textContent,true);
+    }
+    if (progress.state !== 'waiting_authorization' && (authConfigFlow !== progress.flow_id || ['ready','failed'].includes(progress.state))) {
+      authConfigFlow = progress.flow_id; await loadConfig(); await refresh();
+    }
+    if (progress.state === 'ready' && authFlow === progress.flow_id) {authFlow = ''; authProfile = ''; message('登录完成，账号盘已自动挂载，无需选择本机目录。');}
+  }
   function bytes(text) { const data = new TextEncoder().encode(text); let result = ''; for (let i = 0; i < data.length; i += 8192) result += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(result); }
   function view(name) {
     activeView = name;
@@ -118,12 +148,12 @@
   function options(select, items, label) { select.replaceChildren(); if (!items.length) { const empty = make('option', label); empty.value = ''; select.append(empty); } for (const item of items) { const option = make('option', item.name); option.value = item.id; select.append(option); } }
   async function loadConfig() {
     const config = await api('/api/config'); $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
-    for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); authFlow = flow.id; authProfile = p.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = flow.expires_at ? `请在 ${new Date(flow.expires_at).toLocaleTimeString()} 前完成。` : '等待授权完成；关闭页面不会暴露凭据。'; } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); authFlow = flow.id; authProfile = p.id; $('auth-flow').hidden = false; $('auth-link').href = flow.url; $('auth-state').textContent = '相关挂载已进入保留待上传数据的恢复流程；请完成原身份授权。'; } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
+    for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); showAuthFlow(flow,p.id); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); showAuthFlow(flow,p.id); } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
     discovery.setProfiles(config.profiles); await discovery.load();
     return config;
   }
   for (const [id, action] of [['profile-form','profile'],['remote-form','remote'],['mount-form','mount']]) $(id).addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true; const data = Object.fromEntries(new FormData(form)); data.action = action; try { await api('/api/config', 'POST', data); message(action === 'mount' ? '挂载配置已保存，可在“文件与同步”中启动。' : '配置已保存。'); form.reset(); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } });
-  $('auth-complete').addEventListener('click', async () => { if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; const authorizedProfile = authProfile; authProfile = ''; message('用户授权成功，正在打开账号盘的应用登录窗口。'); await loadConfig(); if (authorizedProfile) { const started = await discovery.beginLogin(authorizedProfile); if (!started) message('用户授权成功。请在“账号盘与自动目录发现”中检查账号状态，再打开应用登录窗口继续设置。'); } } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
+  $('auth-complete').addEventListener('click', async () => { if (authAutomatic) { await authMonitor.checkNow(); return; } if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; const authorizedProfile = authProfile; authProfile = ''; message('用户授权成功，正在打开账号盘的应用登录窗口。'); await loadConfig(); if (authorizedProfile) { const started = await discovery.beginLogin(authorizedProfile); if (!started) message('用户授权成功。请在“账号盘与自动目录发现”中检查账号状态，再打开应用登录窗口继续设置。'); } } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
   function stash(r = record()) {
     if (!r?.input?.text) return;
     try { localStorage.setItem(`draft:${r.id}`,JSON.stringify({text:r.text,generation:r.intent.generation,revision:r.intent.remote_revision})); } catch (_) { /* Keep the in-page and backend copies. */ }
@@ -284,7 +314,7 @@
   window.addEventListener('beforeunload',event => { const unsaved = [...queue.records.values()].filter(r => r.input?.text && r.seq !== r.savedSeq); for (const r of unsaved) stash(r); if (unsaved.length) { event.preventDefault(); event.returnValue = ''; } });
   async function start() {
     const fragment = new URLSearchParams(location.hash.slice(1)); const bootstrap = fragment.get('bootstrap'); history.replaceState(null,'',location.pathname + location.search);
-    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); scheduleStatusPoll(); } catch (_) { showSessionError(); }
+    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); authMonitor.restore(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); scheduleStatusPoll(); } catch (_) { showSessionError(); }
   }
   start();
 })();

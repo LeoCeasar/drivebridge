@@ -30,7 +30,7 @@
       $('discovery-status').textContent = status;
       $('discovery-status').classList.toggle('error',!!v?.error);
       const browser = v?.browser; $('discovery-login-window').hidden = !browser;
-      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : '请打开应用独立登录窗口，使用已授权的飞书账号登录。'; $('discovery-login-component').textContent = browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可手动重新验证。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
+      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : v?.state === 'complete' && v?.snapshot?.complete ? '已保留上次登录与目录清单，后台将自动恢复会话并复核。' : '请打开应用独立登录窗口，使用已授权的飞书账号登录。'; $('discovery-login-component').textContent = browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
       const result = loginResult(v); $('discovery-login-result').hidden = !result.visible;
       $('discovery-result-title').textContent = result.title; $('discovery-result-summary').textContent = result.summary; $('discovery-result-mountpoint').textContent = result.mountpoint; $('discovery-result-guidance').textContent = result.guidance;
       $('discovery-last-scan').textContent = `最近扫描：${scanTime(v)}${v?.mountpoint ? '；账号盘：' + v.mountpoint : ''}`;
@@ -62,7 +62,7 @@
       try {
         const result = await api(`/api/discovery/${encodeURIComponent(id)}/${kind}`,'POST',body);
         if (kind === 'search') { candidates.set(id,result); notice(id,result.length ? `找到 ${result.length} 个候选目录，请核对后添加。` : '没有找到匹配目录。可换一个名称，或粘贴有权访问的目录链接。'); }
-        else { views.set(id,result); if (kind === 'add') notice(id,'目录已核验并补录，将按归属展示在个人或共享目录中；同一资源复用已有入口。'); else if (kind === 'login') notice(id,'已请求打开应用独立登录窗口。登录后将自动核验身份、发现目录并挂载；若等待较久，可点击“我已登录，重新验证”。',false,'login'); else if (kind === 'complete') notice(id,loginResult(result).visible ? '登录完成，请查看目录发现结果与账号盘挂载位置。' : '已处理登录确认，请查看账号状态与目录发现结果。',false,loginResult(result).visible ? 'login_complete' : ''); else notice(id,'已更新入口清单，请查看各来源状态。'); }
+        else { views.set(id,result); if (kind === 'add') notice(id,'目录已核验并补录，将按归属展示在个人或共享目录中；同一资源复用已有入口。'); else if (kind === 'login') notice(id,'已请求打开应用独立登录窗口。登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。',false,'login'); else if (kind === 'complete') notice(id,loginResult(result).visible ? '登录完成，请查看目录发现结果与账号盘挂载位置。' : '已处理登录确认，请查看账号状态与目录发现结果。',false,loginResult(result).visible ? 'login_complete' : ''); else notice(id,'已更新入口清单，请查看各来源状态。'); }
         if (kind === 'complete' || kind === 'add') await onChanged?.();
         return true;
       } catch (e) { notice(id,e.message,true); return false; }

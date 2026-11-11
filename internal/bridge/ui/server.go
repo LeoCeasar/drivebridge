@@ -101,7 +101,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -114,7 +114,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/app.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
+		case "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -224,7 +224,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			respondError(w, 503, "unavailable")
 			return
 		}
-		respond(w, 200, flow)
+		h.respondAuthFlow(w, flow)
+		return
+	case "/api/auth/status":
+		h.authProgress(w, r)
 		return
 	case "/api/auth/complete":
 		if r.Method != "POST" {

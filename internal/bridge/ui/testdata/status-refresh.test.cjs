@@ -17,7 +17,7 @@ const element = id => { if (!elements.has(id)) elements.set(id,new Element()); r
 let failStatus = true, statusCalls = 0, holdStatus = null, partial = false, mounts = [];
 const context = {
   document:{getElementById:element,querySelectorAll:()=>[],createElement:()=>new Element()},
-  window:{DriveBridgeDiff:{},DriveBridgeRecovery:{},DriveBridgeBatch:batch,DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},
+  window:{DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeRecovery:{},DriveBridgeBatch:batch,DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},
   location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},URLSearchParams,
   FormData:class { [Symbol.iterator]() { return [][Symbol.iterator](); } },
   fetch:async(route) => {

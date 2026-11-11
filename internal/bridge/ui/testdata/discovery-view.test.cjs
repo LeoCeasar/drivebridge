@@ -49,7 +49,7 @@ const api = async (route,method = 'GET',body) => {
   pending.get('/api/discovery/b/login')({profile_id:'b',state:'login_pending'});
   assert.equal(await first,true); assert.equal(await second,true);
   assert.equal(elements.get('discovery-controls').disabled,false);
-  assert.match(elements.get('discovery-feedback').textContent,/我已登录，重新验证/);
+  assert.match(elements.get('discovery-feedback').textContent,/登录遇到问题/);
   cachedView = {profile_id:'a',state:'complete',browser:{connected:true,helper_available:true},mountpoint:'/Volumes/工作盘',snapshot:{complete:true,entries:[{name:'个人目录'},{name:'共享目录'}]}};
   elements.get('discovery-profile').value = 'a'; await view.load();
   assert.equal(elements.get('discovery-login-result').hidden,false);
@@ -68,6 +68,9 @@ const api = async (route,method = 'GET',body) => {
   assert.equal(loginResult({...cachedView,state:'needs_login'}).visible,false);
   assert.equal(loginResult({...cachedView,state:'login_pending'}).visible,false);
   assert.match(loginResult({...cachedView,mountpoint:''}).mountpoint,/尚未准备好/);
+  cachedView.state = 'complete'; cachedView.browser.connected = false; await view.load();
+  assert.match(elements.get('discovery-login-session').textContent,/保留上次登录/);
+  assert.ok(!elements.get('discovery-login-session').textContent.includes('请打开'),'a stopped helper is not proof of logout');
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname,'../assets/index.html'),'utf8');
   assert.match(html,/目录清单保存在本机，首次元数据扫描后可立即展示/);
   assert.match(html,/文件正文在打开时按需下载/);

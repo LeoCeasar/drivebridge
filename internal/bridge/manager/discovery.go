@@ -61,6 +61,7 @@ func (m *Manager) closeDiscoverySessions() {
 	sessions := m.discoverySessions
 	m.discoverySessions = nil
 	m.discoveryMu.Unlock()
+	m.discoveryWG.Wait()
 	for _, session := range sessions {
 		_ = session.Close()
 	}
@@ -122,6 +123,15 @@ func (m *Manager) scanDiscovery(ctx context.Context, id model.ProfileID, complet
 	profile, _, settings, err := m.verifiedDiscovery(ctx, id, "")
 	if err != nil {
 		return m.failedDiscoveryCompletion(ctx, profile, cached, previous, err)
+	}
+	// Manual completion and the background watcher can arrive together. Once a
+	// verified account mount is already ready, neither should seal/reopen login or
+	// request another mount start.
+	if completeLogin {
+		view, viewErr := m.discoveryView(ctx, profile)
+		if viewErr == nil && discoveryLoginReady(ctx, view, m.Status) {
+			return view, nil
+		}
 	}
 	_, previous, err = m.readDiscovery(ctx, id)
 	if err != nil {

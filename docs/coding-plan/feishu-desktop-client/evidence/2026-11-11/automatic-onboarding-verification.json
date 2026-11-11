@@ -1,0 +1,41 @@
+{
+  "checked_at": "2026-11-11T09:18:13.839579+00:00",
+  "auto_auth_module_served": true,
+  "progress_endpoint_validates_input": true,
+  "unknown_progress_returns_404": true,
+  "completion_button_hidden": true,
+  "custom_mount_settings_collapsed": true,
+  "active_mounts": 2,
+  "active_mount_queues_inflight_conflicts": [
+    0,
+    0,
+    0
+  ],
+  "fresh_official_authorization_performed": false,
+  "installed_sha256": "c016863a6117d78e804c874ee7e270ac101a21e00c792a3601de3786fdebd5ad",
+  "upgrade": {
+    "protected_files": 218,
+    "changed_files": 0,
+    "candidate_matches_installed": true
+  },
+  "base_head": "2fd85f1fe",
+  "cua": {
+    "default_custom_mount_settings_collapsed": true,
+    "manual_login_verification_collapsed": true,
+    "stored_session_not_misreported_as_logout": true
+  },
+  "tests": {
+    "frontend": 11,
+    "bridge_feishu_desktop": "passed",
+    "ui_manager_race": "passed",
+    "automatic_login_target_race_after_timeout_alignment": "passed",
+    "windows_manager_target_race_and_test_cross_compile": "passed",
+    "windows_cmount_cli_cross_build": "passed",
+    "linux_amd64_cli_cross_build": "passed"
+  },
+  "limits": [
+    "Fresh real official authorization was not replayed; no account credentials were reset.",
+    "Windows/Linux native web login remains unimplemented; cross-build is not full native acceptance.",
+    "System-login startup was not enabled or retested in this change."
+  ]
+}
