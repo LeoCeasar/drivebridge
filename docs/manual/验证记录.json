@@ -1,18 +1,161 @@
 {
   "title": "DriveBridge 操作手册与实机验证",
-  "date": "2026-11-10",
+  "date": "2026-11-10 ～ 2026-11-11",
   "platform": "macOS 26.5.1 / Apple Silicon",
   "version": "0.1.0 开发版",
-  "source_head": "4e2845c11",
-  "overall": "partial",
-  "summary": "安装与产品账号授权已通过。已定位 macOS 按应用页面的扩展开关失效，并打开按类别的正确入口；等待系统启用后继续挂载和 test 同步。",
+  "source_head": "6dabe69ef",
+  "overall": "blocked",
+  "summary": "安装升级、账号保留、MD/TXT 首次上传、安全停止恢复已有实测证据；MD 同一文档的 local-2 写回和等长 cloud-3 自动回读也已验证。最终验收受阻：FSKit 长度缓存截断，已批准改用 kernel，系统要求重启。修复候选 a6f56d2a5 已构建并通过 Bridge/CLI 测试，尚未安装；多文件真实合并、全部共享目录发现和其他平台原生验收仍未通过。",
   "steps": [
     {
       "id": "install",
       "title": "安装驱动与 DriveBridge",
       "status": "verified",
       "body": "从 macFUSE 官方网站下载驱动，打开镜像中的 Install macFUSE。完成许可和系统授权后，再安装带挂载引擎的 DriveBridge 桌面包。",
-      "observed": "macFUSE 已由用户安装，driver 与 fuse.h 已确认存在。修复安装校验传递后，完整桌面 pkg 通过系统 Installer 安装到当前用户 ~/Applications/DriveBridge，界面明确显示安装成功；退出后短期安装凭据已清理。本轮为 unsigned 开发测试包，未验收正式签名和升级。",
+      "observed": "2026-11-11：源码 6dabe69ef 的完整桌面 pkg 已经系统 Installer 升级成功。安装后二进制与候选 CLI 哈希一致，升级前记录的 19 个数据库/内容文件哈希均未变化，短期安装 descriptor 已清理。此为 unsigned 开发版，签名、公证、正式发布未验收。",
+      "checks": [
+        "完整桌面与 cmount 包构建成功；Bridge/CLI 所有包测试通过",
+        "安装载荷匹配；19 个既有 Store/Blob 文件哈希保持不变",
+        "本轮保留了历史待上传和冲突数据，但尚未验证真实冲突草稿的升级恢复",
+        "Windows/Linux 仅交叉编译通过，未做原生安装验收"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/02-macfuse-image.png",
+          "caption": "官方 macFUSE 镜像中的安装入口。"
+        },
+        {
+          "src": "assets/28-final-upgrade-success.png",
+          "caption": "本轮最终候选 6dabe69ef 通过系统 Installer 升级成功。"
+        }
+      ]
+    },
+    {
+      "id": "first-open",
+      "title": "打开软件与托盘",
+      "status": "partial",
+      "body": "安装后打开 DriveBridge，在菜单栏点击图标查看菜单并打开管理页。",
+      "observed": "Finder 双击已安装 .app 后，独立原生桌面进程启动，desktop status 确认 running=true。Computer Use 无法定位没有窗口的菜单栏程序，因此未声称托盘可见性已验证；通过产品 desktop start 打开真实本机管理页，并由 Computer Use 检查。",
+      "screenshots": [
+        {
+          "src": "assets/08-manager-first-open.png",
+          "caption": "此前已安装程序打开真实本机管理页；原生托盘图标可见性仍待验证。"
+        }
+      ]
+    },
+    {
+      "id": "login",
+      "title": "登录飞书账号",
+      "status": "verified",
+      "body": "在本机管理页添加账号，打开飞书官方授权页；用户完成登录与授权后返回应用核验。",
+      "observed": "首次配置顺序修复后新增账号成功。通过官方页面选择已有飞书 CLI 应用，完成应用配置；再次发起用户授权，授权页明确为此前已授予权限的重用。返回管理页完成身份核验后，账号显示已授权。没有复制此前验证工具的凭据，未记录授权码或二维码。",
+      "screenshots": [
+        {
+          "src": "assets/12-account-authorized.png",
+          "caption": "官方授权完成后的本机账号状态。"
+        }
+      ]
+    },
+    {
+      "id": "mount",
+      "title": "挂载共享文件夹",
+      "status": "verified",
+      "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
+      "observed": "新测试挂载 同步验证 20261111 使用 FSKit、write-back=10s，后台启动返回 running=true。Finder 卷容量显示 17.59 TB，已确认操作发生于虚拟盘。初始队列和冲突为 0；FSKit 外部内容刷新存在长度缓存阻塞，详见双向更新。",
+      "checks": [
+        "测试在显式配置的共享 test 目录内进行",
+        "自动列出全部共享目录仍未满足，不能用本轮显式映射测试替代",
+        "已授权 kernel 驱动；重启后安装候选并启动专用 kernel 验收挂载"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/15-fskit-extensions-on.png",
+          "caption": "系统设置中两项 macFUSE FSKit 扩展已开启。"
+        },
+        {
+          "src": "assets/29-local-files-copied.png",
+          "caption": "Finder 中真实挂载卷已写入 MD/TXT 两份文件。"
+        }
+      ]
+    },
+    {
+      "id": "upload",
+      "title": "在 test 目录上传与同步",
+      "status": "verified",
+      "body": "在独立 test 目录创建本轮专用 Markdown 和普通文件，等待上传，再到飞书核对名称、正文、大小。",
+      "observed": "Finder 将 sync-check.md（120字节）和 sync-check.txt（60字节）复制到独立 test 子目录。后台自动创建飞书原生文档 sync-check 与普通文件 sync-check.txt；分别通过飞书网页回读完整正文。最终 running=true、local_saved=true、cloud_state=synced，vfs_pending/queued/inflight/conflicts 均为 0。本节仅验证两个根目录文件，子目录上传尚未实测。",
+      "checks": [
+        "源 MD 120 字节，上传后采用受支持的飞书文档投影格式",
+        "源 TXT 60 字节，后台验证云端内容哈希一致",
+        "首次自动上传后队列和冲突均为0"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/30-md-cloud-readback.png",
+          "caption": "本地 MD 自动创建为飞书原生文档，网页回读标题、正文与 local-1 标记。"
+        },
+        {
+          "src": "assets/31-txt-cloud-readback.png",
+          "caption": "普通 TXT 自动上传后的云端原文和 local-1 标记。"
+        }
+      ]
+    },
+    {
+      "id": "bidirectional",
+      "title": "验证双向更新",
+      "status": "blocked",
+      "body": "分别修改测试文件的本地和云端内容，核对最终内容及同步确认状态。",
+      "observed": "飞书原生文档 sync-check：通过 VS Code 将本地标记改为 local-2 并保存，在同一云端 Token 回读成功；网页改为等长 cloud-3，本地 QuickLook 自动回读正确。普通 TXT 的 local-2 回写正文正确，但旧版 TextEdit 保存更换了云端 Token。候选 a6f56d2a5 已加入保留身份的持久安全保存事务，离线回归通过，真实 TextEdit 待重启后复测。FSKit 对长度变化仍会截断：规范化 MD 为124字节，TextEdit只读旧120字节；重挂载恢复完整。已选择 kernel 并批准驱动，当前等待系统重启，不能以等长更新代替长度变化的验收。",
+      "screenshots": [
+        {
+          "src": "assets/37-md-v2-cloud-readback.png",
+          "caption": "本地 MD 的 local-2 写回同一飞书原生文档。"
+        },
+        {
+          "src": "assets/38-md-cloud-v3-local-readback.png",
+          "caption": "网页修改后的等长 cloud-3 已自动回读本地；长度变化仍受 FSKit 阻塞。"
+        },
+        {
+          "src": "assets/35-txt-v2-cloud-readback.png",
+          "caption": "TXT 第二版云端正文正确，文件身份变化仍待新候选复测。"
+        },
+        {
+          "src": "assets/39-kernel-restart-required.png",
+          "caption": "批准 macFUSE kernel 扩展后，系统明确要求重启。"
+        }
+      ],
+      "checks": [
+        "上游限制：https://github.com/macfuse/macfuse/issues/1222",
+        "维护者说明：https://github.com/macfuse/macfuse/issues/1207",
+        "未修改规范化内容或降低验收标准掩盖截断"
+      ]
+    },
+    {
+      "id": "conflict",
+      "title": "处理多个文件冲突",
+      "status": "pending",
+      "body": "只对测试文件制造双方变更，在网页 diff 中逐文件编辑草稿并提交已选文件，核对每个文件的独立结果。",
+      "observed": "已准备第二份合成 MD 和独立120s延迟测试配置，尚未得到真实内容冲突与多文件提交的通过证据。旧代码配置读取会探测所有挂载根，导致实际管理请求与目录读取等待；候选 a6f56d2a5 已把挂载目标校验移到启动前，保留私有目录校验，相关回归通过，仍待安装实测。历史 Finder 误冲突不计入验收。"
+    },
+    {
+      "id": "stop",
+      "title": "安全停止与恢复",
+      "status": "verified",
+      "body": "检查待上传、冲突和未确认状态，再安全停止；重启后检查测试文件及队列是否保留。",
+      "observed": "6dabe69ef 实测 feishu mount stop --wait-upload 60s 正常返回 stopped=true，状态 running=false 且队列/冲突均0。随后 mount start --background 返回 running=true、cloud_state=synced；Finder 从恢复后的挂载回读 MD/TXT。未强制卸载、未清空待上传数据。",
+      "screenshots": [
+        {
+          "src": "assets/36-md-remount-full-readback.png",
+          "caption": "安全停止并重新启动后，Finder 能读到完整 MD 正文。"
+        }
+      ]
+    }
+  ],
+  "candidate_source_head": "a6f56d2a5",
+  "history": [
+    {
+      "title": "早期候选包的失败与修复记录",
+      "observed": "以下为早期版本的真实失败和阶段截图，保留用于追溯，不作为最终版本通过证据。",
       "screenshots": [
         {
           "src": "assets/01-macfuse-official.png",
@@ -45,33 +188,11 @@
         {
           "src": "assets/10-setupfix-install-success.png",
           "caption": "本轮实拍：包含首次配置修复的完整桌面包再次安装成功。"
-        }
-      ],
-      "checks": [
-        "完整包 desktop=true、mount=true，cmount 引擎",
-        "DMG 校验通过，32 项打包测试通过",
-        "Computer Use 实际安装成功；退出后私有安装 descriptor 已清理",
-        "正式签名、公证与带待上传数据的升级尚未验证"
-      ]
-    },
-    {
-      "id": "first-open",
-      "title": "打开软件与托盘",
-      "status": "partial",
-      "body": "安装后打开 DriveBridge，在菜单栏点击图标查看菜单并打开管理页。",
-      "observed": "Finder 双击已安装 .app 后，独立原生桌面进程启动，desktop status 确认 running=true。Computer Use 无法定位没有窗口的菜单栏程序，因此未声称托盘可见性已验证；通过产品 desktop start 打开真实本机管理页，并由 Computer Use 检查。",
-      "screenshot": "assets/08-manager-first-open.png",
-      "caption": "本轮实拍：已安装程序的真实本机管理页，账号配置为空。"
-    },
-    {
-      "id": "login",
-      "title": "登录飞书账号",
-      "status": "verified",
-      "body": "在本机管理页添加账号，打开飞书官方授权页；用户完成登录与授权后返回应用核验。",
-      "observed": "首次配置顺序修复后新增账号成功。通过官方页面选择已有飞书 CLI 应用，完成应用配置；再次发起用户授权，授权页明确为此前已授予权限的重用。返回管理页完成身份核验后，账号显示已授权。没有复制此前验证工具的凭据，未记录授权码或二维码。",
-      "screenshot": "assets/09-first-account-error.png",
-      "caption": "本轮实拍：首次添加账号失败；这是配置初始化缺陷，尚未进入飞书授权。",
-      "screenshots": [
+        },
+        {
+          "src": "assets/08-manager-first-open.png",
+          "caption": "本轮实拍：已安装程序的真实本机管理页，账号配置为空。"
+        },
         {
           "src": "assets/11-account-created.png",
           "caption": "修复后本轮实拍：本机账号已成功创建并持久保存，尚待授权。"
@@ -79,59 +200,92 @@
         {
           "src": "assets/12-account-authorized.png",
           "caption": "本轮实拍：产品账号完成官方用户授权并经本机服务核验，显示已授权。"
-        }
-      ]
-    },
-    {
-      "id": "mount",
-      "title": "挂载共享文件夹",
-      "status": "blocked",
-      "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
-      "observed": "默认内核挂载不可用；只读 FSKit 诊断显示系统扩展未启用。用户反馈开关点击无效后，确认两项模块已注册，系统日志出现 LoginItems Failed to enabled FSExtension、NSPOSIXErrorDomain Code=1（EPERM）和 retrieving team ID，吻合 macFUSE 维护者说明的 macOS 按应用视图缺陷。Computer Use 已切换到 按类别 → 文件系统扩展，正确页面列出两项关闭的 macFUSE 开关，等待用户在此启用。尚未通过真实挂载或文件同步。",
-      "screenshot": "assets/13-fskit-extensions-off.png",
-      "caption": "本轮实拍：系统设置中的两项 FSKit 扩展均关闭，驱动安装完成仍不足以通过真实挂载。",
-      "checks": [
-        "共享目录映射和挂载配置已保存",
-        "产品默认挂载实际失败",
-        "FSKit 只读本地诊断实际失败：系统扩展未启用",
-        "等待用户完成系统运行授权；未写入挂载目录",
-        "官方问题 #1194 维护者建议使用 By Category；本机日志已确认同样的 EPERM 拒绝"
-      ],
-      "screenshots": [
+        },
         {
           "src": "assets/14-fskit-by-category.png",
           "caption": "本轮实拍：切换到“按类别 → 文件系统扩展”的正确入口，两项 macFUSE 开关已列出，尚待启用。"
+        },
+        {
+          "src": "assets/15-fskit-extensions-on.png",
+          "caption": "本轮实拍：按类别页面中两项 macFUSE 均已启用。"
+        },
+        {
+          "src": "assets/16-fskit-probe-read.png",
+          "caption": "本轮实拍：Finder 从真实 FSKit 卷读取到诊断文本。"
+        },
+        {
+          "src": "assets/17-fskit-client-installed.png",
+          "caption": "本轮实拍：FSKit 完整客户端更新安装成功。"
+        },
+        {
+          "src": "assets/18-feishu-mount-running.png",
+          "caption": "本轮实拍：飞书测试挂载后台运行，初始无待上传或冲突。"
+        },
+        {
+          "src": "assets/19-finder-copy-failed.png",
+          "caption": "本轮实拍：Finder 复制合成测试文件被错误判为正在使用。"
+        },
+        {
+          "src": "assets/20-editor-save-failed.png",
+          "caption": "本轮实拍：TextEdit 直接保存的对照同样失败。"
+        },
+        {
+          "src": "assets/21-cloud-origin-preview.png",
+          "caption": "飞书网页中的合成云端文件及正文。"
+        },
+        {
+          "src": "assets/24-cloud-file-local-readback.png",
+          "caption": "Finder 从真实挂载卷回读到同一正文和 cloud-1 标记，云端到本地回读通过。"
         }
       ]
     },
     {
-      "id": "upload",
-      "title": "在 test 目录上传与同步",
-      "status": "pending",
-      "body": "在独立 test 目录创建本轮专用 Markdown 和普通文件，等待上传，再到飞书核对名称、正文、大小。",
-      "observed": "已通过 Computer Use 在用户提供的 test 目录中创建独立验收子目录 DriveBridge-E2E-20261110-2323。两个合成文本样例已在本地准备，尚未放入挂载目录或上传；未修改业务文档。"
+      "title": "补充实机调试现场",
+      "observed": "以下截图只说明对应阶段的实际观察；没有用历史失败、重装成功或名称一致替代最终同步验收。",
+      "screenshots": [
+        {
+          "src": "assets/09-first-account-error.png",
+          "caption": "早期首次账号配置失败的真实现场，后续已修复。"
+        },
+        {
+          "src": "assets/13-fskit-extensions-off.png",
+          "caption": "FSKit 扩展尚未启用时的系统状态。"
+        },
+        {
+          "src": "assets/22-directoryfix-installed.png",
+          "caption": "目录兼容修复候选的安装完成记录。"
+        },
+        {
+          "src": "assets/23-finder-copy-parameter-error.png",
+          "caption": "早期 Finder 复制返回参数错误，后续首次复制已验证修复。"
+        },
+        {
+          "src": "assets/26-writefix-installed.png",
+          "caption": "早期写入修复候选的安装完成记录。"
+        },
+        {
+          "src": "assets/27-final-cloud-empty.png",
+          "caption": "本轮首次上传前，独立验收云端目录为空。"
+        },
+        {
+          "src": "assets/32-txt-local-edit.png",
+          "caption": "TextEdit 保存 local-2 合成正文的现场；不等于文件身份保持已通过。"
+        },
+        {
+          "src": "assets/33-md-local-read-investigation.png",
+          "caption": "MD 规范化投影首次出现旧长度截断的调查现场。"
+        },
+        {
+          "src": "assets/34-textedit-backup-name-investigation.png",
+          "caption": "TextEdit 保存后再次核对云端目录；名称一致不能证明 Token 保持。"
+        }
+      ]
     },
     {
-      "id": "bidirectional",
-      "title": "验证双向更新",
-      "status": "pending",
-      "body": "分别修改测试文件的本地和云端内容，核对最终内容及同步确认状态。",
-      "observed": "尚未执行本轮双向同步。"
-    },
-    {
-      "id": "conflict",
-      "title": "处理多个文件冲突",
-      "status": "pending",
-      "body": "只对测试文件制造双方变更，在网页 diff 中逐文件编辑草稿并提交已选文件，核对每个文件的独立结果。",
-      "observed": "多文件合并界面已合入并通过定向测试，但未进行本轮真实云端冲突验证。"
-    },
-    {
-      "id": "stop",
-      "title": "安全停止与恢复",
-      "status": "pending",
-      "body": "检查待上传、冲突和未确认状态，再安全停止；重启后检查测试文件及队列是否保留。",
-      "observed": "尚未进行本轮真实挂载的停机和恢复验证。"
+      "title": "FSKit 外部内容变化的上游限制",
+      "observed": "本轮长度变化截断与上游开放问题吻合；维护者另在 #1207 说明 FSKit 内部缓存不能由属性超时控制。kernel 路线须在重启后独立复测。",
+      "source_url": "https://github.com/macfuse/macfuse/issues/1222",
+      "screenshots": []
     }
-  ],
-  "candidate_source_head": "6798f1933"
+  ]
 }

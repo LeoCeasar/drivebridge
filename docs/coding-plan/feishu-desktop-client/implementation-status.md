@@ -1,6 +1,18 @@
 # 桌面客户端实施与验证状态
 
-更新：2026-11-10；工作分支 `feature/feishu-transparent-sync`。桌面代码已集成，尚未发布完整三平台安装版。
+更新：2026-11-11；工作分支 `feature/feishu-transparent-sync`。最终验收仍未通过，尚未发布完整三平台安装版。
+
+## 2026-11-11 实机续验点
+
+- 已安装源码 `6dabe69ef`：系统 Installer 升级成功，原账号保留；19 个既有数据库和内容文件哈希未变化。Finder 向真实 FSKit 卷复制 MD/TXT 后，飞书网页回读正文成功，队列与冲突均归零。
+- 同一飞书原生文档已验证本地 `local-2` 写回，以及网页等长 `cloud-3` 自动回读本地。普通 TXT 第二版正文回写正确，但 TextEdit 原子保存导致云端 Token 改变，不能判为保留身份的覆盖通过。
+- FSKit 出现长度缓存截断：规范化 MD 从120变124字节，Overlay/VFS/cmount返回124，TextEdit读取旧120；重挂载恢复完整。上游 [#1222](https://github.com/macfuse/macfuse/issues/1222) 与 [#1207](https://github.com/macfuse/macfuse/issues/1207) 记录了该限制。用户已选择 kernel 后端，并在系统设置批准 macFUSE；系统要求重启，尚未执行 kernel 挂载验收。
+- 待安装候选源码 `a6f56d2a5` 已构建完整 macOS arm64 desktop/cmount 的 pkg、dmg、tar.gz，仍为 unsigned 开发版。新增安全保存事务保留原 EntryID/Token，未完成 replacement 的备份保持显式 pending；配置读取不再探测运行中的挂载根，启动前仍检查选中目标，私有目录检查保留。Bridge/CLI 全包（cmount 标签）测试通过；Windows 桌面及 Linux 双架构 CLI 交叉编译通过。
+- 正常 CLI 停止及后台恢复已在 `6dabe69ef` 验证；随后独立冲突挂载的目录读取和管理请求陷入等待，已采样并修复配置读取重入挂载路径的问题，待新候选安装复测。未强制删除待上传或冲突数据。
+- 所有旧测试挂载的桌面 desired 已禁用；准备了未启动的 `Kernel 验收 20261111`（kernel，write-back=120s）。重启后应先安装修复候选，只启动该挂载，再验证长度变化、TextEdit 身份保持和两份真实文档的 diff/合并。
+- 仍未通过：原生托盘视觉与登录自启动、全部共享目录自动发现、真实多文件合并、Windows/Linux 原生安装与挂载、签名公证。单元测试与交叉编译不能替代这些验收。
+
+逐步说明和真实截图见 [操作手册](../../manual/操作手册.html)，对应 [验证记录](../../manual/验证记录.json)。以下为2026-11-10的历史实现及验证记录。
 
 ## 本轮实现
 
