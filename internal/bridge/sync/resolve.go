@@ -115,7 +115,21 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 		if err = e.store.SaveConflict(ctx, c); errors.Is(err, model.ErrGenerationChanged) {
 			continue
 		}
-		return c, errors.Join(cloudErr, err)
+		if err != nil {
+			return c, errors.Join(cloudErr, err)
+		}
+		// SaveConflict preserves draft writes made while the cloud request was in
+		// flight. Return that durable view rather than the pre-request copy.
+		list, err = e.store.Conflicts(ctx)
+		if err != nil {
+			return c, errors.Join(cloudErr, err)
+		}
+		for _, saved := range list {
+			if saved.ID == id {
+				return saved, cloudErr
+			}
+		}
+		return model.Conflict{}, errors.Join(cloudErr, store.ErrNotFound)
 	}
 	return c, model.ErrGenerationChanged
 }

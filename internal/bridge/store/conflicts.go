@@ -12,12 +12,29 @@ import (
 )
 
 func (s *Store) SaveConflict(ctx context.Context, c model.Conflict) error {
-	for _, b := range []model.BlobID{c.Base, c.Local, c.Remote, c.Draft} {
-		if er := s.checkBlob(b); er != nil {
-			return er
-		}
+	// Resolution has its own generation-checked transition. A refresh may only
+	// create an unresolved conflict or update the inputs of an existing one.
+	if c.Resolved {
+		return ErrInvalidState
 	}
 	return s.update(ctx, func(tx *bolt.Tx) error {
+		if c.ID == "" {
+			c.ID = model.ConflictID(uuid.NewString())
+		}
+		var old model.Conflict
+		if er := get(tx, "conflicts", string(c.ID), &old); er == nil {
+			if old.EntryID != c.EntryID {
+				return model.ErrIdentityChanged
+			}
+			if old.Resolved {
+				return ErrInvalidState
+			}
+			// SaveDraft owns the draft field. A remote refresh can have waited on
+			// network I/O while the user saved a newer draft in this same record.
+			c.Draft = old.Draft
+		} else if !errors.Is(er, ErrNotFound) {
+			return er
+		}
 		e, er := entryTx(tx, c.EntryID)
 		if er != nil {
 			return er
@@ -25,12 +42,10 @@ func (s *Store) SaveConflict(ctx context.Context, c model.Conflict) error {
 		if e.Generation != c.Generation {
 			return model.ErrGenerationChanged
 		}
-		if c.ID == "" {
-			c.ID = model.ConflictID(uuid.NewString())
-		}
-		var old model.Conflict
-		if er = get(tx, "conflicts", string(c.ID), &old); er == nil && old.EntryID != c.EntryID {
-			return model.ErrIdentityChanged
+		for _, b := range []model.BlobID{c.Base, c.Local, c.Remote, c.Draft} {
+			if er := s.checkBlob(b); er != nil {
+				return er
+			}
 		}
 		e.Status = model.StatusConflict
 		if er = saveEntry(tx, e); er != nil {
