@@ -992,5 +992,52 @@
       "changed_files": 0,
       "candidate_matches_installed": true
     }
+  },
+  "plain_markdown_merge": {
+    "date": "2026-11-11",
+    "base_head": "a1ec8876e",
+    "installed_sha256": "2aa065ede0809dc6fc9f3b034bfb7417d6a68f8da2bcd11197971405f1d54935",
+    "installed_matches_candidate": true,
+    "active_mounts": 1,
+    "all_desired_mounts_running": true,
+    "stopped_mounts_not_reenabled": true,
+    "pending_inflight_conflicts": [
+      13,
+      0,
+      5
+    ],
+    "upgrade": {
+      "protected_files": 219,
+      "changed_files": 0,
+      "candidate_matches_installed": true
+    },
+    "tests": {
+      "bridge_feishu_desktop": "passed",
+      "markdown_store_sync_integration_ui_race": "passed",
+      "frontend": 12,
+      "markdown_fuzz_executions": 197215,
+      "mac_native_build": "passed",
+      "windows_cmount_cli_cross_build": "passed",
+      "linux_amd64_cli_cross_build": "passed",
+      "http_store_engine_overlay_vfs_ordinary_md": "passed"
+    },
+    "native": {
+      "cold_read": true,
+      "driver": "macFUSE kernel cmount/local",
+      "human_resolution": true,
+      "independent_edit_merge": true,
+      "merged_native_read_bytes": 38,
+      "overlap_conflict": true,
+      "provider": "synthetic; no cloud mutations",
+      "resolved_native_read_bytes": 47,
+      "token_preserved": true
+    },
+    "native_test_mount_cleaned": true,
+    "real_cloud_mutations_in_this_change": false,
+    "limits": [
+      "Remote API has no atomic compare-and-swap; recheck narrows the last check/write window.",
+      "Windows/Linux cross-builds are not native acceptance.",
+      "Plain text merge/edit requires valid UTF-8, no NUL and <=10MiB; complexity limits preserve conflicts."
+    ]
   }
 }

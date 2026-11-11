@@ -10,6 +10,14 @@ import (
 )
 
 func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) error {
+	journal, err := e.store.Journal(ctx, j.ID)
+	if err != nil {
+		return err
+	}
+	desired := j.Local
+	if journal.Desired != "" {
+		desired = journal.Desired
+	}
 	actual, err := e.observeFile(ctx, en.Token)
 	if err != nil {
 		return e.pause(ctx, j, err)
@@ -17,30 +25,32 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err = e.store.ProtectBackup(ctx, j.ID, actual.ID); err != nil {
 		return e.pause(ctx, j, err)
 	}
-	if actual.FileData == j.Local {
+	if actual.FileData == desired {
 		return e.confirm(ctx, j, actual)
-	}
-	if !e.opt.EmptyFileUploadVerified && isEmpty(j.Local) {
-		if err = e.store.PauseJob(ctx, j.ID, model.StatusBlocked, "empty_file_unsupported"); err != nil {
-			return err
-		}
-		return model.ErrUnsupportedContent
-	}
-	journal, err := e.store.Journal(ctx, j.ID)
-	if err != nil {
-		return err
 	}
 	if (j.State == model.StatusAwaitingVerification && !journal.PreparationRestart) || j.State == model.StatusUploading || journal.Job.Plan != "" {
 		_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		return model.ErrUnknownResult
 	}
-	if err = e.store.ProtectBackup(ctx, j.ID, actual.ID); err != nil {
-		return e.pause(ctx, j, err)
+	if model.IsMarkdownFile(en) {
+		desired, actual, err = e.planMarkdownFile(ctx, j, en, actual)
+		if err != nil {
+			return err
+		}
+		if actual.FileData == desired {
+			return e.confirm(ctx, j, actual)
+		}
 	}
-	if err = e.store.RecordPlan(ctx, j.ID, nil, j.Local); err != nil {
+	if !e.opt.EmptyFileUploadVerified && isEmpty(desired) {
+		if err = e.store.PauseJob(ctx, j.ID, model.StatusBlocked, "empty_file_unsupported"); err != nil {
+			return err
+		}
+		return model.ErrUnsupportedContent
+	}
+	if err = e.store.RecordPlan(ctx, j.ID, nil, desired); err != nil {
 		return err
 	}
-	reader, err := e.store.ReadBlob(ctx, j.Local)
+	reader, err := e.store.ReadBlob(ctx, desired)
 	if err != nil {
 		return e.pause(ctx, j, err)
 	}
@@ -67,7 +77,7 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	if err = e.store.ProtectBackup(ctx, j.ID, readback.ID); err != nil {
 		return err
 	}
-	if readback.FileData != j.Local {
+	if readback.FileData != desired {
 		_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		return errors.Join(model.ErrUnknownResult, uploadErr, closeErr)
 	}

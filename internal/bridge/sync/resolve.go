@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"unicode/utf8"
+
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 )
@@ -44,14 +47,30 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 	if en.Generation != r.ExpectedGeneration || captured.Generation != r.ExpectedGeneration {
 		return en, model.Job{}, model.ErrGenerationChanged
 	}
-	if en.Token == "" || en.Kind != model.KindDocx {
+	if en.Token == "" || (en.Kind != model.KindDocx && !model.IsMarkdownFile(en)) {
 		return en, model.Job{}, model.ErrUnsupportedContent
 	}
-	actual, _, err := e.fetchDoc(ctx, en.Token)
+	var actual model.Snapshot
+	if model.IsMarkdownFile(en) {
+		if !editablePlainConflictText(r.Content) {
+			return en, model.Job{}, model.ErrUnsupportedContent
+		}
+		for _, id := range []model.BlobID{captured.Base, captured.Local, captured.Remote} {
+			if err = e.checkPlainConflictBlob(ctx, id); err != nil {
+				return en, model.Job{}, err
+			}
+		}
+		actual, err = e.observeFile(ctx, en.Token)
+		if err == nil {
+			err = e.checkPlainConflictBlob(ctx, actual.FileData)
+		}
+	} else {
+		actual, _, err = e.fetchDoc(ctx, en.Token)
+	}
 	if err != nil {
 		return en, model.Job{}, err
 	}
-	if actual.Revision != r.ExpectedRemoteRevision || actual.Markdown != captured.Remote {
+	if actual.ConflictVersion() != r.ExpectedRemoteRevision || actual.ContentBlob() != captured.Remote {
 		return en, model.Job{}, model.ErrVersionChanged
 	}
 	return e.store.ResolveAgainst(ctx, r, actual)
@@ -94,14 +113,18 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 	if err != nil {
 		return c, err
 	}
-	if en.Kind == model.KindDocx && en.Token != "" {
+	if (en.Kind == model.KindDocx || model.IsMarkdownFile(en)) && en.Token != "" {
 		cloudErr = e.check(ctx)
 		if cloudErr == nil {
 			var sn model.Snapshot
-			sn, _, cloudErr = e.fetchDoc(ctx, en.Token)
+			if model.IsMarkdownFile(en) {
+				sn, cloudErr = e.observeFile(ctx, en.Token)
+			} else {
+				sn, _, cloudErr = e.fetchDoc(ctx, en.Token)
+			}
 			if cloudErr == nil {
-				c.Remote = sn.Markdown
-				c.RemoteRevision = sn.Revision
+				c.Remote = sn.ContentBlob()
+				c.RemoteRevision = sn.ConflictVersion()
 			}
 		}
 	}
@@ -132,4 +155,29 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 		return model.Conflict{}, errors.Join(cloudErr, store.ErrNotFound)
 	}
 	return c, model.ErrGenerationChanged
+}
+
+// Human text resolution has the same bounded UTF-8 contract as the diff page.
+// Read limits are applied before allocation; binary files remain exportable.
+func editablePlainConflictText(body []byte) bool {
+	return int64(len(body)) <= store.LargeSnapshotBytes && utf8.Valid(body) && bytes.IndexByte(body, 0) < 0
+}
+
+func (e *Engine) checkPlainConflictBlob(ctx context.Context, id model.BlobID) error {
+	if id == "" {
+		return nil
+	}
+	reader, err := e.store.ReadBlob(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(io.LimitReader(reader, store.LargeSnapshotBytes+1))
+	if err != nil {
+		return err
+	}
+	if !editablePlainConflictText(body) {
+		return model.ErrUnsupportedContent
+	}
+	return nil
 }

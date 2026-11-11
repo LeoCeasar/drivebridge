@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -85,8 +86,22 @@ func (s *Store) ResolveAgainst(ctx context.Context, r model.ResolveRequest, remo
 	if err != nil {
 		return model.Entry{}, model.Job{}, err
 	}
-	if saved.Token != remote.Token || saved.Revision != remote.Revision || saved.Markdown != remote.Markdown {
+	if saved.Token != remote.Token || saved.Revision != remote.Revision || saved.Markdown != remote.Markdown || saved.FileData != remote.FileData {
 		return model.Entry{}, model.Job{}, model.ErrVersionChanged
+	}
+	if saved.FileData != "" {
+		reader, err := s.ReadBlob(ctx, saved.FileData)
+		if err != nil {
+			return model.Entry{}, model.Job{}, err
+		}
+		body, readErr := io.ReadAll(io.LimitReader(reader, LargeSnapshotBytes+1))
+		closeErr := reader.Close()
+		if readErr != nil || closeErr != nil {
+			return model.Entry{}, model.Job{}, errors.Join(readErr, closeErr)
+		}
+		if !validPlainResolutionText(body) {
+			return model.Entry{}, model.Job{}, model.ErrUnsupportedContent
+		}
 	}
 	return s.resolve(ctx, r, &saved)
 }
@@ -120,14 +135,18 @@ func (s *Store) resolve(ctx context.Context, r model.ResolveRequest, remote *mod
 			return model.ErrUnknownResult
 		}
 		if remote != nil {
-			if current.Kind != model.KindDocx || remote.Token != current.Token || remote.Revision != r.ExpectedRemoteRevision || remote.Markdown == "" {
+			supported := (current.Kind == model.KindDocx && remote.FileData == "") || (model.IsMarkdownFile(current) && remote.FileData != "")
+			if !supported || remote.Token != current.Token || remote.ConflictVersion() != r.ExpectedRemoteRevision || remote.ContentBlob() == "" || remote.ContentBlob() != c.Remote {
 				return model.ErrVersionChanged
 			}
-			current.LocalCheckpoint = remote.Markdown
+			current.LocalCheckpoint = remote.ContentBlob()
 			current.RemoteCheckpoint = remote.ID
 			if er = saveEntry(tx, current); er != nil {
 				return er
 			}
+		}
+		if model.IsMarkdownFile(current) && !validPlainResolutionText(r.Content) {
+			return model.ErrUnsupportedContent
 		}
 		if current.Kind == model.KindDocx && int64(len(r.Content)) > LargeSnapshotBytes {
 			return model.ErrUnsupportedContent
@@ -172,4 +191,8 @@ func (s *Store) SaveDraft(ctx context.Context, id model.ConflictID, src io.Reade
 		c.Draft = b
 		return put(tx, "conflicts", string(id), c)
 	})
+}
+
+func validPlainResolutionText(body []byte) bool {
+	return int64(len(body)) <= LargeSnapshotBytes && utf8.Valid(body) && bytes.IndexByte(body, 0) < 0
 }

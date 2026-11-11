@@ -65,7 +65,7 @@ func (b conflictBackend) Conflict(ctx context.Context, id model.ConflictID) (ui.
 			defer r.Close()
 			return io.ReadAll(r)
 		}
-		v := ui.ConflictInputs{Conflict: c, Entry: e, Text: e.Kind == model.KindDocx}
+		v := ui.ConflictInputs{Conflict: c, Entry: e, Text: e.Kind == model.KindDocx || model.IsMarkdownFile(e)}
 		if v.Base, err = read(c.Base); err != nil {
 			return v, err
 		}

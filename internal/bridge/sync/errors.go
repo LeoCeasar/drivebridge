@@ -68,6 +68,6 @@ func (e *Engine) conflict(ctx context.Context, j model.Job, remote model.Snapsho
 			return err
 		}
 	}
-	err = e.store.SaveConflict(ctx, model.Conflict{EntryID: current.ID, Generation: current.Generation, Base: j.BaseLocal, Local: current.Local, Remote: remote.Markdown, RemoteRevision: remote.Revision, Draft: current.Local, Reason: reason})
+	err = e.store.SaveConflict(ctx, model.Conflict{EntryID: current.ID, Generation: current.Generation, Base: j.BaseLocal, Local: current.Local, Remote: remote.ContentBlob(), RemoteRevision: remote.ConflictVersion(), Draft: current.Local, Reason: reason})
 	return errors.Join(model.ErrVersionChanged, err)
 }
