@@ -33,7 +33,28 @@
         <section class="record" id="validation"><h2>实际验证记录</h2><p id="record-summary">本表汇总本轮记录。操作说明中的“应看到”是验收目标，不代表已经达到。</p><div class="table-wrap"><table><thead><tr><th>步骤</th><th>本轮状态</th><th>实际观察</th></tr></thead><tbody id="record-rows"></tbody></table></div><div class="note"><p>截图只展示实际截取的界面。没有执行、没有截图或截图文件缺失时，本页会直接标明。截图仅记录本轮操作和合成测试文件，不保存密码、授权链接、令牌或二维码；飞书页面可能显示当前账号的常规显示名称。</p></div></section>
         <section class="record" id="mount-management"><h2>移除挂载与后台拉取过滤</h2><p>在“文件与同步”点击对应项的“停止同步”可暂时停用；点击“移除挂载”可从常规列表移除该配置。移除不会删除飞书文件，会保留本机缓存、待上传任务和冲突副本。打开“已移除挂载（本机数据保留）”可恢复配置，恢复后仍保持停止，需另行启动。</p><p>在“账号与目录”展开“后台拉取过滤（可选）”，选择挂载并编辑后缀输入框，默认 <code>.log, .db</code>，可追加 <code>.sqlite</code> 等后缀。以逗号、空格或分号分隔，留空保存表示不排除。保存后无需重启挂载。</p><p>过滤仅阻止后台拉取正文。文件名保持可见，显式打开或 grep 可按需下载，本地新增与修改仍会上传。内容搜索首次读取会下载整文件；搜索未上传的修改时读取本机内容，不代表云端已确认。rg 默认跳过隐藏及忽略文件；需要时使用 <code>rg --hidden --no-ignore '关键词' /实际挂载目录</code>，注意大量搜索可能消耗带宽和缓存。</p><p>本轮已在安装后的管理页验证移除、恢复及可编辑输入框，接口验证自定义与空规则可保存，13 个历史待处理任务与 5 个冲突保留。macOS 隔离真实挂载验证 grep/rg 冷读取、缓存复用、完整正文及读取失败退出码；Windows/Linux 尚未实机验收。</p></section>
 <section class="record" id="plain-markdown-merge"><h2>普通 Markdown 的自动合并</h2><p>普通云盘 <code>.md</code> 文件（包括大写 <code>.MD</code>）现在也支持三方同步，无需另行开启。系统保留上次确认同步的基准：仅本地变化时上传本地；仅云端变化时更新本地；双方改动相同则确认；双方修改不同位置时自动合并。</p><p>双方修改重叠且不一致时，保留基准、本地、云端三份内容，进入“冲突与合并”。在 diff 页面核对、编辑并提交；如果提交前云端或本地又变化，草稿保留，需要刷新后重新确认。提交被接受表示排队同步，云端回读核验完成后才显示已确认。</p><p>非 Markdown 文件继续使用覆盖方式。普通 Markdown 支持任意 Markdown 语法，保留 Unicode、CRLF 和末尾换行状态；自动合并与文本编辑限有效 UTF-8、无 NUL、每份正文及合并结果不超过 10 MiB，复杂差异保守保留冲突。超大或非文本内容可导出副本处理。上传前再次核验、上传后回读，但飞书接口没有原子条件写入能力，仍存在短暂竞争窗口。</p><p>本轮实际 macFUSE 隔离挂载与网页 HTTP 集成验证通过；远端使用合成数据，没有重复真实飞书协作写入验收。</p></section>
-<section class="record" id="hidden-shared-sync"><h2>开启或关闭隐藏共享文件夹同步</h2><p>打开“账号与目录”，选择需要设置的账号，勾选或取消“同步飞书中隐藏的共享文件夹”。默认开启，每个账号独立保存，修改立即保存，不需要重新登录或重新挂载。</p><p>关闭后，仅从飞书隐藏共享来源发现的目录会从账号盘隐藏，暂停后续目录扫描、正文刷新及新上传、重命名或删除任务。本机缓存、待上传内容、冲突和草稿保留；重新开启后恢复原路径，并继续原有任务。个人、可见共享及手动添加等明确入口仍可同步；手动子目录复用规范根时，必要的根也保留。单独创建的其他挂载不受此开关影响。</p><p>已开始的请求可能完成，正在打开或仍有本机写入的文件可能暂时保留显示。关闭不是权限撤销，也不是删除云端文件。设置页保留的入口清单可查看来源与暂停状态，不代表全部入口正在同步。</p><p>本机已验证取消勾选和重新开启：共享入口 9→2→9，原始目录清单、待上传任务及冲突保留。测试后已恢复默认开启。</p></section>
+<section class="record" id="hidden-shared-sync">
+<h2>开启或关闭隐藏共享文件夹同步</h2>
+<p>此开关针对飞书中被隐藏的共享文件夹，不是名称以“.”开头的本地隐藏文件夹。默认开启，每个账号独立保存。</p>
+<h3>操作步骤</h3>
+<ol class="guide">
+<li>从 DriveBridge 托盘菜单打开管理页，进入“账号与目录”。</li>
+<li>在“已授权账号”下拉框中选择需要设置的账号；切换账号后，开关显示该账号自己的设置。</li>
+<li>找到“同步飞书中隐藏的共享文件夹”：勾选为开启，取消勾选为关闭。修改会自动保存，无需另点保存按钮，也不需要重新登录或重新挂载。</li>
+<li>等待页面显示“已开启隐藏共享同步”或“已关闭隐藏共享同步”。关闭后，“隐藏共享”来源显示“已暂停同步（保留清单）”；设置页仍保留目录记录供查看和恢复。</li>
+<li>需要恢复时，重新勾选同一开关。已知目录恢复原路径，保留的待上传任务继续处理；新出现的目录入口由后续扫描发现，也可点击“重新扫描”更新。</li>
+</ol>
+<h3>开关会影响什么</h3>
+<div class="table-wrap"><table><thead><tr><th>设置</th><th>账号盘中的行为</th></tr></thead><tbody>
+<tr><td>开启（默认）</td><td>包含隐藏共享入口，按需读取文件并处理后台同步。</td></tr>
+<tr><td>关闭</td><td>仅从隐藏共享来源发现的目录会从账号盘隐藏，暂停后续目录扫描、正文刷新及新上传、重命名或删除任务；本机缓存、待上传内容、冲突和草稿保留。</td></tr>
+</tbody></table></div>
+<p>个人、可见共享及手动添加等明确入口仍可同步；手动子目录复用规范根时，必要的根也保留。单独创建的其他挂载不受此开关影响。</p>
+<div class="note"><p>关闭不是删除云端文件，也不是撤销访问权限。已开始的请求可能完成，正在打开或仍有本机写入的文件可能暂时保留显示；已有缓存内容也可能仍可读取。保留清单不代表这些入口正在同步。</p></div>
+<h3>既有验证记录</h3>
+<p>本机已验证取消勾选和重新开启：共享入口 9→2→9，原始目录清单、待上传任务及冲突保留。测试后已恢复默认开启。</p>
+<p>本次仅补充操作说明，沿用<a href="../coding-plan/feishu-desktop-client/evidence/2026-11-11/hidden-shared-sync.json">既有验证记录</a>，未重新执行功能测试。</p>
+</section>
 <section class="record" id="help"><h2>遇到问题时</h2><details><summary>macFUSE 开关点不开或开启后仍显示关闭</summary><p>本机已遇到 macOS“按应用”页面的权限拒绝：日志为 EPERM，扩展本身已经注册。请返回扩展总览，选择“按类别（By Category）”，再打开“文件系统扩展（File System Extensions）”开启两项 macFUSE。参见 <a href="https://github.com/macfuse/macfuse/issues/1194">macFUSE 维护者的已知问题说明</a>。当前是否启用成功，以本轮验证记录和实际挂载结果为准。</p></details><details><summary>启动后没有托盘图标</summary><p>确认使用包含原生托盘的完整桌面包，并在当前用户的图形桌面中运行。Linux 还需要可用的桌面托盘服务。能够打开管理页，只能证明本机服务可用；请另行确认图标可见以及菜单可以点击。</p></details><details><summary>挂载失败或目录看起来是空的</summary><p>查看管理页中的挂载状态、账号权限和共享文件夹标识，再确认当前系统驱动已安装并可用。配置已保存并不表示已经挂载。驱动安装或系统许可失败时，应先解决运行条件。</p></details><details><summary>文件已保存，但云端还没有更新</summary><p>分别查看“本机保存”和“云端状态”。等待同步、正在上传、等待回读核验、离线和冲突都没有完成云端确认。保留本地数据，检查网络与授权，在挂载运行时按“重试同步”重新核验。</p></details><details><summary>授权过期或账号权限发生变化</summary><p>在“账号与目录”查看账号状态。恢复已有账号时，使用界面提供的“停止相关挂载并重新授权，保留待上传数据”，并以原身份完成授权。授权后继续核对待处理项目和云端结果。</p></details><details><summary>安全停止没有立即完成</summary><p>关闭正在编辑的文件，等后台处理待上传内容。安全停止可能因为打开文件、待同步内容或超时而未完成；保留缓存与恢复数据，查看界面原因，再尝试停止。</p></details></section>
       </main>
     </div>
@@ -143,7 +164,7 @@
       evidence.history.forEach(item=>{const detail=element('details');detail.append(element('summary',item.title||'验证记录'),element('p',item.observed||''));if(item.source_url){const reference=element('a','参考说明');reference.href=item.source_url;detail.append(reference);}for(const shot of item.screenshots||[])attachShot(detail,shot.src,shot.caption||item.title||'真实截图');history.append(detail);});
       document.getElementById('help').before(history);
     }
-    ['platforms','validation',...(document.getElementById('history')?['history']:[]),'help'].forEach(id=>{const item=element('li');const link=element('a',document.querySelector('#'+id+' h2').textContent);link.href='#'+id;item.append(link);document.getElementById('toc-list').append(item);});
+    ['platforms','validation',...(document.getElementById('history')?['history']:[]),'hidden-shared-sync','help'].forEach(id=>{const item=element('li');const link=element('a',document.querySelector('#'+id+' h2').textContent);link.href='#'+id;item.append(link);document.getElementById('toc-list').append(item);});
     document.getElementById('print-button').addEventListener('click',()=>window.print());
     document.getElementById('close-dialog').addEventListener('click',()=>dialog.close());
     dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
