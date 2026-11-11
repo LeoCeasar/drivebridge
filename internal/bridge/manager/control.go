@@ -161,6 +161,13 @@ func (m *Manager) setAutostart(ctx context.Context, id model.MountID, enabled bo
 		return err
 	}
 	defer unlock()
+	mount, err := m.ResolveMount(ctx, string(id))
+	if err != nil {
+		return err
+	}
+	if enabled && mount.Archived {
+		return ErrArchived
+	}
 	state, err := m.readDesktopState()
 	if err != nil {
 		return err

@@ -1,0 +1,183 @@
+{
+  "date": "2026-11-11",
+  "scope": "Synthetic memory source -> vfs.NewManaged(full, read-only) -> native macFUSE cmount with local option; no real cloud operations",
+  "tools": {
+    "rg": "ripgrep 15.1.0",
+    "grep": "grep (BSD grep, GNU compatible) 2.6.0-FreeBSD"
+  },
+  "scenarios": [
+    {
+      "scenario": "grep_recursive",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 15,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    },
+    {
+      "scenario": "grep_explicit",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 6,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    },
+    {
+      "scenario": "rg_recursive",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 9,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    },
+    {
+      "scenario": "rg_explicit",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 6,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    },
+    {
+      "scenario": "rg_hidden_noignore",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 15,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    },
+    {
+      "scenario": "rg_mmap_explicit",
+      "stat_materializations": 0,
+      "first_exit": 0,
+      "second_exit": 0,
+      "first_match_lines": 6,
+      "second_download_bytes": 0,
+      "full_hash_checks": 5,
+      "all_hashes_match": true
+    }
+  ],
+  "native_windows_linux_verified": false,
+  "limitations": [
+    "Only tested macOS arm64 with current branch and installed macFUSE; not a release/platform-wide acceptance result.",
+    "rg defaults omit hidden and gitignored files; its --hidden --no-ignore mode included the corresponding synthetic files.",
+    "Searches hydrate each file actually opened, so recursive content search can download many files; listing/stat alone did not hydrate these placeholders.",
+    "No .log/.db filter-policy coverage."
+  ],
+  "cleanup": {
+    "probe_mount_absent": true,
+    "probe_directory_absent": true,
+    "probe_cache_absent": true
+  },
+  "failure_scenarios": [
+    {
+      "scenario": "failure_grep",
+      "injected_failures": {
+        "cold.md": "MaterializeManaged permission denied",
+        "cold.txt": "source Object.Open permission denied"
+      },
+      "initial_stat": {
+        ".hidden.md": 0,
+        "cold.md": 0,
+        "cold.txt": 0,
+        "ignored.md": 0,
+        "nested/deep.md": 0
+      },
+      "attempts": [
+        {
+          "round": "First",
+          "exit": 2,
+          "stdout_empty": true,
+          "error_class": "EPERM",
+          "stderr_redacted": "grep: $SYNTHETIC_MOUNT/failure_grep/cold.md: Operation not permitted\ngrep: $SYNTHETIC_MOUNT/failure_grep/cold.txt: Operation not permitted\n",
+          "materialize_delta": {
+            "failure_grep/cold.md": 1,
+            "failure_grep/cold.txt": 1
+          },
+          "source_open_attempt_delta": {
+            "failure_grep/cold.txt": 12
+          },
+          "downloaded_bytes_delta": {}
+        },
+        {
+          "round": "Second",
+          "exit": 2,
+          "stdout_empty": true,
+          "error_class": "EPERM",
+          "stderr_redacted": "grep: $SYNTHETIC_MOUNT/failure_grep/cold.md: Operation not permitted\ngrep: $SYNTHETIC_MOUNT/failure_grep/cold.txt: Operation not permitted\n",
+          "materialize_delta": {
+            "failure_grep/cold.md": 1
+          },
+          "source_open_attempt_delta": {
+            "failure_grep/cold.txt": 12
+          },
+          "downloaded_bytes_delta": {}
+        }
+      ]
+    },
+    {
+      "scenario": "failure_rg",
+      "injected_failures": {
+        "cold.md": "MaterializeManaged permission denied",
+        "cold.txt": "source Object.Open permission denied"
+      },
+      "initial_stat": {
+        ".hidden.md": 0,
+        "cold.md": 0,
+        "cold.txt": 0,
+        "ignored.md": 0,
+        "nested/deep.md": 0
+      },
+      "attempts": [
+        {
+          "round": "First",
+          "exit": 2,
+          "stdout_empty": true,
+          "error_class": "EPERM",
+          "stderr_redacted": "rg: $SYNTHETIC_MOUNT/failure_rg/cold.md: Operation not permitted (os error 1)\nrg: $SYNTHETIC_MOUNT/failure_rg/cold.txt: Operation not permitted (os error 1)\n",
+          "materialize_delta": {
+            "failure_rg/cold.md": 1,
+            "failure_rg/cold.txt": 1
+          },
+          "source_open_attempt_delta": {
+            "failure_rg/cold.txt": 12
+          },
+          "downloaded_bytes_delta": {}
+        },
+        {
+          "round": "Second",
+          "exit": 2,
+          "stdout_empty": true,
+          "error_class": "EPERM",
+          "stderr_redacted": "rg: $SYNTHETIC_MOUNT/failure_rg/cold.md: Operation not permitted (os error 1)\nrg: $SYNTHETIC_MOUNT/failure_rg/cold.txt: Operation not permitted (os error 1)\n",
+          "materialize_delta": {
+            "failure_rg/cold.md": 1
+          },
+          "source_open_attempt_delta": {
+            "failure_rg/cold.txt": 12
+          },
+          "downloaded_bytes_delta": {}
+        }
+      ]
+    }
+  ],
+  "failure_cleanup": {
+    "probe_mount_absent": true,
+    "probe_directory_absent": true,
+    "probe_cache_absent": true
+  },
+  "notes": [
+    "The source Open permission failure was retried 12 times per command by existing VFS downloader logic; it downloaded zero bytes and both CLI tools still reported EPERM with exit 2.",
+    "No production source or real cloud data was modified by this probe."
+  ]
+}

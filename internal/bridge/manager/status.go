@@ -21,6 +21,8 @@ func errorCode(err error) string {
 	switch {
 	case err == nil:
 		return ""
+	case errors.Is(err, ErrArchived):
+		return "mount_archived"
 	case errors.Is(err, ErrPending), errors.Is(err, auth.ErrReferencesBusy), errors.Is(err, auth.ErrBusy), errors.Is(err, store.ErrLocked), errors.Is(err, store.ErrBusy):
 		return "pending"
 	case errors.Is(err, model.ErrIdentityChanged), errors.Is(err, ErrInstanceChanged):
@@ -45,6 +47,8 @@ func errorCode(err error) string {
 }
 func errorFromCode(code string) error {
 	switch code {
+	case "mount_archived":
+		return ErrArchived
 	case "pending":
 		return ErrPending
 	case "identity_changed":

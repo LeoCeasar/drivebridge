@@ -19,7 +19,7 @@ func publicAutomaticLogin(view manager.AutomaticLoginView) manager.AutomaticLogi
 		view.State = "failed"
 	}
 	switch view.Error {
-	case "", "unauthorized", "identity_changed", "driver_unavailable", "pending", "starting", "config", "network", "operation_failed", "expired", "canceled", "stale", "partial", "unsupported", "needs_browser", "needs_login", "browser_disconnected":
+	case "", "unauthorized", "identity_changed", "driver_unavailable", "pending", "starting", "config", "network", "operation_failed", "mount_archived", "expired", "canceled", "stale", "partial", "unsupported", "needs_browser", "needs_login", "browser_disconnected":
 	default:
 		view.Error = "operation_failed"
 	}

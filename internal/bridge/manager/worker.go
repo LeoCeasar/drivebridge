@@ -73,6 +73,9 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 	if err != nil {
 		return err
 	}
+	if spec.Mount.Archived {
+		return ErrArchived
+	}
 	l, err := privateLock(m.runtimeLockPath(id))
 	if err != nil {
 		return err
@@ -105,6 +108,15 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 		}
 	}
 	defer l.Unlock()
+	// Archive holds this same runtime lock while persisting its marker. Recheck
+	// after acquiring it so a direct _worker with an older spec cannot revive it.
+	current, err := m.ResolveMount(ctx, string(id))
+	if err != nil {
+		return err
+	}
+	if current.Archived {
+		return ErrArchived
+	}
 	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{}), controls: map[uint64]context.CancelFunc{}}
 	m.mu.Lock()
 	m.workers[id] = w
@@ -302,6 +314,9 @@ func (m *Manager) startAdmitted(readyCtx context.Context, id model.MountID) (mod
 	spec, err := m.spec(readyCtx, id)
 	if err != nil {
 		return model.MountStatus{}, err
+	}
+	if spec.Mount.Archived {
+		return model.MountStatus{}, ErrArchived
 	}
 	if err = m.validateOwnership(readyCtx, spec); err != nil {
 		return model.MountStatus{}, err

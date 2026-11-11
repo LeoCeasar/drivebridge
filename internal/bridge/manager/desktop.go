@@ -82,6 +82,9 @@ func (m *Manager) DesktopMounts(ctx context.Context) ([]DesktopMount, error) {
 	}
 	out := make([]DesktopMount, 0, len(c.Mounts))
 	for _, mount := range c.Mounts {
+		if mount.Archived {
+			continue
+		}
 		desired := mount.Autostart
 		if state != nil {
 			desired = state.Desired[mount.ID]
@@ -118,7 +121,7 @@ func (m *Manager) enableDesktop(ctx context.Context, startup func(context.Contex
 	if state == nil {
 		state = &desktopState{SchemaVersion: 1, ConfigFile: m.ConfigFile(), Desired: map[model.MountID]bool{}}
 		for _, mount := range c.Mounts {
-			state.Desired[mount.ID] = mount.Autostart
+			state.Desired[mount.ID] = mount.Autostart && !mount.Archived
 			if mount.Autostart {
 				state.Legacy = append(state.Legacy, mount.ID)
 			}
@@ -147,8 +150,12 @@ func (m *Manager) enableDesktop(ctx context.Context, startup func(context.Contex
 // lifecycle admission lease. Keeping that lock through Start/Stop makes a stop
 // win over any automatic start that had already read the old desired value.
 func (m *Manager) desktopIntent(ctx context.Context, id model.MountID, desired *bool, required bool) (bool, error) {
-	if _, err := m.ResolveMount(ctx, string(id)); err != nil {
+	mount, err := m.ResolveMount(ctx, string(id))
+	if err != nil {
 		return false, err
+	}
+	if mount.Archived && (desired == nil || *desired) {
+		return false, ErrArchived
 	}
 	state, err := m.readDesktopState()
 	if err != nil {

@@ -13,6 +13,12 @@ func mountFromConfigRequest(request ConfigRequest) (model.Mount, error) {
 	mount.RemoteID = request.RemoteID
 	mount.Mountpoint = request.Mountpoint
 	mount.MacOSBackend = request.MacOSBackend
+	if request.BackgroundPullExcludedExtensions != nil {
+		mount.BackgroundPullExcludedExtensions = *request.BackgroundPullExcludedExtensions
+	}
+	if _, err := config.EffectiveBackgroundPullExcludedExtensions(mount); err != nil {
+		return model.Mount{}, manager.ErrConfig
+	}
 	if request.CacheMaxAge != "" {
 		mount.CacheMaxAge = request.CacheMaxAge
 	}

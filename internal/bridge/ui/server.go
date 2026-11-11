@@ -50,6 +50,8 @@ func respond(w http.ResponseWriter, status int, v any) {
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
 	messages["status_unavailable"] = "本机状态读取暂未完成，请稍后刷新。"
+	messages["mount_archived"] = "此挂载已移除，请先恢复挂载配置，再启动同步。"
+	messages["mount_in_use"] = "暂时不能移除：请先关闭正在使用该挂载的文件，等待本机写入完成后重试；已有数据会保留。"
 	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
@@ -61,6 +63,10 @@ func apiError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, manager.ErrPending), errors.Is(err, store.ErrLocked), errors.Is(err, store.ErrBusy), errors.Is(err, auth.ErrBusy), errors.Is(err, auth.ErrReferencesBusy):
 		respondError(w, 503, "local_busy")
+	case errors.Is(err, manager.ErrArchived):
+		respondError(w, 409, "mount_archived")
+	case errors.Is(err, manager.ErrConfig):
+		respondError(w, 400, "invalid_request")
 	case errors.Is(err, auth.ErrUserMissing):
 		respondError(w, http.StatusConflict, "user_authorization_required")
 	case errors.Is(err, model.ErrVersionChanged) || errors.Is(err, model.ErrGenerationChanged) || errors.Is(err, model.ErrIdentityChanged):
@@ -175,7 +181,11 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			respond(w, 200, v)
 		case http.MethodPost:
 			var in ConfigRequest
-			if decode(w, r, &in) != nil || (in.Action != "profile" && in.Action != "remote" && in.Action != "mount") {
+			if decode(w, r, &in) != nil || (in.Action != "profile" && in.Action != "remote" && in.Action != "mount" && in.Action != "mount_policy") {
+				respondError(w, 400, "invalid_request")
+				return
+			}
+			if in.Action == "mount_policy" && (!validID(string(in.MountID)) || in.BackgroundPullExcludedExtensions == nil) {
 				respondError(w, 400, "invalid_request")
 				return
 			}
@@ -257,7 +267,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.conflict(w, r, parts[2], parts[3:])
 		return
 	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry") {
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore") {
 		if r.Method != "POST" {
 			method(w, "POST")
 			return
@@ -279,7 +289,11 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			err = h.backend.Mount(r.Context(), model.MountID(parts[2]), parts[3])
 		}
 		if err != nil {
-			apiError(w, err)
+			if parts[3] == "archive" && errors.Is(err, manager.ErrPending) {
+				respondError(w, 409, "mount_in_use")
+			} else {
+				apiError(w, err)
+			}
 			return
 		}
 		respond(w, 200, map[string]bool{"accepted": true})

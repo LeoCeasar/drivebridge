@@ -908,5 +908,56 @@
         "System-login startup was not enabled or retested in this change."
       ]
     }
+  },
+  "mount_management_pull_policy_search": {
+    "checked_at": "2026-11-11T10:00:00.456969+00:00",
+    "installed_sha256": "57ed77c6444b0fcdc59dc609ebf3e86e6b788bd04c2215442137a37818b88c9a",
+    "custom_rules_normalized": true,
+    "explicit_empty_persisted": true,
+    "archive_hides_mount_and_preserves_counts": true,
+    "restore_does_not_start": true,
+    "original_test_mount_rules_restored": true,
+    "pending_inflight_conflicts_before": [
+      13,
+      0,
+      5
+    ],
+    "pending_inflight_conflicts_after": [
+      13,
+      0,
+      5
+    ],
+    "active_mounts": 2,
+    "active_queues_inflight_conflicts": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ]
+    ],
+    "upgrade": {
+      "protected_files": 219,
+      "changed_files": 0,
+      "candidate_matches_installed": true
+    },
+    "cua": {
+      "remove_visible_in_main_list": true,
+      "archived_recovery_panel": true,
+      "restore_confirmation_stays_stopped": true,
+      "editable_filter_input_default_log_db": true
+    },
+    "tests": {
+      "bridge_feishu_desktop": "passed",
+      "frontend": 12,
+      "config_manager_sync_ui_race": "passed",
+      "mac_native_build": "passed",
+      "windows_cmount_cli_cross_build": "passed",
+      "linux_cli_cross_build": "passed"
+    }
   }
 }

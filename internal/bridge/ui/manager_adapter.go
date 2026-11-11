@@ -42,7 +42,11 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		if age == "" {
 			age = config.DefaultCacheMaxAge
 		}
-		v.Mounts = append(v.Mounts, MountView{ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age})
+		rules, err := config.EffectiveBackgroundPullExcludedExtensions(m)
+		if err != nil {
+			return ConfigView{}, err
+		}
+		v.Mounts = append(v.Mounts, MountView{Archived: m.Archived, BackgroundPullExcludedExtensions: rules, ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age})
 	}
 	return v, nil
 }
@@ -61,6 +65,11 @@ func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (Config
 		_, err = b.manager.AddProfile(ctx, r.Name, r.Brand)
 	case "remote":
 		_, err = b.manager.AddRemote(ctx, r.Name, r.ProfileID, r.FolderToken)
+	case "mount_policy":
+		if r.BackgroundPullExcludedExtensions == nil {
+			return ConfigView{}, manager.ErrConfig
+		}
+		err = b.manager.SetBackgroundPullPolicy(ctx, r.MountID, *r.BackgroundPullExcludedExtensions)
 	case "mount":
 		var mount model.Mount
 		mount, err = mountFromConfigRequest(r)
@@ -111,6 +120,10 @@ func (b *ManagerBackend) Resolve(ctx context.Context, r model.ResolveRequest) er
 }
 func (b *ManagerBackend) Mount(ctx context.Context, id model.MountID, action string) error {
 	switch action {
+	case "archive":
+		return b.manager.ArchiveMount(ctx, id)
+	case "restore":
+		return b.manager.RestoreMount(ctx, id)
 	case "start":
 		_, err := b.manager.Start(ctx, id, true)
 		return err

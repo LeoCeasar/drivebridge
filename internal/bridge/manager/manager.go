@@ -22,6 +22,7 @@ var (
 	ErrConfig          = errors.New("invalid product configuration")
 	ErrDriver          = errors.New("mount driver or compiled engine unavailable")
 	ErrPending         = errors.New("active handles or unconfirmed data prevent operation")
+	ErrArchived        = errors.New("mount configuration is archived; restore it before starting")
 	ErrInstanceChanged = errors.New("worker identity changed")
 	ErrUnavailable     = errors.New("worker unavailable")
 	ErrReadyTimeout    = errors.New("worker has not become ready")

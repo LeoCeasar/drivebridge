@@ -12,10 +12,20 @@ import (
 // Run polls only explicitly active entries and directories already visited by the
 // filesystem. Network mutations always go through the per-entry durable journal.
 func (e *Engine) Run(ctx context.Context) error {
+	// A grep can activate many bodies. Keep their observations off the upload
+	// loop so one slow download cannot delay another entry's durable job.
+	refreshCtx, cancelRefresh := context.WithCancel(ctx)
+	refreshDone := make(chan struct{})
+	go func() {
+		defer close(refreshDone)
+		e.refreshActive(refreshCtx)
+	}()
+	defer func() {
+		cancelRefresh()
+		<-refreshDone
+	}()
 	jobs := time.NewTicker(time.Second)
 	defer jobs.Stop()
-	docs := time.NewTicker(e.opt.PollInterval)
-	defer docs.Stop()
 	dirs := time.NewTicker(e.opt.DirectoryInterval)
 	defer dirs.Stop()
 	for {
@@ -26,18 +36,34 @@ func (e *Engine) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-jobs.C:
-		case <-docs.C:
-			if e.deps.ActiveEntries != nil {
-				for _, id := range e.deps.ActiveEntries() {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					_ = e.RefreshEntry(ctx, id)
-				}
-			}
 		case <-dirs.C:
 			if e.deps.RefreshDirectories != nil {
 				_ = e.deps.RefreshDirectories(ctx)
+			}
+		}
+	}
+}
+
+// refreshActive uses one worker and finishes each finite snapshot before
+// taking another. Coalesced ticker events cannot grow a queue or repeatedly
+// restart a scan and starve its tail. RefreshEntry retains its per-entry lock,
+// pending-write priority and background-pull policy checks.
+func (e *Engine) refreshActive(ctx context.Context) {
+	docs := time.NewTicker(e.opt.PollInterval)
+	defer docs.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-docs.C:
+			if e.deps.ActiveEntries == nil {
+				continue
+			}
+			for _, id := range e.deps.ActiveEntries() {
+				if ctx.Err() != nil {
+					return
+				}
+				_ = e.RefreshEntry(ctx, id)
 			}
 		}
 	}
@@ -126,6 +152,14 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 	for _, j := range pending {
 		if j.EntryID == id {
 			return nil
+		}
+	}
+	// Background refresh policy never gates SyncEntry: local writes still need
+	// upload readback, conflict checks, and durable backup observations.
+	if e.deps.ShouldRefresh != nil {
+		ok, err := e.deps.ShouldRefresh(ctx, id)
+		if err != nil || !ok {
+			return err
 		}
 	}
 	var sn model.Snapshot

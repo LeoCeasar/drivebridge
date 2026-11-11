@@ -70,21 +70,23 @@ type Remote struct {
 	AccountRoot bool      `json:"account_root,omitempty"`
 }
 type Mount struct {
-	ID            MountID  `json:"id"`
-	Name          string   `json:"name"`
-	RemoteID      RemoteID `json:"remote_id"`
-	Mountpoint    string   `json:"mountpoint"`
-	CacheMode     string   `json:"cache_mode"`
-	CacheMaxBytes int64    `json:"cache_max_bytes"`
-	CacheMaxAge   string   `json:"cache_max_age,omitempty"`
-	WriteBack     string   `json:"write_back"`
-	PollDocs      string   `json:"poll_docs"`
-	RefreshDirs   string   `json:"refresh_dirs"`
-	MaxDocBytes   int64    `json:"max_doc_bytes"`
-	Notify        bool     `json:"notify"`
-	Autostart     bool     `json:"autostart"`
-	MountEngine   string   `json:"mount_engine"`
-	MacOSBackend  string   `json:"macos_backend,omitempty"`
+	BackgroundPullExcludedExtensions []string `json:"background_pull_excluded_extensions"`
+	ID                               MountID  `json:"id"`
+	Name                             string   `json:"name"`
+	RemoteID                         RemoteID `json:"remote_id"`
+	Mountpoint                       string   `json:"mountpoint"`
+	CacheMode                        string   `json:"cache_mode"`
+	CacheMaxBytes                    int64    `json:"cache_max_bytes"`
+	CacheMaxAge                      string   `json:"cache_max_age,omitempty"`
+	WriteBack                        string   `json:"write_back"`
+	PollDocs                         string   `json:"poll_docs"`
+	RefreshDirs                      string   `json:"refresh_dirs"`
+	MaxDocBytes                      int64    `json:"max_doc_bytes"`
+	Notify                           bool     `json:"notify"`
+	Autostart                        bool     `json:"autostart"`
+	Archived                         bool     `json:"archived,omitempty"`
+	MountEngine                      string   `json:"mount_engine"`
+	MacOSBackend                     string   `json:"macos_backend,omitempty"`
 }
 
 // VerifiedIdentity contains identity metadata, never CLI credentials.

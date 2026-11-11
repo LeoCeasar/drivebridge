@@ -244,6 +244,9 @@ func (m *Manager) ensureAccountMount(ctx context.Context, profile model.Profile)
 			}
 		}
 		if mount.ID != "" {
+			if mount.Archived {
+				return ErrArchived
+			}
 			return nil
 		}
 		home, err := os.UserHomeDir()

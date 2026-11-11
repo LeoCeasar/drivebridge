@@ -35,7 +35,7 @@ type Remote = model.Remote
 type Mount = model.Mount
 
 func DefaultMount() Mount {
-	return Mount{CacheMode: "full", CacheMaxBytes: 5368709120, CacheMaxAge: DefaultCacheMaxAge, WriteBack: "2s", PollDocs: "5s", RefreshDirs: "30s", MaxDocBytes: 10485760, Notify: true, MountEngine: "auto"}
+	return Mount{BackgroundPullExcludedExtensions: []string{".log", ".db"}, CacheMode: "full", CacheMaxBytes: 5368709120, CacheMaxAge: DefaultCacheMaxAge, WriteBack: "2s", PollDocs: "5s", RefreshDirs: "30s", MaxDocBytes: 10485760, Notify: true, MountEngine: "auto"}
 }
 
 // EffectiveCacheMaxAge keeps old configurations compatible. Zero disables age
@@ -303,6 +303,9 @@ func Validate(c Config, p Paths) error {
 			return fmt.Errorf("invalid mount cache or document limit")
 		}
 		if _, err := EffectiveCacheMaxAge(mount); err != nil {
+			return err
+		}
+		if _, err := EffectiveBackgroundPullExcludedExtensions(mount); err != nil {
 			return err
 		}
 		if mount.MountEngine != "auto" {

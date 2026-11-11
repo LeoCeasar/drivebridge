@@ -120,6 +120,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	addMount.Flags().String("cache-size", "5G", "Soft clean-cache budget")
 	addMount.Flags().String("cache-max-age", defaults.CacheMaxAge, "Unused synced body retention; 0h uses only the capacity budget")
 	addMount.Flags().String("macos-backend", "", "macOS mount backend: kernel or fskit (empty keeps the default)")
+	addMount.Flags().StringSlice("background-pull-exclude", defaults.BackgroundPullExcludedExtensions, "Suffixes excluded from background body refresh; explicit reads and local uploads remain enabled")
 	addMount.Flags().String("write-back", defaults.WriteBack, "Local write-back delay")
 	addMount.Flags().Bool("notify", true, "Notify about conflicts when a desktop is available")
 	addMount.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
@@ -139,11 +140,58 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		}
 		v.CacheMaxBytes = int64(size)
 		v.CacheMaxAge = flagString(addMount, "cache-max-age")
+		v.BackgroundPullExcludedExtensions, _ = addMount.Flags().GetStringSlice("background-pull-exclude")
+		if addMount.Flags().Changed("background-pull-exclude") && v.BackgroundPullExcludedExtensions == nil {
+			v.BackgroundPullExcludedExtensions = []string{}
+		}
 		v.WriteBack = flagString(addMount, "write-back")
 		v.Notify = flagString(addMount, "notify") == "true"
 		return m.AddMount(ctx, v)
 	})
 	mount.AddCommand(addMount)
+	for _, kind := range []string{"remove", "restore"} {
+		kind := kind
+		entry := &cobra.Command{Use: kind + " NAME", Args: exactArgs(1), Short: "Hide or restore this computer's mount configuration without deleting cloud files"}
+		entry.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+			v, err := m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+			if kind == "remove" {
+				err = m.ArchiveMount(ctx, v.ID)
+			} else {
+				err = m.RestoreMount(ctx, v.ID)
+			}
+			return map[string]any{"archived": kind == "remove", "data_preserved": true}, err
+		})
+		mount.AddCommand(entry)
+	}
+
+	policy := &cobra.Command{Use: "pull-policy NAME", Args: exactArgs(1), Short: "Inspect or change suffixes excluded from background downloads"}
+	policy.Flags().StringSlice("exclude", nil, "Excluded suffixes; use --exclude= to allow all")
+	policy.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		target, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		if policy.Flags().Changed("exclude") {
+			rules, _ := policy.Flags().GetStringSlice("exclude")
+			if rules == nil {
+				rules = []string{}
+			}
+			if err = m.SetBackgroundPullPolicy(ctx, target.ID, rules); err != nil {
+				return nil, err
+			}
+			target, err = m.ResolveMount(ctx, args[0])
+			if err != nil {
+				return nil, err
+			}
+		}
+		rules, err := config.EffectiveBackgroundPullExcludedExtensions(target)
+		return map[string]any{"background_pull_excluded_extensions": rules}, err
+	})
+	mount.AddCommand(policy)
+
 	start := &cobra.Command{Use: "start NAME", Args: exactArgs(1)}
 	start.Flags().Bool("background", false, "Return after the worker and mount are ready")
 	start.Flags().Duration("wait", 30*time.Second, "Maximum time to wait for readiness")
