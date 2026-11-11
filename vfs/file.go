@@ -876,6 +876,11 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 		if e = f.materializeManaged(f.ctx); e != nil {
 			return nil, e
 		}
+		if tracker, ok := managedVFS.f.(ManagedAccessTracker); ok {
+			if e = tracker.TouchManagedAccess(f.ctx, f.Path()); e != nil {
+				return nil, e
+			}
+		}
 	} else {
 		managedVFS.nativeAccess.Store(true)
 	}

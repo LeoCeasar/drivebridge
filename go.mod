@@ -296,3 +296,6 @@ require (
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
 	golang.org/x/term v0.43.0
 )
+
+// macFUSE open-time attribute/UBC purge flags missing from the pinned upstream API.
+replace github.com/winfsp/cgofuse => ./lib/cgofuse

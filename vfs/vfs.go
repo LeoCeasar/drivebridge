@@ -529,6 +529,17 @@ func newInode() (inode uint64) {
 // It is the equivalent of os.Stat - Node contains the os.FileInfo
 // interface.
 func (vfs *VFS) Stat(path string) (node Node, err error) {
+	return vfs.statPath(path, true)
+}
+
+// StatMetadata finds a Node without materializing managed file contents.
+// Directory metadata may still be enumerated. An unknown body size remains
+// available through Node.DirEntry().Size(); Node.Size() reports zero until Open.
+func (vfs *VFS) StatMetadata(path string) (node Node, err error) {
+	return vfs.statPath(path, false)
+}
+
+func (vfs *VFS) statPath(path string, materialize bool) (node Node, err error) {
 	path = strings.Trim(path, "/")
 	node = vfs.root
 	for path != "" {
@@ -547,7 +558,11 @@ func (vfs *VFS) Stat(path string) (node Node, err error) {
 			// We need to look in a directory, but found a file
 			return nil, ENOENT
 		}
-		node, err = dir.Stat(name)
+		if materialize {
+			node, err = dir.Stat(name)
+		} else {
+			node, err = dir.StatMetadata(name)
+		}
 		if err != nil {
 			return nil, err
 		}

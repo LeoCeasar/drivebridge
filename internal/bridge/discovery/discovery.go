@@ -46,6 +46,11 @@ type Entry struct {
 	Name        string   `json:"name"`
 	Memberships []string `json:"memberships"`
 	Manual      bool     `json:"manual"`
+	// Placement is independently verified namespace ownership. Memberships
+	// continue to describe discovery provenance, including manual additions.
+	Placement          string   `json:"placement,omitempty"`
+	CanonicalRootToken string   `json:"canonical_root_token,omitempty"`
+	RelativePath       []string `json:"relative_path,omitempty"`
 }
 type SourceState struct {
 	Status string `json:"status"`
@@ -151,6 +156,21 @@ func Scan(ctx context.Context, b Binding, f Fetcher, previous Snapshot) (Snapsho
 // is the snapshot's binding; callers must verify the folder using that account
 // before invoking this function. Equal names with different tokens stay distinct.
 func AddManual(s Snapshot, entry Entry) (Snapshot, error) {
+	entry.Placement = ""
+	entry.CanonicalRootToken = ""
+	entry.RelativePath = nil
+	return addManual(s, entry, false)
+}
+
+// AddVerifiedManual accepts placement proven by current account metadata. A
+// covered child refers to an existing entrance; it must not become another root.
+func AddVerifiedManual(s Snapshot, entry Entry) (Snapshot, error) {
+	if entry.Placement != "personal" && entry.Placement != "shared" {
+		return s, ErrProtocol
+	}
+	return addManual(s, entry, true)
+}
+func addManual(s Snapshot, entry Entry, verified bool) (Snapshot, error) {
 	if !validBinding(s.Binding) {
 		return s, ErrIdentity
 	}
@@ -161,8 +181,17 @@ func AddManual(s Snapshot, entry Entry) (Snapshot, error) {
 	if err != nil {
 		return s, err
 	}
-	// Membership claims originate in Scan, not in a manual-add request.
+	if verified && entry.CanonicalRootToken != "" && entry.CanonicalRootToken != entry.Token {
+		anchor, ok := entries[entry.CanonicalRootToken]
+		if !ok || (anchor.CanonicalRootToken != "" && anchor.CanonicalRootToken != anchor.Token) {
+			return s, ErrProtocol
+		}
+	}
+	// Provenance stays manual; placement must not impersonate a web shared list.
 	entry.Memberships = []string{Manual}
+	if verified && entry.Placement == Personal {
+		entry.Memberships = append(entry.Memberships, Personal)
+	}
 	entry.Manual = true
 	merge(entries, entry)
 	out := s
@@ -483,6 +512,40 @@ func validBinding(b Binding) bool {
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
 }
 func validEntry(e Entry) bool {
+	if e.Placement != "" && e.Placement != "personal" && e.Placement != "shared" {
+		return false
+	}
+	if e.CanonicalRootToken != "" {
+		if e.Placement == "" || len(e.CanonicalRootToken) > 256 {
+			return false
+		}
+		for _, r := range e.CanonicalRootToken {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+				return false
+			}
+		}
+		if e.CanonicalRootToken != e.Token && len(e.RelativePath) == 0 {
+			return false
+		}
+		if e.CanonicalRootToken == e.Token && len(e.RelativePath) != 0 {
+			return false
+		}
+	} else if len(e.RelativePath) != 0 {
+		return false
+	}
+	if len(e.RelativePath) > 64 {
+		return false
+	}
+	for _, part := range e.RelativePath {
+		if strings.TrimSpace(part) == "" || len(part) > 4096 || !utf8.ValidString(part) {
+			return false
+		}
+		for _, r := range part {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+	}
 	if e.Token == "" || len(e.Token) > 256 || strings.TrimSpace(e.Name) == "" || !utf8.ValidString(e.Name) {
 		return false
 	}
@@ -511,6 +574,7 @@ func entryMap(entries []Entry) (map[string]Entry, error) {
 			return nil, ErrProtocol
 		}
 		e.Memberships = append([]string(nil), e.Memberships...)
+		e.RelativePath = append([]string(nil), e.RelativePath...)
 		for _, m := range e.Memberships {
 			if m != Personal && m != SharedVisible && m != SharedHidden && m != Manual {
 				return nil, ErrProtocol
@@ -533,6 +597,11 @@ func merge(entries map[string]Entry, e Entry) {
 	}
 	old.Name = e.Name
 	old.Manual = old.Manual || e.Manual
+	if e.Placement != "" {
+		old.Placement = e.Placement
+		old.CanonicalRootToken = e.CanonicalRootToken
+		old.RelativePath = append([]string(nil), e.RelativePath...)
+	}
 	for _, m := range e.Memberships {
 		if !has(old.Memberships, m) {
 			old.Memberships = append(old.Memberships, m)

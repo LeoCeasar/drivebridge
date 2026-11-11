@@ -21,6 +21,9 @@ import (
 
 const SchemaVersion = 1
 
+// DefaultCacheMaxAge releases unused, safely synced bodies after seven days.
+const DefaultCacheMaxAge = "168h"
+
 // BridgeConfigFlag is distinct from rclone's existing --config flag.
 const BridgeConfigFlag = "bridge-config"
 
@@ -32,8 +35,23 @@ type Remote = model.Remote
 type Mount = model.Mount
 
 func DefaultMount() Mount {
-	return Mount{CacheMode: "full", CacheMaxBytes: 5368709120, WriteBack: "2s", PollDocs: "5s", RefreshDirs: "30s", MaxDocBytes: 10485760, Notify: true, MountEngine: "auto"}
+	return Mount{CacheMode: "full", CacheMaxBytes: 5368709120, CacheMaxAge: DefaultCacheMaxAge, WriteBack: "2s", PollDocs: "5s", RefreshDirs: "30s", MaxDocBytes: 10485760, Notify: true, MountEngine: "auto"}
 }
+
+// EffectiveCacheMaxAge keeps old configurations compatible. Zero disables age
+// eviction and leaves the clean-body capacity policy active.
+func EffectiveCacheMaxAge(mount Mount) (time.Duration, error) {
+	value := mount.CacheMaxAge
+	if value == "" {
+		value = DefaultCacheMaxAge
+	}
+	age, err := time.ParseDuration(value)
+	if err != nil || age < 0 {
+		return 0, fmt.Errorf("invalid cache max age %q", value)
+	}
+	return age, nil
+}
+
 func Default() Config {
 	return Config{SchemaVersion: SchemaVersion, Profiles: []Profile{}, Remotes: []Remote{}, Mounts: []Mount{}}
 }
@@ -283,6 +301,9 @@ func Validate(c Config, p Paths) error {
 		mounts = append(mounts, path)
 		if mount.CacheMode != "full" || mount.CacheMaxBytes <= 0 || mount.MaxDocBytes <= 0 || mount.MaxDocBytes > 10*1024*1024 {
 			return fmt.Errorf("invalid mount cache or document limit")
+		}
+		if _, err := EffectiveCacheMaxAge(mount); err != nil {
+			return err
 		}
 		if mount.MountEngine != "auto" {
 			return fmt.Errorf("invalid mount engine")

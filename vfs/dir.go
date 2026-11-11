@@ -987,15 +987,25 @@ func (d *Dir) cachedNode(relativePath string) Node {
 //
 // Stat need not to handle the names "." and "..".
 func (d *Dir) Stat(name string) (node Node, err error) {
+	node, err = d.StatMetadata(name)
+	if err != nil {
+		return nil, err
+	}
+	if err = MaterializeNode(d.vfs.ctx, node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// StatMetadata looks up an entry without materializing managed file contents.
+// It preserves unknown body sizes until an actual Open or explicit Stat.
+func (d *Dir) StatMetadata(name string) (node Node, err error) {
 	// fs.Debugf(path, "Dir.Stat")
 	node, err = d.stat(name)
 	if err != nil {
 		if err != ENOENT {
 			fs.Errorf(d, "Dir.Stat error: %v", err)
 		}
-		return nil, err
-	}
-	if err = MaterializeNode(d.vfs.ctx, node); err != nil {
 		return nil, err
 	}
 	// fs.Debugf(path, "Dir.Stat OK")

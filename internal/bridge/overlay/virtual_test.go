@@ -129,11 +129,17 @@ func TestVirtualURLValidationAndCapturedBytes(t *testing.T) {
 	old := listed(t, f)["item.url"].(fs.Object)
 	before := body(t, old)
 	s.items[0].URL = "https://provider.example/new"
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
 	fresh := listed(t, f)["item.url"].(fs.Object)
 	if body(t, old) != before || body(t, fresh) == before {
 		t.Fatal("virtual snapshot changed under an existing handle")
 	}
 	s.items[0].URL = "https://bad\nurl"
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
 	listed(t, f)
 	fresh, err := f.NewObject(ctx, "item.url")
 	if err != nil || strings.Contains(body(t, fresh), "URL=") {
@@ -240,6 +246,9 @@ func TestVirtualClassificationCannotRebindAcceptedEntry(t *testing.T) {
 		t.Fatal(e, m)
 	}
 	s.items = []larkcli.DriveItem{{Token: "sheet", Name: "sheet", Type: "sheet", URL: "https://provider.example/a"}}
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
 	listed(t, f)
 	e, _ = st.EntryByToken(ctx, "sheet")
 	m, _ = st.Metadata(ctx, e.ID)
@@ -248,7 +257,7 @@ func TestVirtualClassificationCannotRebindAcceptedEntry(t *testing.T) {
 	}
 	for _, typ := range []string{"file", "bitable", "docx"} {
 		s.items[0].Type = typ
-		if _, err = f.List(ctx, ""); !errors.Is(err, model.ErrIdentityChanged) {
+		if err = f.RefreshDirectory(ctx, ""); !errors.Is(err, model.ErrIdentityChanged) {
 			t.Fatalf("%s: %v", typ, err)
 		}
 	}
@@ -296,7 +305,7 @@ func TestVirtualListingAndReplacementClassificationBarrier(t *testing.T) {
 	block := blockedVirtualList{s, make(chan struct{}), make(chan struct{})}
 	f.source = block
 	listing := make(chan error, 1)
-	go func() { _, e := f.List(ctx, ""); listing <- e }()
+	go func() { listing <- f.RefreshDirectory(ctx, "") }()
 	<-block.entered
 	rename := make(chan error, 1)
 	go func() { _, e := f.BeginManagedRename(ctx, "temp", "sheet.url"); rename <- e }()

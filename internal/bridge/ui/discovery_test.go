@@ -152,3 +152,15 @@ func TestDiscoveryOptionalCapabilityAndAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestManualFolderUnclassifiedIsExplicitAndSanitized(t *testing.T) {
+	h, original, client, csrf, _ := fixture(t)
+	id := uuid.NewString()
+	h.backend = &fakeDiscoveryBackend{fakeBackend: original, err: errors.Join(manager.ErrDiscoveryUnclassified, errors.New("raw-private-proof"))}
+	response := request(t, client, h, "POST", "/api/discovery/"+id+"/add", map[string]string{"input": "folderToken"}, csrf, h.URL())
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != 409 || !strings.Contains(string(body), "discovery_unclassified") || strings.Contains(string(body), "raw-private-proof") {
+		t.Fatalf("unclassified response: %d %s", response.StatusCode, body)
+	}
+}

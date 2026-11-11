@@ -68,11 +68,10 @@ func (o *Object) Remote() string { o.mu.RLock(); defer o.mu.RUnlock(); return o.
 func (o *Object) String() string { return o.Remote() }
 func (o *Object) ModTime(context.Context) time.Time {
 	o.mu.RLock()
-	o.f.touch(o.e)
 	defer o.mu.RUnlock()
 	return o.m.ModTime
 }
-func (o *Object) Size() int64    { o.mu.RLock(); defer o.mu.RUnlock(); o.f.touch(o.e); return o.size }
+func (o *Object) Size() int64    { o.mu.RLock(); defer o.mu.RUnlock(); return o.size }
 func (o *Object) Storable() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.m.VirtualType == "" }
 func (o *Object) ID() string     { o.mu.RLock(); defer o.mu.RUnlock(); return string(o.e.ID) }
 func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {

@@ -42,8 +42,12 @@ func discoveryName(name string) bool {
 }
 func decodeDiscoveryFolder(data []byte, token string) (DiscoveryCandidate, error) {
 	var result struct {
-		Token, Name string
-		Folder      *struct{ Token, Name string }
+		Token, Name, ID string
+		ParentID        string `json:"parentId"`
+		Folder          *struct {
+			Token, Name, ID string
+			ParentID        string `json:"parentId"`
+		}
 	}
 	if json.Unmarshal(data, &result) != nil {
 		return DiscoveryCandidate{}, discovery.ErrProtocol
@@ -53,11 +57,12 @@ func decodeDiscoveryFolder(data []byte, token string) (DiscoveryCandidate, error
 			return DiscoveryCandidate{}, discovery.ErrProtocol
 		}
 		result.Token, result.Name = result.Folder.Token, result.Folder.Name
+		result.ID, result.ParentID = result.Folder.ID, result.Folder.ParentID
 	}
 	if result.Token != token || !discoveryTokenRE.MatchString(token) || !discoveryName(result.Name) {
 		return DiscoveryCandidate{}, discovery.ErrProtocol
 	}
-	return DiscoveryCandidate{Token: token, Name: result.Name}, nil
+	return DiscoveryCandidate{Token: token, Name: result.Name, nodeID: result.ID, parentID: result.ParentID}, nil
 }
 func discoveryOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)

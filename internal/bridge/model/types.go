@@ -76,6 +76,7 @@ type Mount struct {
 	Mountpoint    string   `json:"mountpoint"`
 	CacheMode     string   `json:"cache_mode"`
 	CacheMaxBytes int64    `json:"cache_max_bytes"`
+	CacheMaxAge   string   `json:"cache_max_age,omitempty"`
 	WriteBack     string   `json:"write_back"`
 	PollDocs      string   `json:"poll_docs"`
 	RefreshDirs   string   `json:"refresh_dirs"`
@@ -273,17 +274,27 @@ type ResolveRequest struct {
 	Content                []byte     `json:"content"`
 }
 
+// DirectoryIndexStatus reports metadata coverage, independently of file bodies
+// and upload confirmation. Known is not an exhaustive cloud inventory.
+type DirectoryIndexStatus struct {
+	Known      int `json:"known"`
+	Cached     int `json:"cached"`
+	Refreshing int `json:"refreshing"`
+	Failed     int `json:"failed"`
+}
+
 type MountStatus struct {
-	SchemaVersion int     `json:"schema_version"`
-	MountID       MountID `json:"mount_id"`
-	Running       bool    `json:"running"`
-	LocalSaved    bool    `json:"local_saved"`
-	VFSPending    int     `json:"vfs_pending"`
-	Queued        int     `json:"queued"`
-	Inflight      int     `json:"inflight"`
-	Conflicts     int     `json:"conflicts"`
-	CloudState    string  `json:"cloud_state"`
-	LastError     string  `json:"last_error"`
+	DirectoryIndex *DirectoryIndexStatus `json:"directory_index,omitempty"`
+	SchemaVersion  int                   `json:"schema_version"`
+	MountID        MountID               `json:"mount_id"`
+	Running        bool                  `json:"running"`
+	LocalSaved     bool                  `json:"local_saved"`
+	VFSPending     int                   `json:"vfs_pending"`
+	Queued         int                   `json:"queued"`
+	Inflight       int                   `json:"inflight"`
+	Conflicts      int                   `json:"conflicts"`
+	CloudState     string                `json:"cloud_state"`
+	LastError      string                `json:"last_error"`
 }
 
 // Operation kinds describe logical mutations, never verified transport capabilities.

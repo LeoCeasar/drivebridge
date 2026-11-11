@@ -278,6 +278,9 @@ func TestCaseFoldAndReservedNameMapping(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.items = []larkcli.DriveItem{{Token: "b", Name: "a", Type: "file"}}
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
 	second := listed(t, f)
 	if _, ok := second[original.Remote]; !ok {
 		t.Fatal("mapping changed after collision disappears")
@@ -361,8 +364,11 @@ func TestListFailureKeepsAcceptedViewAndNoBodies(t *testing.T) {
 	listed(t, f)
 	s.items = []larkcli.DriveItem{{Token: "other", Name: "partial", Type: "file"}}
 	s.listErr = errors.New("later page failed")
-	if _, e := f.List(ctx, ""); e == nil {
-		t.Fatal("partial list succeeded")
+	if _, e := f.List(ctx, ""); e != nil {
+		t.Fatal("warm metadata disappeared offline", e)
+	}
+	if e := f.RefreshDirectory(ctx, ""); e == nil {
+		t.Fatal("partial refresh succeeded")
 	}
 	if _, e := st.EntryByRemote(ctx, "old"); e != nil {
 		t.Fatal(e)
@@ -521,6 +527,9 @@ func TestMkdirRmdirAndBoundKindRules(t *testing.T) {
 	s.items = []larkcli.DriveItem{{Token: "raw-token", Name: "raw", Type: "file"}, {Token: "doc-token", Name: "native", Type: "docx"}}
 	s.bodies["raw-token"] = "raw bytes"
 	s.docs["doc-token"] = `<p id="p">doc</p>`
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
 	listed(t, f)
 	raw, e := f.MaterializeManaged(ctx, "raw")
 	if e != nil {
@@ -595,6 +604,12 @@ func TestActivityAndDirectoryRefreshRemainLazy(t *testing.T) {
 		t.Fatal(e)
 	}
 	o.Size()
+	if ids := f.ActiveEntries(); len(ids) != 0 {
+		t.Fatal("stat activated body retention", ids)
+	}
+	if got := body(t, o); got != "bytes" {
+		t.Fatal(got)
+	}
 	entry, _ := st.EntryByRemote(ctx, "file")
 	ids := f.ActiveEntries()
 	if len(ids) != 1 || ids[0] != entry.ID {

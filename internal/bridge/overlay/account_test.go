@@ -10,6 +10,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/internal/bridge/discovery"
+	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 )
@@ -52,24 +53,26 @@ func TestAccountGroupsCanonicalRootsAndOfficialRootFiles(t *testing.T) {
 	f, st, source, _, _ := accountFixture(t, []discovery.Entry{
 		{Token: "both", Name: "Both", Memberships: []string{discovery.Personal, discovery.SharedVisible, discovery.Manual}},
 		{Token: "shared", Name: "Shared", Memberships: []string{discovery.SharedHidden, discovery.Manual}},
-		{Token: "official", Name: "Official", Memberships: []string{discovery.SharedVisible}},
-		{Token: "manual", Name: "Manual", Memberships: []string{discovery.Manual}},
+		{Token: "official", Name: "Official", Placement: "personal", Memberships: []string{discovery.SharedVisible}},
+		{Token: "manual", Name: "Manual", Placement: "shared", Memberships: []string{discovery.Manual}},
 	})
 	source.tree[""] = []larkcli.DriveItem{{Token: "rootfile", Name: "Root file", Type: "file"}, {Token: "both", Name: "Both", Type: "folder"}, {Token: "official", Name: "Official", Type: "folder"}}
 	top := accountList(t, f, "")
-	if len(top) != 3 || top["个人目录"] == nil || top["共享目录"] == nil || top["手动添加"] == nil {
+	if len(top) != 2 || top["个人目录"] == nil || top["共享目录"] == nil || top["手动添加"] != nil {
 		t.Fatal(top)
+	}
+	if err := f.RefreshDirectory(ctx, "个人目录"); err != nil {
+		t.Fatal(err)
 	}
 	personal := accountList(t, f, "个人目录")
 	if len(personal) != 3 || personal["个人目录/Root file"] == nil || personal["个人目录/Both"] == nil || personal["个人目录/Official"] == nil {
 		t.Fatal(personal)
 	}
 	shared := accountList(t, f, "共享目录")
-	manual := accountList(t, f, "手动添加")
-	if len(shared) != 1 || shared["共享目录/Shared"] == nil || len(manual) != 1 || manual["手动添加/Manual"] == nil {
-		t.Fatal(shared, manual)
+	if len(shared) != 2 || shared["共享目录/Shared"] == nil || shared["共享目录/Manual"] == nil {
+		t.Fatal(shared)
 	}
-	for token, want := range map[string]string{"both": "个人目录/Both", "shared": "共享目录/Shared", "manual": "手动添加/Manual"} {
+	for token, want := range map[string]string{"both": "个人目录/Both", "shared": "共享目录/Shared", "manual": "共享目录/Manual"} {
 		entry, err := st.EntryByToken(ctx, token)
 		if err != nil || entry.Remote != want {
 			t.Fatal(entry, err)
@@ -97,6 +100,9 @@ func TestAccountMaterializesAllRootsBeforeNestedTraversalAndRescan(t *testing.T)
 		t.Fatal(b, err)
 	}
 	snapshot.Entries = append(snapshot.Entries, discovery.Entry{Token: "c", Name: "C", Memberships: []string{discovery.SharedVisible}})
+	if err := f.RefreshCatalog(ctx); err != nil {
+		t.Fatal(err)
+	}
 	source.tree["a"] = append(source.tree["a"], larkcli.DriveItem{Token: "c", Name: "Nested C", Type: "folder", ParentToken: "a"})
 	if got := accountList(t, f, "共享目录/A"); len(got) != 1 {
 		t.Fatal("new catalog root was claimed by nested traversal", got)
@@ -109,16 +115,22 @@ func TestAccountMaterializesAllRootsBeforeNestedTraversalAndRescan(t *testing.T)
 		t.Fatal("empty scan removed mappings", got)
 	}
 	*readErr = errors.New("catalog unavailable")
-	if _, err := f.List(ctx, "共享目录"); err == nil {
-		t.Fatal("missing metadata failure")
+	if got := accountList(t, f, "共享目录"); len(got) != 3 {
+		t.Fatal("warm snapshot failure hid entries", got)
+	}
+	if err := f.RefreshDirectory(ctx, "共享目录"); err == nil {
+		t.Fatal("explicit metadata refresh did not report failure")
 	}
 	if e, err := st.EntryByToken(ctx, "c"); err != nil || e.Remote != "共享目录/C" {
 		t.Fatal(e, err)
 	}
 	*readErr = nil
 	source.listErr = errors.New("official metadata unavailable")
-	if _, err := f.List(ctx, "共享目录"); err == nil {
-		t.Fatal("missing official metadata failure")
+	if err := f.RefreshDirectory(ctx, "共享目录"); err != nil {
+		t.Fatal("shared refresh depends on official personal root", err)
+	}
+	if err := f.RefreshDirectory(ctx, "个人目录"); err == nil {
+		t.Fatal("missing official personal metadata failure")
 	}
 	if e, err := st.EntryByToken(ctx, "c"); err != nil || e.Remote != "共享目录/C" {
 		t.Fatal(e, err)
@@ -170,5 +182,103 @@ func TestAccountProtectsEntrancesAndSyntheticParentsButAllowsChildren(t *testing
 	}
 	if err := f.AbortManagedRename(ctx, id); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAccountManualPlacementDoesNotCreateThirdCategoryOrNestedAlias(t *testing.T) {
+	f, st, source, _, _ := accountFixture(t, []discovery.Entry{
+		{Token: "personal-manual", Name: "Personal manual", Memberships: []string{discovery.Manual}, Manual: true, Placement: "personal"},
+		{Token: "shared-manual", Name: "Shared manual", Memberships: []string{discovery.Manual}, Manual: true, Placement: "shared"},
+		{Token: "nested", Name: "Nested", Memberships: []string{discovery.Manual}, Manual: true, Placement: "shared", CanonicalRootToken: "shared-manual", RelativePath: []string{"Nested"}},
+	})
+	source.tree["shared-manual"] = []larkcli.DriveItem{{Token: "nested", Name: "Nested", Type: "folder", ParentToken: "shared-manual"}}
+	if rows := accountList(t, f, ""); len(rows) != 2 || rows["手动添加"] != nil {
+		t.Fatal(rows)
+	}
+	if e, err := st.EntryByToken(ctx, "personal-manual"); err != nil || e.Remote != "个人目录/Personal manual" {
+		t.Fatal(e, err)
+	}
+	if e, err := st.EntryByToken(ctx, "shared-manual"); err != nil || e.Remote != "共享目录/Shared manual" {
+		t.Fatal(e, err)
+	}
+	if _, err := st.EntryByToken(ctx, "nested"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("nested supplemental entry became a root", err)
+	}
+	accountList(t, f, "共享目录/Shared manual")
+	nested, err := st.EntryByToken(ctx, "nested")
+	if err != nil || nested.Remote != "共享目录/Shared manual/Nested" {
+		t.Fatal(nested, err)
+	}
+	if err := f.requireWritable(ctx, nested); err != nil {
+		t.Fatal("nested supplemental folder protected as root", err)
+	}
+}
+func TestAccountLegacyManualCanonicalPathsAndPendingEditsArePreserved(t *testing.T) {
+	f, st, source, _, _ := accountFixture(t, []discovery.Entry{{Token: "legacy", Name: "Legacy", Memberships: []string{discovery.Manual}, Manual: true}})
+	accountList(t, f, "")
+	put(t, f, "手动添加/Legacy/Unsynced", "accepted bytes")
+	before, err := st.EntryByToken(ctx, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.Pending(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatal(pending, err)
+	}
+	raw, err := New(Dependencies{Store: st, Source: source, MountID: f.scope.MountID, ProfileID: f.scope.ProfileID, Account: &AccountOptions{AccountToken: "root", PersonalToken: "personal", ReadSnapshot: func(context.Context) (discovery.Snapshot, error) {
+		return discovery.Snapshot{Entries: []discovery.Entry{{Token: "legacy", Name: "Legacy", Memberships: []string{discovery.Manual}, Manual: true, Placement: "shared"}}}, nil
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f = raw.(*Fs)
+	if err := f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	rows := accountList(t, f, "")
+	if rows["手动添加"] == nil {
+		t.Fatal("legacy subtree hidden", rows)
+	}
+	after, err := st.EntryByToken(ctx, "legacy")
+	if err != nil || after.ID != before.ID || after.Remote != before.Remote {
+		t.Fatal(before, after, err)
+	}
+	if _, err := st.EntryByRemote(ctx, "共享目录/Legacy"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("legacy token duplicated", err)
+	}
+	o, err := f.NewObject(ctx, "手动添加/Legacy/Unsynced")
+	if err != nil || body(t, o) != "accepted bytes" {
+		t.Fatal(o, err)
+	}
+	jobs, err := st.Pending(ctx)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != pending[0].ID {
+		t.Fatal(jobs, err)
+	}
+}
+func TestAccountEmptyLegacyManualCategoryIsHiddenWithoutDeletingStoreRows(t *testing.T) {
+	f, st, _, _, _ := accountFixture(t, nil)
+	if _, err := st.ObserveEntry(ctx, store.Observation{Remote: "手动添加", Kind: model.KindFolder, Token: "root-manual"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := accountList(t, f, "")
+	if len(rows) != 2 || rows["手动添加"] != nil {
+		t.Fatal(rows)
+	}
+	if e, err := st.EntryByRemote(ctx, "手动添加"); err != nil || e.Token != "root-manual" {
+		t.Fatal("legacy row deleted", e, err)
+	}
+}
+
+func TestPersonalRootAnchoredSupplementIsNotProtectedAsAnEntrance(t *testing.T) {
+	f, st, source, _, _ := accountFixture(t, []discovery.Entry{{Token: "direct", Name: "Direct", Placement: "personal", CanonicalRootToken: "personal", RelativePath: []string{"Direct"}, Memberships: []string{discovery.Manual}, Manual: true}})
+	source.tree[""] = []larkcli.DriveItem{{Token: "direct", Name: "Direct", Type: "folder"}}
+	accountList(t, f, "")
+	accountList(t, f, "个人目录")
+	entry, err := st.EntryByToken(ctx, "direct")
+	if err != nil || entry.Remote != "个人目录/Direct" {
+		t.Fatal(entry, err)
+	}
+	if err := f.requireWritable(ctx, entry); err != nil {
+		t.Fatal("ordinary personal child classified as protected entrance", err)
 	}
 }

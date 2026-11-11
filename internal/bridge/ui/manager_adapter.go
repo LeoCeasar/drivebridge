@@ -35,7 +35,11 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		v.Remotes = append(v.Remotes, RemoteView{ID: r.ID, Name: r.Name, ProfileID: r.ProfileID, FolderToken: r.FolderToken})
 	}
 	for _, m := range c.Mounts {
-		v.Mounts = append(v.Mounts, MountView{ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint})
+		age := m.CacheMaxAge
+		if age == "" {
+			age = config.DefaultCacheMaxAge
+		}
+		v.Mounts = append(v.Mounts, MountView{ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age})
 	}
 	return v, nil
 }
@@ -69,12 +73,11 @@ func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (Config
 	case "remote":
 		_, err = b.manager.AddRemote(ctx, r.Name, r.ProfileID, r.FolderToken)
 	case "mount":
-		mount := config.DefaultMount()
-		mount.Name = r.Name
-		mount.RemoteID = r.RemoteID
-		mount.Mountpoint = r.Mountpoint
-		mount.MacOSBackend = r.MacOSBackend
-		_, err = b.manager.AddMount(ctx, mount)
+		var mount model.Mount
+		mount, err = mountFromConfigRequest(r)
+		if err == nil {
+			_, err = b.manager.AddMount(ctx, mount)
+		}
 	default:
 		return ConfigView{}, errors.New("unknown configuration action")
 	}

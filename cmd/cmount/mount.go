@@ -136,6 +136,15 @@ func mount(VFS *vfs.VFS, mountPath string, opt *mountlib.Options) (<-chan error,
 	// Create underlying FS
 	fsys := NewFS(VFS, opt)
 	host := fuse.NewFileSystemHost(fsys)
+	if VFS.ManagedSyncEnabled() {
+		VFS.SetManagedNativeNotifier(func(path string) {
+			fsys.nativeNotifyMu.RLock()
+			defer fsys.nativeNotifyMu.RUnlock()
+			if fsys.destroyed.Load() == 0 {
+				host.Notify(path, fuse.NOTIFY_UTIME)
+			}
+		})
+	}
 	host.SetCapReaddirPlus(true) // only works on Windows
 	if opt.CaseInsensitive.Valid {
 		host.SetCapCaseInsensitive(opt.CaseInsensitive.Value)
@@ -170,6 +179,7 @@ func mount(VFS *vfs.VFS, mountPath string, opt *mountlib.Options) (<-chan error,
 
 	// unmount
 	unmount := func() error {
+		VFS.SetManagedNativeNotifier(nil)
 		// Shutdown the VFS
 		fsys.VFS.Shutdown()
 		var umountOK bool

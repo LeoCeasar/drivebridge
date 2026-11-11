@@ -487,3 +487,42 @@ func TestMountMacOSBackendValidationAndPersistence(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheMaxAgeDefaultsLegacyAndCapacityOnly(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 7 * 24 * time.Hour}, {"168h", 7 * 24 * time.Hour}, {"720h", 30 * 24 * time.Hour}, {"0h", 0}} {
+		p := testPaths(t)
+		cfg := testConfig(p)
+		cfg.Mounts[0].CacheMaxAge = test.value
+		if err := Validate(cfg, p); err != nil {
+			t.Fatal(test.value, err)
+		}
+		age, err := EffectiveCacheMaxAge(cfg.Mounts[0])
+		if err != nil || age != test.want {
+			t.Fatal(test.value, age, err)
+		}
+		if err := SaveWithPaths(p, cfg); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadWithPaths(p)
+		if err != nil || loaded.Mounts[0].CacheMaxAge != test.value {
+			t.Fatal(loaded, err)
+		}
+		if age, err := EffectiveCacheMaxAge(loaded.Mounts[0]); err != nil || age != test.want {
+			t.Fatal(age, err)
+		}
+	}
+	if DefaultMount().CacheMaxAge != "168h" {
+		t.Fatal(DefaultMount())
+	}
+	for _, invalid := range []string{"-1h", "7d", "invalid", "999999999999999999h"} {
+		p := testPaths(t)
+		cfg := testConfig(p)
+		cfg.Mounts[0].CacheMaxAge = invalid
+		if err := Validate(cfg, p); err == nil {
+			t.Fatal("invalid age accepted", invalid)
+		}
+	}
+}

@@ -8,11 +8,14 @@ import (
 	"github.com/rclone/rclone/cmd/mountlib"
 	fsconfig "github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
+	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/vfs"
 	"github.com/rclone/rclone/vfs/vfscommon"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestNativeRuntimeCloseThenLateUnmountDoesNotReleaseVFSTwice(t *testing.T) {
@@ -42,6 +45,61 @@ func TestNativeRuntimeCloseThenLateUnmountDoesNotReleaseVFSTwice(t *testing.T) {
 	_ = n.Unmount()
 	if got := fmt.Sprint(v.Stats()["inUse"]); got != "0" {
 		t.Fatalf("VFS lifetime released twice: %s", got)
+	}
+}
+
+func TestNativeFinderVolumeOptions(t *testing.T) {
+	spec := mountSpec{Mount: model.Mount{Name: "团队资料", Mountpoint: "/Users/example/DriveBridge/account"}, Profile: model.Profile{Name: "工作飞书"}}
+	for _, tc := range []struct {
+		goos, engine string
+		local        bool
+	}{{"darwin", "cmount", true}, {"linux", "mount2", false}, {"windows", "cmount", false}, {"darwin", "mount2", false}} {
+		t.Run(tc.goos+"/"+tc.engine, func(t *testing.T) {
+			shared := []string{"original", "sentinel"}
+			base := mountlib.Options{ExtraOptions: shared[:1]}
+			options := nativeFinderOptions(spec, tc.goos, tc.engine, base)
+			if tc.local {
+				if options.VolumeName != "DriveBridge — 团队资料" || !reflect.DeepEqual(options.ExtraOptions, []string{"original", "local"}) {
+					t.Fatalf("Finder volume options: %#v", options)
+				}
+			} else if !reflect.DeepEqual(options, base) {
+				t.Fatalf("unrelated backend changed: %#v", options)
+			}
+			if shared[1] != "sentinel" || base.VolumeName != "" {
+				t.Fatal("shared defaults mutated")
+			}
+		})
+	}
+	account := spec
+	account.Remote.AccountRoot = true
+	account.Mount.Name = "账号盘-private-id"
+	options := nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{ExtraOptions: []string{"local"}})
+	if options.VolumeName != "DriveBridge — 工作飞书" || !reflect.DeepEqual(options.ExtraOptions, []string{"local"}) {
+		t.Fatalf("account label or duplicate local: %#v", options)
+	}
+	grouped := nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{VolumeName: "Custom label", ExtraOptions: []string{"nodev,local"}})
+	if grouped.VolumeName != "Custom label" || !reflect.DeepEqual(grouped.ExtraOptions, []string{"nodev,local"}) {
+		t.Fatal("explicit label or existing grouped local flag changed", grouped)
+	}
+	account.Mount.MacOSBackend = "fskit"
+	fskit := nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{ExtraOptions: []string{"backend=fskit"}, NoAppleXattr: true})
+	if fskit.VolumeName != "DriveBridge — 工作飞书" || !reflect.DeepEqual(fskit.ExtraOptions, []string{"backend=fskit"}) || !fskit.NoAppleXattr {
+		t.Fatal("Finder label switched FSKit backend or added unsupported kernel flags", fskit)
+	}
+	account.Mount.MacOSBackend = ""
+	account.Profile.Name = "项目,/dev:\\测试\n,allow_other"
+	options = nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{})
+	if strings.ContainsAny(options.VolumeName, ",:/\\\n") {
+		t.Fatalf("volume name can alter mount options: %q", options.VolumeName)
+	}
+	account.Profile.Name = strings.Repeat("长名称", 100)
+	options = nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{})
+	if len(options.VolumeName) > 255 || !utf8.ValidString(options.VolumeName) {
+		t.Fatal("invalid bounded Unicode volume name")
+	}
+	account.Profile.Name = ""
+	if got := nativeFinderOptions(account, "darwin", "cmount", mountlib.Options{}).VolumeName; got != "DriveBridge" {
+		t.Fatal(got)
 	}
 }
 

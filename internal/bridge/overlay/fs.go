@@ -68,17 +68,24 @@ type Dependencies struct {
 	Account      *AccountOptions
 }
 type Fs struct {
-	store         *store.Store
-	source        Source
-	scope         store.Scope
-	features      *fs.Features
-	patterns      []string
-	listMu        sync.Mutex
-	activityMu    sync.Mutex
-	active        map[model.EntryID]time.Time
-	listed        map[model.EntryID]bool
-	materialMu    sync.Mutex
-	materializing map[model.EntryID]*materialization
+	store             *store.Store
+	source            Source
+	scope             store.Scope
+	features          *fs.Features
+	patterns          []string
+	listMu            sync.Mutex
+	refreshMu         sync.Mutex
+	refreshing        map[model.EntryID]*directoryRefresh
+	directoryFailures map[model.EntryID]bool
+	warmMu            sync.Mutex
+	warmQueue         []model.EntryID
+	warmSeen          map[model.EntryID]bool
+	warmQueued        map[model.EntryID]bool
+	activityMu        sync.Mutex
+	active            map[model.EntryID]time.Time
+	listed            map[model.EntryID]bool
+	materialMu        sync.Mutex
+	materializing     map[model.EntryID]*materialization
 }
 type materialization struct {
 	done   chan struct{}
@@ -130,10 +137,20 @@ func New(d Dependencies) (fs.Fs, error) {
 			return nil, err
 		}
 	}
-	f := &Fs{store: d.Store, source: source, scope: sc, patterns: patterns, materializing: make(map[model.EntryID]*materialization), active: make(map[model.EntryID]time.Time), listed: make(map[model.EntryID]bool)}
+	f := &Fs{store: d.Store, source: source, scope: sc, patterns: patterns, refreshing: make(map[model.EntryID]*directoryRefresh), directoryFailures: make(map[model.EntryID]bool), warmSeen: make(map[model.EntryID]bool), warmQueued: make(map[model.EntryID]bool), materializing: make(map[model.EntryID]*materialization), active: make(map[model.EntryID]time.Time), listed: make(map[model.EntryID]bool)}
 	f.features = &fs.Features{CanHaveEmptyDirectories: true, Move: f.Move}
 	if _, err = d.Store.ObserveEntry(context.Background(), store.Observation{Remote: "", Kind: model.KindFolder, Token: sc.FolderToken}); err != nil {
 		return nil, err
+	}
+	if err := f.seedDirectoryCache(context.Background()); err != nil {
+		return nil, err
+	}
+	if _, ok := source.(accountCatalog); ok {
+		if err := f.RefreshCatalog(context.Background()); err != nil {
+			if root, readErr := f.store.EntryByRemote(context.Background(), ""); readErr == nil {
+				f.directoryFailures[root.ID] = true
+			}
+		}
 	}
 	return f, nil
 }
@@ -217,8 +234,8 @@ func (f *Fs) directory(ctx context.Context, p string) (model.Entry, error) {
 	return e, nil
 }
 
-// List acquires only complete metadata, validates it before binding any entries,
-// and merges persisted local names without inferring deletion from missing rows.
+// List returns durable metadata immediately once a directory has been indexed.
+// Only a cold directory acquires its own metadata; file bodies remain lazy.
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	if err := validPath(dir, true); err != nil {
 		return nil, err
@@ -227,35 +244,55 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	if err != nil {
 		return nil, err
 	}
-	f.listMu.Lock()
-	defer f.listMu.Unlock()
-	if catalog, ok := f.source.(accountCatalog); ok {
-		dirs, err := catalog.accountDirectories(ctx)
+	f.activityMu.Lock()
+	f.listed[parent.ID] = true
+	f.activityMu.Unlock()
+	metadata, err := f.store.Metadata(ctx, parent.ID)
+	if err != nil {
+		return nil, err
+	}
+	if metadata.DirectoryCachedAt.IsZero() {
+		known, err := f.store.Entries(ctx, dir)
 		if err != nil {
 			return nil, err
 		}
-		for _, d := range dirs {
-			if err := f.observeItems(ctx, d.remote, d.token, d.items); err != nil {
+		if len(known) > 0 {
+			return f.cachedDirectory(ctx, parent)
+		}
+		if err := f.refreshDirectory(ctx, dir, true); err != nil {
+			// Partial availability is preferable to hiding already durable rows.
+			entries, readErr := f.store.Entries(ctx, dir)
+			if readErr != nil {
+				return nil, readErr
+			}
+			latest, readErr := f.store.Metadata(ctx, parent.ID)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if len(entries) == 0 && latest.DirectoryCachedAt.IsZero() {
 				return nil, err
 			}
 		}
 	}
-	var items []larkcli.DriveItem
-	if parent.Token != "" {
-		items, err = f.source.List(ctx, parent.Token)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := f.observeItems(ctx, dir, parent.Token, items); err != nil {
-		return nil, err
-	}
-	entries, err := f.store.Entries(ctx, dir)
+	return f.cachedDirectory(ctx, parent)
+}
+
+func (f *Fs) cachedDirectory(ctx context.Context, parent model.Entry) (fs.DirEntries, error) {
+	entries, err := f.store.Entries(ctx, parent.Remote)
 	if err != nil {
 		return nil, err
 	}
 	var result fs.DirEntries
 	for _, e := range entries {
+		if account, ok := f.source.(*accountSource); ok && parent.Token == account.options.AccountToken && e.Token == account.options.AccountToken+"-manual" {
+			legacy, err := f.store.Entries(ctx, e.Remote)
+			if err != nil {
+				return nil, err
+			}
+			if len(legacy) == 0 {
+				continue
+			}
+		}
 		m, err := f.store.Metadata(ctx, e.ID)
 		if err != nil {
 			return nil, err
@@ -271,11 +308,9 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Remote() < result[j].Remote() })
-	f.activityMu.Lock()
-	f.listed[parent.ID] = true
-	f.activityMu.Unlock()
 	return result, nil
 }
+
 func (f *Fs) observeItems(ctx context.Context, dir, parentToken string, items []larkcli.DriveItem) error {
 	existing, err := f.store.Entries(ctx, dir)
 	if err != nil {

@@ -7,7 +7,7 @@
   const sources = {personal:'个人目录',shared_visible:'可见共享',shared_hidden:'隐藏共享',manual:'手动补录'};
   const states = {complete:'本次入口分页完成',partial:'部分完成，清单仍有遗漏',stale:'保留旧清单，等待更新',needs_login:'需要重新登录飞书',needs_browser:'应用登录组件暂不可用，请重试或安装最新完整应用包',needs_extension:'需要重新打开应用登录窗口',browser_disconnected:'需要重新登录，已有清单仍保留',unsupported:'暂不支持此来源',idle:'等待扫描',login_pending:'请在应用独立登录窗口中完成飞书登录',scanning:'正在扫描入口',unconfigured:'尚未完成应用登录',disabled:'自动发现未启用',unavailable:'暂时无法读取'};
   function stateLabel(state) { return states[state] || '等待发现目录'; }
-  function membershipLabels(entry) { return (entry.memberships || []).map(s => sources[s] || '其他来源').join('、') || '保留的目录入口'; }
+  function membershipLabels(entry) { const memberships = entry.memberships || []; const labels = memberships.map(s => sources[s] || '其他来源').join('、') || '保留的目录入口'; return memberships.some(s => ['personal','shared_visible','shared_hidden'].includes(s)) ? labels : labels + '（归属待核实，请重新扫描后重试）'; }
   function scanTime(view) { const raw = view?.last_scan || view?.snapshot?.scanned_at; const date = new Date(raw); return raw && date.getUTCFullYear() > 1 && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '尚未扫描'; }
   function loginResult(view) {
     const visible = !!view?.browser?.connected && view?.state === 'complete' && view?.snapshot?.complete === true;
@@ -62,7 +62,7 @@
       try {
         const result = await api(`/api/discovery/${encodeURIComponent(id)}/${kind}`,'POST',body);
         if (kind === 'search') { candidates.set(id,result); notice(id,result.length ? `找到 ${result.length} 个候选目录，请核对后添加。` : '没有找到匹配目录。可换一个名称，或粘贴有权访问的目录链接。'); }
-        else { views.set(id,result); if (kind === 'add') notice(id,'目录已核验并补录；同一资源会复用已有入口。'); else if (kind === 'login') notice(id,'已请求打开应用独立登录窗口。登录后将自动核验身份、发现目录并挂载；若等待较久，可点击“我已登录，重新验证”。',false,'login'); else if (kind === 'complete') notice(id,loginResult(result).visible ? '登录完成，请查看目录发现结果与账号盘挂载位置。' : '已处理登录确认，请查看账号状态与目录发现结果。',false,loginResult(result).visible ? 'login_complete' : ''); else notice(id,'已更新入口清单，请查看各来源状态。'); }
+        else { views.set(id,result); if (kind === 'add') notice(id,'目录已核验并补录，将按归属展示在个人或共享目录中；同一资源复用已有入口。'); else if (kind === 'login') notice(id,'已请求打开应用独立登录窗口。登录后将自动核验身份、发现目录并挂载；若等待较久，可点击“我已登录，重新验证”。',false,'login'); else if (kind === 'complete') notice(id,loginResult(result).visible ? '登录完成，请查看目录发现结果与账号盘挂载位置。' : '已处理登录确认，请查看账号状态与目录发现结果。',false,loginResult(result).visible ? 'login_complete' : ''); else notice(id,'已更新入口清单，请查看各来源状态。'); }
         if (kind === 'complete' || kind === 'add') await onChanged?.();
         return true;
       } catch (e) { notice(id,e.message,true); return false; }

@@ -11,8 +11,8 @@ import (
 	"github.com/rclone/rclone/lib/larkcli"
 )
 
-// AccountOptions projects a discovery catalog and the official personal root
-// into a single account namespace. AccountToken must match the store scope.
+// AccountOptions projects a local discovery catalog and the official personal
+// root into one account namespace. AccountToken must match the store scope.
 type AccountOptions struct {
 	AccountToken  string
 	PersonalToken string
@@ -37,8 +37,8 @@ type accountSource struct {
 	mu        sync.RWMutex
 	entries   map[string]discovery.Entry
 	protected map[string]bool
-	personal  []larkcli.DriveItem
 	groups    map[string][]larkcli.DriveItem
+	legacy    bool
 }
 
 func newAccountSource(base Source, options AccountOptions) (*accountSource, error) {
@@ -47,12 +47,15 @@ func newAccountSource(base Source, options AccountOptions) (*accountSource, erro
 	}
 	return &accountSource{Source: base, options: options, entries: map[string]discovery.Entry{}, protected: map[string]bool{}, groups: map[string][]larkcli.DriveItem{}}, nil
 }
-func (s *accountSource) top() []larkcli.DriveItem {
-	return []larkcli.DriveItem{
+func (s *accountSource) categoryItems(legacy bool) []larkcli.DriveItem {
+	items := []larkcli.DriveItem{
 		{Token: s.options.PersonalToken, Name: "个人目录", Type: "folder", ParentToken: s.options.AccountToken},
 		{Token: s.options.AccountToken + "-shared", Name: "共享目录", Type: "folder", ParentToken: s.options.AccountToken},
-		{Token: s.options.AccountToken + "-manual", Name: "手动添加", Type: "folder", ParentToken: s.options.AccountToken},
 	}
+	if legacy {
+		items = append(items, larkcli.DriveItem{Token: s.options.AccountToken + "-manual", Name: "手动添加", Type: "folder", ParentToken: s.options.AccountToken})
+	}
+	return items
 }
 func (s *accountSource) accountSynthetic(token string) bool {
 	return token == s.options.AccountToken || token == s.options.AccountToken+"-shared" || token == s.options.AccountToken+"-manual"
@@ -63,16 +66,33 @@ func (s *accountSource) accountProtected(e model.Entry) bool {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Persisted category entrances remain protected even before the first refresh.
+	if entry, ok := s.entries[e.Token]; ok && !accountEntrance(entry) && parentPath(e.Remote) != "手动添加" {
+		return false
+	}
+	// Old canonical entrances are never silently rewritten while VFS cache or
+	// accepted edits may still reference them. They retain their original identity.
 	return s.protected[e.Token] || (e.Token != "" && e.Kind == model.KindFolder && (parentPath(e.Remote) == "个人目录" || parentPath(e.Remote) == "共享目录" || parentPath(e.Remote) == "手动添加"))
 }
 func (s *accountSource) List(ctx context.Context, token string) ([]larkcli.DriveItem, error) {
-	if token == s.options.AccountToken {
-		return s.top(), nil
+	if token == s.options.PersonalToken {
+		// This is the only route that reads official root metadata. It is invoked
+		// for this cold/explicitly refreshed folder, never for another directory.
+		items, err := s.Source.List(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		items = append([]larkcli.DriveItem(nil), items...)
+		for i := range items {
+			if s.accountSynthetic(items[i].Token) || items[i].Token == s.options.PersonalToken {
+				return nil, errors.New("invalid personal root metadata")
+			}
+			items[i].ParentToken = s.options.PersonalToken
+		}
+		return items, nil
 	}
 	s.mu.RLock()
-	if token == s.options.PersonalToken {
-		items := append([]larkcli.DriveItem(nil), s.personal...)
+	if token == s.options.AccountToken {
+		items := s.categoryItems(s.legacy)
 		s.mu.RUnlock()
 		return items, nil
 	}
@@ -84,14 +104,19 @@ func (s *accountSource) List(ctx context.Context, token string) ([]larkcli.Drive
 	s.mu.RUnlock()
 	return s.Source.List(ctx, token)
 }
-
 func accountRank(e discovery.Entry) int {
+	switch e.Placement {
+	case "personal":
+		return 0
+	case "shared":
+		return 1
+	}
 	rank := 4
-	for _, m := range e.Memberships {
-		switch m {
+	for _, membership := range e.Memberships {
+		switch membership {
 		case discovery.Personal:
 			return 0
-		case discovery.SharedVisible, discovery.SharedHidden:
+		case discovery.SharedVisible, discovery.SharedHidden, "shared":
 			if rank > 1 {
 				rank = 1
 			}
@@ -106,48 +131,41 @@ func accountRank(e discovery.Entry) int {
 	}
 	return rank
 }
+func accountEntrance(e discovery.Entry) bool {
+	return e.CanonicalRootToken == "" || e.CanonicalRootToken == e.Token
+}
 
-// Refresh performs metadata I/O before any store observation. All catalog roots
-// are bound before ordinary traversal, so nested aliases cannot claim a token.
-// Missing rows and failed refreshes never remove an existing durable mapping.
+// accountDirectories only reads the local snapshot. Projection never depends on
+// official personal-root/network availability and never downloads file bodies.
 func (s *accountSource) accountDirectories(ctx context.Context) ([]accountDirectory, error) {
 	snapshot, err := s.options.ReadSnapshot(ctx)
-	if err != nil {
-		return nil, err
-	}
-	personal, err := s.Source.List(ctx, "")
-	if err != nil {
-		return nil, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entries := make(map[string]discovery.Entry, len(s.entries)+len(snapshot.Entries))
-	for token, e := range s.entries {
-		entries[token] = e
-	}
-	seen := map[string]bool{}
-	for _, e := range snapshot.Entries {
-		if e.Token == "" || e.Name == "" || seen[e.Token] || accountRank(e) == 4 || s.accountSynthetic(e.Token) || e.Token == s.options.PersonalToken {
-			return nil, errors.New("invalid account catalog metadata")
+	if err == nil {
+		entries := make(map[string]discovery.Entry, len(s.entries)+len(snapshot.Entries))
+		for token, e := range s.entries {
+			entries[token] = e
 		}
-		seen[e.Token] = true
-		entries[e.Token] = e
-	}
-	personal = append([]larkcli.DriveItem(nil), personal...)
-	personalTokens := map[string]bool{}
-	for i := range personal {
-		if personal[i].Token == "" || personal[i].Name == "" || personalTokens[personal[i].Token] || s.accountSynthetic(personal[i].Token) || personal[i].Token == s.options.PersonalToken {
-			return nil, errors.New("invalid personal root metadata")
+		seen := map[string]bool{}
+		for _, e := range snapshot.Entries {
+			if e.Token == "" || e.Name == "" || seen[e.Token] || accountRank(e) == 4 || s.accountSynthetic(e.Token) || e.Token == s.options.PersonalToken {
+				err = errors.New("invalid account catalog metadata")
+				break
+			}
+			seen[e.Token] = true
+			entries[e.Token] = e
 		}
-		personalTokens[personal[i].Token] = true
-		personal[i].ParentToken = s.options.PersonalToken
+		if err == nil {
+			s.entries = entries
+		}
 	}
 	groups := map[string][]larkcli.DriveItem{}
-	for token, e := range entries {
-		s.protected[token] = true
-		if personalTokens[token] {
+	protected := map[string]bool{}
+	for token, e := range s.entries {
+		if !accountEntrance(e) {
 			continue
 		}
+		protected[token] = true
 		parent := s.options.PersonalToken
 		switch accountRank(e) {
 		case 1:
@@ -155,21 +173,19 @@ func (s *accountSource) accountDirectories(ctx context.Context) ([]accountDirect
 		case 2:
 			parent = s.options.AccountToken + "-manual"
 		}
-		item := larkcli.DriveItem{Token: token, Name: e.Name, Type: "folder", ParentToken: parent}
-		if parent == s.options.PersonalToken {
-			personal = append(personal, item)
-		} else {
-			groups[parent] = append(groups[parent], item)
-		}
+		groups[parent] = append(groups[parent], larkcli.DriveItem{Token: token, Name: e.Name, Type: "folder", ParentToken: parent})
 	}
 	for token := range groups {
 		sort.Slice(groups[token], func(i, j int) bool { return groups[token][i].Token < groups[token][j].Token })
 	}
-	s.entries, s.personal, s.groups = entries, personal, groups
-	return []accountDirectory{
-		{remote: "", token: s.options.AccountToken, items: s.top()},
-		{remote: "个人目录", token: s.options.PersonalToken, items: personal},
+	s.groups, s.protected, s.legacy = groups, protected, len(groups[s.options.AccountToken+"-manual"]) > 0
+	dirs := []accountDirectory{
+		{remote: "", token: s.options.AccountToken, items: s.categoryItems(s.legacy)},
+		{remote: "个人目录", token: s.options.PersonalToken, items: groups[s.options.PersonalToken]},
 		{remote: "共享目录", token: s.options.AccountToken + "-shared", items: groups[s.options.AccountToken+"-shared"]},
-		{remote: "手动添加", token: s.options.AccountToken + "-manual", items: groups[s.options.AccountToken+"-manual"]},
-	}, nil
+	}
+	if s.legacy {
+		dirs = append(dirs, accountDirectory{remote: "手动添加", token: s.options.AccountToken + "-manual", items: groups[s.options.AccountToken+"-manual"]})
+	}
+	return dirs, err
 }

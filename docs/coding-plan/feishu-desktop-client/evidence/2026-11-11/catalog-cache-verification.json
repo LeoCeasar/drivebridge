@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-11",
+  "base_head": "35f3cb67e7d92d094efc86a82700980994f5aad9",
+  "source_state": "Verified feature candidate based on base_head; exact installed binary bound by SHA-256 below. Development payload, not a signed release.",
+  "evidence_basis": {
+    "execution": "Root agent directly observed tool exits, actual kernel probes, installed worker status and Computer Use Finder/TextEdit results.",
+    "documentation_task": "Read source and assembled this sanitized record; no tests, mounts, payload upgrades or computer operations rerun by the documentation task.",
+    "contains_account_ids_tokens_credentials": false
+  },
+  "defaults": {
+    "body_max_age_hours": 168,
+    "body_max_age_days": 7,
+    "combined_data_soft_budget_bytes": 5368709120,
+    "combined_data_soft_budget_gib": 5,
+    "max_age_zero": "capacity-only cleaning",
+    "metadata_index_default_interval_seconds": 30,
+    "body_sweep_interval_seconds": 300,
+    "index_and_sweep_independent_workers": true,
+    "prepared_blob_grace_hours": 24
+  },
+  "body_eviction": {
+    "eligibility": "Reconstructible, safely synced clean bodies only; retain identity, metadata and placeholders.",
+    "protected": [
+      "open readers/writers",
+      "dirty VFS cache",
+      "pending uploads and unconfirmed durable work",
+      "conflicts and drafts/copies",
+      "recovery records",
+      "active Blob leases",
+      "shared protected references",
+      "prepared Blobs within 24-hour grace"
+    ],
+    "selection": "Age expiry or combined Store/VFS data above soft budget, ordered by actual body access time then remote path.",
+    "access_clock": "Actual Open, including VFS cache hits; metadata stat/readdir do not count as use.",
+    "cas": [
+      "generation",
+      "candidate access timestamp",
+      "current durable graph protection"
+    ],
+    "busy_policy": "Skip busy path and continue; never force protected content deletion.",
+    "zero_byte_shared_candidates": "Still attempted; final reference release can reclaim shared content.",
+    "measurement": "Store GC RetainedBytes plus immediate VFS fetched-data-byte recalculation; excludes filesystem allocation/metadata overhead.",
+    "quota_is_soft": true
+  },
+  "kernel_probe": {
+    "status": "passed_reported_probe",
+    "backend": "macFUSE kernel",
+    "scope": "Unknown-size managed placeholder on a real local mount; not final installed-payload acceptance.",
+    "before_fix": {
+      "cold_read_bytes": 0,
+      "mmap_status": "failed"
+    },
+    "after_fix": {
+      "normal_io": true,
+      "managed_open_purge_attr": true,
+      "managed_open_purge_ubc": true,
+      "global_direct_io_enabled": false,
+      "read_bytes": 5174,
+      "mmap_bytes": 5174,
+      "read_mmap_contents_equal": true
+    },
+    "metadata_listing": {
+      "materializes_body": false
+    },
+    "background_catalog_update": {
+      "new_name_visible_via_os_readdir": true
+    },
+    "all_editors_and_formats_verified": false
+  },
+  "finder_locations": {
+    "prior_cua_synthetic_probe": "observed under Locations",
+    "existing_user_home_mountpoint_retained": true,
+    "finder_preferences_modified": true,
+    "system_volumes_directory_created": false,
+    "formal_payload_finder_acceptance": {
+      "status": "passed_reported",
+      "observation": "CUA window interface restored; friendly account volume observed under Finder Locations, and a personal child directory listed one Markdown file.",
+      "screenshot": "docs/manual/assets/61-account-volume-locations.png",
+      "scope": "Formal installed payload Finder location and directory-listing observation; not File Provider/cloud-badge acceptance."
+    },
+    "file_provider_or_cloud_badges_implemented": false,
+    "finder_preference_detail": "Previously hidden Finder sidebar was shown through View → Show Sidebar for the user-requested Locations verification; no disk visibility or security preferences changed."
+  },
+  "tests": [
+    {
+      "suite": "Complete bridge/backend/VFS tests",
+      "status": "passed_reported",
+      "duration_seconds": null
+    },
+    {
+      "suite": "Upstream cmd/cmount TestMount",
+      "status": "failed_reported",
+      "failure": "EPERM during a temporary non-local synthetic mount",
+      "included_in_cmount_unit_pass": false,
+      "failure_resolved": false
+    },
+    {
+      "suite": "cmd/cmount units excluding upstream TestMount",
+      "command": "go test -tags cmount ./cmd/cmount -skip '^TestMount$'",
+      "status": "passed_reported",
+      "duration_seconds": 0.853
+    },
+    {
+      "suite": "cgofuse explicitly tagged compatibility bridge tests",
+      "working_directory": "lib/cgofuse",
+      "command": "go test -tags=cgofuse_bridge_test ./fuse -run '^(TestFileInfoBridge|TestHostNotifyOptionalMac)'",
+      "status": "passed_reported",
+      "duration_seconds": 0.689,
+      "performs_real_mount": false
+    },
+    {
+      "suite": "Packaging fixtures",
+      "status": "passed_reported",
+      "test_count": 39,
+      "does_not_prove_signed_or_notarized_release": true
+    }
+  ],
+  "formal_payload_upgrade": {
+    "status": "passed_reported",
+    "protected_data_files_checked": 171,
+    "protected_data_file_hash_changes": 0,
+    "installed_binary_matches_candidate": true,
+    "previously_active_mounts_running": 2,
+    "installed_payload_identifier": null,
+    "identifier_note": "Exact candidate identifier not supplied in the parent report; not inferred from the base source head.",
+    "installed_binary_sha256": "7d16f1d660221997bde21604f47574cd71d0ab9b237fe27e0e3ebcd0dbe45ab3"
+  },
+  "not_verified": [
+    "Windows real-machine behavior",
+    "Linux real-machine behavior",
+    "Production signing and notarization",
+    "Universal inventory of all resources reachable through arbitrary shared links",
+    "Cold-open behavior for every editor and file format",
+    "Complete File Provider lifecycle, cloud badges and offline-after-exit behavior"
+  ],
+  "references": {
+    "macfuse_mount_options": "https://github.com/macfuse/macfuse/wiki/Mount-Options",
+    "macfuse_file_info_flags": "https://github.com/macfuse/library/blob/master/include/fuse_common.h",
+    "google_file_provider_comparison": "https://support.google.com/drive/answer/12178485?hl=en"
+  },
+  "formal_payload_directory_samples": {
+    "scope": "Current authenticated account sample after upgrade; no universal inventory claim.",
+    "root_groups": [
+      "personal",
+      "shared"
+    ],
+    "personal_root_items": 7,
+    "shared_entrances": 9,
+    "personal_child_samples": [
+      {
+        "items": 1,
+        "first_listing_seconds": 0.001,
+        "repeat_listing_seconds": 0
+      },
+      {
+        "items": 0,
+        "first_listing_seconds": 0,
+        "repeat_listing_seconds": 0
+      },
+      {
+        "items": 5,
+        "first_listing_seconds": 0.337,
+        "repeat_listing_seconds": 0
+      }
+    ]
+  },
+  "formal_payload_upload_probe": {
+    "status": "passed_reported",
+    "resource": "Synthetic Markdown in the authorized real test directory",
+    "remote_path": "test/drivebridge-cache-acceptance-20261111-161719.md",
+    "markdown_bytes": 110,
+    "local_save_readback_equal": true,
+    "mount_writeback_seconds": 120,
+    "writeback_note": "Existing validation mount setting; not the global product default.",
+    "automatically_uploaded_after_configured_delay": true,
+    "engine_readback_verified": true,
+    "confirmed_at": "2026-11-11T08:20:45.916925Z",
+    "validation_mount_status": {
+      "cloud_state": "synced",
+      "queued": 0,
+      "inflight": 0,
+      "conflicts": 0
+    },
+    "status_count_scope": "Validation mount only; not aggregate counts across historical mounts.",
+    "independent_web_comparison_performed": false,
+    "local_editor": "Computer Use opened the synced synthetic Markdown in TextEdit and observed complete normalized Markdown; screenshot assets/62-synced-test-markdown-open.png.",
+    "markdown_projection": "New MD is projected to native Feishu document; readback may normalize Markdown escapes, not byte-preserving for MD projection."
+  },
+  "cross_builds": [
+    {
+      "target": "Windows cmount, no CGO",
+      "status": "passed_reported",
+      "exit_code": 0,
+      "real_machine_tested": false
+    },
+    {
+      "target": "Linux amd64 CLI",
+      "status": "passed_reported",
+      "exit_code": 0,
+      "real_machine_tested": false
+    }
+  ],
+  "baseline_comparison": {
+    "base_head": "35f3cb67e",
+    "test": "CGO_CFLAGS=-I/usr/local/include/fuse go test -tags cmount ./cmd/cmount -run ^TestMount$ -count=1",
+    "exit_code": 1,
+    "same_operation_not_permitted": true,
+    "scope": "Pristine main baseline reproduces the same upstream non-local temporary-volume permission failure; no claim the failing test passed."
+  }
+}

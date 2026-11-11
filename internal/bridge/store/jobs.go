@@ -526,6 +526,9 @@ func (s *Store) OfferRemote(ctx context.Context, id model.EntryID, generation ui
 		if er = s.saveSnapshot(tx, actual); er != nil {
 			return er
 		}
+		if er = s.checkBlob(visible); er != nil {
+			return er
+		}
 		c = model.PublishCandidate{EntryID: id, ExpectedGeneration: generation, ExpectedRemote: e.RemoteCheckpoint, NewRemote: actual.ID, Visible: visible}
 		return saveCandidate(tx, c, "")
 	})

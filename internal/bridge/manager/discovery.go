@@ -258,7 +258,20 @@ func (m *Manager) AddDiscoveryFolder(ctx context.Context, id model.ProfileID, in
 		snapshot.Binding = settings.Binding
 		settings.State = "idle"
 	}
-	snapshot, err = discovery.AddManual(snapshot, discovery.Entry{Token: folder.Token, Name: folder.Name})
+	classificationCtx, cancelClassification := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelClassification()
+	placement, classifyErr := classifyManualFolder(classificationCtx, officialClassificationSource{runner: runner, drive: larkcli.NewDrive(runner, "")}, snapshot, folder)
+	if classifyErr != nil {
+		view, _ := m.discoveryView(ctx, profile)
+		return view, classifyErr
+	}
+	if placement.CanonicalRootToken != folder.Token {
+		snapshot, err = discovery.AddVerifiedManual(snapshot, discovery.Entry{Token: placement.CanonicalRootToken, Name: placement.RootName, Placement: placement.Placement, CanonicalRootToken: placement.CanonicalRootToken})
+		if err != nil {
+			return DiscoveryView{}, err
+		}
+	}
+	snapshot, err = discovery.AddVerifiedManual(snapshot, discovery.Entry{Token: folder.Token, Name: folder.Name, Placement: placement.Placement, CanonicalRootToken: placement.CanonicalRootToken, RelativePath: placement.RelativePath})
 	if err != nil {
 		return DiscoveryView{}, err
 	}

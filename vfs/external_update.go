@@ -17,6 +17,12 @@ import (
 var ErrExternalUpdateBusy = errors.New("external update busy")
 var ErrManagedSyncDisabled = errors.New("managed sync disabled")
 
+// ManagedAccessTracker records actual opens, including reads satisfied by the VFS
+// cache. Attribute queries do not count as body use.
+type ManagedAccessTracker interface {
+	TouchManagedAccess(context.Context, string) error
+}
+
 // ManagedMaterializer binds an unknown-size object to one complete local snapshot.
 type ManagedMaterializer interface {
 	MaterializeManaged(context.Context, string) (fs.Object, error)
@@ -29,6 +35,7 @@ type ManagedNamespaceReplayer interface {
 }
 
 type managedState struct {
+	nativeNotify func(string)
 	paused       int
 	mu           sync.Mutex
 	handles      map[*admission]struct{}
@@ -348,4 +355,31 @@ func (v *VFS) ManagedCachePaths() (dataRoot, metaRoot string) {
 		return
 	}
 	return v.cache.ManagedPaths()
+}
+
+// SetManagedNativeNotifier installs the mount adapter's native invalidation hook.
+// The owner drains managed background work before tearing down the native mount.
+func (v *VFS) SetManagedNativeNotifier(notify func(string)) {
+	if m := v.managed.Load(); m != nil {
+		m.mu.Lock()
+		m.nativeNotify = notify
+		m.mu.Unlock()
+	}
+}
+
+// NotifyManagedDirectoryChanged expires a locally refreshed directory and informs
+// native consumers. Call only outside filesystem callbacks and store/VFS locks.
+func (v *VFS) NotifyManagedDirectoryChanged(remote string) {
+	m := v.managed.Load()
+	if m == nil {
+		return
+	}
+	remote = managedPath(remote)
+	v.root.ForgetPath(path.Join(remote, ".drivebridge-refresh"), fs.EntryObject)
+	m.mu.Lock()
+	notify := m.nativeNotify
+	m.mu.Unlock()
+	if notify != nil {
+		notify("/" + remote)
+	}
 }

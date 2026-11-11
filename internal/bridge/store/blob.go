@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
@@ -96,12 +97,31 @@ func (s *Store) PutBlob(ctx context.Context, src io.Reader) (model.BlobID, error
 		return "", err
 	}
 	id := model.BlobID(hex.EncodeToString(hash.Sum(nil)))
+	// Final publication and its fresh preparation timestamp must exclude GC.
+	// Hashing/copying remains outside the Store lock, even for large files.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.bound {
+		return "", ErrUnbound
+	}
+	if s.closed {
+		return "", errors.New("store closed")
+	}
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
 	target := s.blobPath(id)
 	// Rewriting an equal immutable blob is safe and re-establishes durability after an earlier sync failure.
 	if err = platform.CheckNoSymlinks(target); err != nil {
 		return "", err
 	}
 	if err = s.io.Rename(name, target); err != nil {
+		return "", err
+	}
+	// Equal content can reuse an old hash while its accepting transaction is
+	// still waiting. Refresh its grace before letting any collector observe it.
+	now := time.Now().UTC()
+	if err = os.Chtimes(target, now, now); err != nil {
 		return "", err
 	}
 	if err = s.io.SyncDir(filepath.Dir(target)); err != nil {

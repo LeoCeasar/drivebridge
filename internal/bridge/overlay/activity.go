@@ -45,31 +45,3 @@ func (f *Fs) ActiveEntries() []model.EntryID {
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
 }
-
-// RefreshDirectories refreshes only directories successfully listed before.
-func (f *Fs) RefreshDirectories(ctx context.Context) error {
-	f.activityMu.Lock()
-	var ids []model.EntryID
-	for id := range f.listed {
-		ids = append(ids, id)
-	}
-	f.activityMu.Unlock()
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	for _, id := range ids {
-		e, err := f.store.Entry(ctx, id)
-		if err != nil {
-			return err
-		}
-		m, err := f.store.Metadata(ctx, id)
-		if err != nil {
-			return err
-		}
-		if m.Tombstone {
-			continue
-		}
-		if _, err = f.List(ctx, e.Remote); err != nil {
-			return err
-		}
-	}
-	return nil
-}

@@ -1,0 +1,11 @@
+Cgofuse source: https://github.com/winfsp/cgofuse
+Pinned module: v1.6.1-0.20260126094232-f2c4fccdb286
+Pinned upstream commit: f2c4fccdb286
+Copyright (c) 2017-2022 Bill Zissimopoulos. Distributed under the MIT License;
+see LICENSE.txt and the original copyright notices in each source file.
+
+DriveBridge local changes: expose macFUSE purge_attr/purge_ubc in FileInfo_t and
+forward them through open/create and the C bridge, with non-Apple no-op behavior.
+The macOS Notify bridge optionally resolves fuse_invalidate_path, treating
+success and an uncached path as handled while preserving older-library loading.
+No macFUSE implementation source is included in this MIT-licensed module.

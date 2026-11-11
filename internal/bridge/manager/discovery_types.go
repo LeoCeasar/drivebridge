@@ -31,9 +31,11 @@ type BrowserBridgeView struct {
 }
 
 type DiscoveryCandidate struct {
-	Token string `json:"token"`
-	Name  string `json:"name"`
-	URL   string `json:"url,omitempty"`
+	Token    string `json:"token"`
+	Name     string `json:"name"`
+	URL      string `json:"url,omitempty"`
+	nodeID   string
+	parentID string
 }
 
 type discoverySession interface {

@@ -171,3 +171,36 @@ func TestMountAddPersistsMacOSBackend(t *testing.T) {
 		})
 	}
 }
+
+func TestMountAddPersistsCacheRetentionAndRejectsInvalidAge(t *testing.T) {
+	for _, age := range []string{"168h", "720h", "0h", "-1h"} {
+		t.Run(age, func(t *testing.T) {
+			home, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
+				t.Setenv(key, filepath.Join(home, key))
+			}
+			file := configFixture(t)
+			root := NewCommand(CommandOptions{Exit: func(int) {}})
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs([]string{"--bridge-config", file, "mount", "add", "cache-policy", "--remote", "team", "--mountpoint", filepath.Join(filepath.Dir(filepath.Dir(file)), "cache-mount"), "--cache-max-age", age, "--cache-size", "6G", "--json"})
+			err = root.Execute()
+			cfg, loadErr := config.Load(file)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if age == "-1h" {
+				if err == nil || len(cfg.Mounts) != 1 {
+					t.Fatal(err, cfg.Mounts)
+				}
+				return
+			}
+			if err != nil || len(cfg.Mounts) != 2 || cfg.Mounts[1].CacheMaxAge != age || cfg.Mounts[1].CacheMaxBytes != 6*1024*1024*1024 {
+				t.Fatal(err, cfg.Mounts)
+			}
+		})
+	}
+}

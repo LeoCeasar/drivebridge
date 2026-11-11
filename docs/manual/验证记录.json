@@ -2,10 +2,10 @@
   "title": "DriveBridge 操作手册与实机验证",
   "date": "2026-11-10 ～ 2026-11-11",
   "platform": "macOS 26.5.1 / Apple Silicon",
-  "version": "0.1.0 开发版；macOS 14+ 原生登录与账号盘正式接入已实测",
+  "version": "0.1.0 开发版；macOS 应用内登录、持久目录清单与占位文件按需读取",
   "source_head": "dd5819985",
   "overall": "partial",
-  "summary": "本机 macOS 开发载荷已接入应用内登录；登录后自动核验身份并扫描个人、可见共享、隐藏共享入口，12个去重目录入口自动挂载。原生完成页替代云盘空白/骨架；隐藏后新读取、Manager/helper整体重启复用通过，162个受保护同步文件升级前后不变。Finder显示个人目录、共享目录、手动添加。Windows/Linux原生登录、双真实账号隔离及正式签名公证仍未完成。",
+  "summary": "本机新版已安装并运行：Finder“位置”显示友好账号盘，个人和共享两个分组可浏览，个人子目录可打开；目录元数据持久保存，正文按实际读取下载。默认7天未使用或超过5 GiB软容量时释放已安全同步正文，保留文件名。真实kernel冷读取和mmap各5174字节完整；test目录新增Markdown自动写回并回读确认。171个受保护文件升级前后不变。托盘视觉/真实登录自启动、Windows/Linux实机和签名公证仍未完成。",
   "steps": [
     {
       "id": "install",
@@ -58,7 +58,7 @@
       "title": "应用内登录与后台目录发现",
       "status": "verified",
       "body": "macOS 14+ 正式应用使用自有 WKWebView helper，不安装浏览器扩展。",
-      "observed": "已安装开发载荷使用正式 Manager 与 WKWebView helper 自动完成账号核验和12个目录入口扫描，账号盘运行、队列0、冲突0；关闭结果窗口后新扫描和完整 Manager/helper 重启复用通过。Finder根目录与共享分组已实测。此项不等于Windows/Linux或正式签名发布验收。",
+      "observed": "已安装开发载荷使用正式 Manager 与 WKWebView helper 自动完成账号核验和12个目录入口扫描，账号盘运行、队列0、冲突0；关闭结果窗口后新扫描和完整 Manager/helper 重启复用通过。Finder根目录与共享分组已实测。此项不等于Windows/Linux或正式签名发布验收。本轮目录缓存升级后，正式Finder根只显示个人与共享两个分组；补录按核验归属放置。",
       "screenshots": [
         {
           "src": "assets/60-owned-login-complete.png",
@@ -66,7 +66,7 @@
         },
         {
           "src": "assets/59-owned-account-disk.png",
-          "caption": "真实 Finder 账号盘：个人目录、共享目录、手动添加三个分组。"
+          "caption": "历史版本账号盘的三个分组；本轮已改为个人与共享两个分组，见下方新截图。"
         }
       ]
     },
@@ -75,7 +75,7 @@
       "title": "挂载共享文件夹",
       "status": "verified",
       "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
-      "observed": "再次重启后，kmutil确认io.macfuse.filesystems.macfuse.25（5.5.0）已加载。专用Kernel验收挂载后台启动成功，Finder能列出真实卷内的sync-check.md、conflict-B.md与sync-check.txt。旧FSKit挂载保持停用，未清理其待处理数据。此处使用指定共享目录，不代表自动发现全部共享目录。",
+      "observed": "再次重启后，kmutil确认io.macfuse.filesystems.macfuse.25（5.5.0）已加载。专用Kernel验收挂载后台启动成功，Finder能列出真实卷内的sync-check.md、conflict-B.md与sync-check.txt。旧FSKit挂载保持停用，未清理其待处理数据。此处使用指定共享目录，不代表自动发现全部共享目录。本轮升级后，真实账号盘以“DriveBridge — 本机验收账号”出现在Finder“位置”；个人根7项、共享9入口，3个个人子目录均可读取。",
       "checks": [
         "内核驱动实际加载，真实卷可读取",
         "专用挂载路径：~/Shared/DriveBridge-Kernel-20261111",
@@ -85,6 +85,28 @@
         {
           "src": "assets/42-kernel-mount-files.png",
           "caption": "kernel真实虚拟卷中的三份合成测试文件。"
+        },
+        {
+          "src": "assets/61-account-volume-locations.png",
+          "caption": "本轮真实Finder：“位置”中的友好账号盘，根目录只显示个人与共享两个分组。旁边的Placeholder Check为当时的合成测试卷，测试后已卸载。"
+        }
+      ]
+    },
+    {
+      "id": "placeholder-cache",
+      "title": "浏览占位文件与自动释放正文",
+      "status": "verified",
+      "body": "目录元数据持久保留，首次后台索引后直接展示已有文件名；实际读取时获取正文。",
+      "observed": "真实macFUSE kernel合成卷：未知长度占位首次普通读取与mmap均获得完整5174字节，元数据列举不获取正文，后台新增名称可由操作系统重新列出。Store+真实VFS联调覆盖淘汰后重新下载、实际Open更新LRU、打开和dirty缓存保护、访问时间CAS；7天与软容量通过可控时间测试，未等待7个真实日历日。管理页显示目录索引进度及7天/5G默认设置。",
+      "checks": [
+        "默认7天未使用，或超过每挂载5 GiB软容量时按最久未用顺序释放已同步正文",
+        "文件名保留；正在使用、未上传、冲突和恢复数据不清理；24小时新Blob保护期可能暂时超限",
+        "Finder预览属于实际读取，可能下载正文；未实现File Provider逐文件云朵徽标"
+      ],
+      "screenshots": [
+        {
+          "src": "assets/61-account-volume-locations.png",
+          "caption": "文件名和两类入口作为本地虚拟卷展示；正文缓存与目录清单分开管理。"
         }
       ]
     },
@@ -93,7 +115,7 @@
       "title": "在 test 目录上传与同步",
       "status": "verified",
       "body": "在独立 test 目录创建本轮专用 Markdown 和普通文件，等待上传，再到飞书核对名称、正文、大小。",
-      "observed": "Finder 将 sync-check.md（120字节）和 sync-check.txt（60字节）复制到独立 test 子目录。后台自动创建飞书原生文档 sync-check 与普通文件 sync-check.txt；分别通过飞书网页回读完整正文。最终 running=true、local_saved=true、cloud_state=synced，vfs_pending/queued/inflight/conflicts 均为 0。本节仅验证两个根目录文件，子目录上传尚未实测。",
+      "observed": "Finder 将 sync-check.md（120字节）和 sync-check.txt（60字节）复制到独立 test 子目录。后台自动创建飞书原生文档 sync-check 与普通文件 sync-check.txt；分别通过飞书网页回读完整正文。最终 running=true、local_saved=true、cloud_state=synced，vfs_pending/queued/inflight/conflicts 均为 0。本节仅验证两个根目录文件，子目录上传尚未实测。本轮在test子目录新建110字节合成MD，自动上传并经同步引擎回读确认后恢复synced/队列0/在途0/冲突0；TextEdit打开完整正文。MD投影为飞书原生文档，回读可能规范化Markdown转义，不承诺字节不变；本轮未另作网页比对。",
       "checks": [
         "源 MD 120 字节，上传后采用受支持的飞书文档投影格式",
         "源 TXT 60 字节，后台验证云端内容哈希一致",
@@ -107,6 +129,10 @@
         {
           "src": "assets/31-txt-cloud-readback.png",
           "caption": "普通 TXT 自动上传后的云端原文和 local-1 标记。"
+        },
+        {
+          "src": "assets/62-synced-test-markdown-open.png",
+          "caption": "本轮TextEdit打开已同步的合成Markdown，正文完整；截图仅证明本地打开，云端确认来自后台状态及回读核验。"
         }
       ]
     },
@@ -464,7 +490,218 @@
         "go_harness_race_test": "passed; Darwin linker LC_DYSYMTAB warning, exit 0"
       }
     },
-    "owned_login_formal": "macOS development payload verified; see separate formal checks and limits"
+    "owned_login_formal": "macOS development payload verified; see separate formal checks and limits",
+    "catalog_cache": {
+      "schema_version": 1,
+      "date": "2026-11-11",
+      "base_head": "35f3cb67e7d92d094efc86a82700980994f5aad9",
+      "source_state": "Verified feature candidate based on base_head; exact installed binary bound by SHA-256 below. Development payload, not a signed release.",
+      "evidence_basis": {
+        "execution": "Root agent directly observed tool exits, actual kernel probes, installed worker status and Computer Use Finder/TextEdit results.",
+        "documentation_task": "Read source and assembled this sanitized record; no tests, mounts, payload upgrades or computer operations rerun by the documentation task.",
+        "contains_account_ids_tokens_credentials": false
+      },
+      "defaults": {
+        "body_max_age_hours": 168,
+        "body_max_age_days": 7,
+        "combined_data_soft_budget_bytes": 5368709120,
+        "combined_data_soft_budget_gib": 5,
+        "max_age_zero": "capacity-only cleaning",
+        "metadata_index_default_interval_seconds": 30,
+        "body_sweep_interval_seconds": 300,
+        "index_and_sweep_independent_workers": true,
+        "prepared_blob_grace_hours": 24
+      },
+      "body_eviction": {
+        "eligibility": "Reconstructible, safely synced clean bodies only; retain identity, metadata and placeholders.",
+        "protected": [
+          "open readers/writers",
+          "dirty VFS cache",
+          "pending uploads and unconfirmed durable work",
+          "conflicts and drafts/copies",
+          "recovery records",
+          "active Blob leases",
+          "shared protected references",
+          "prepared Blobs within 24-hour grace"
+        ],
+        "selection": "Age expiry or combined Store/VFS data above soft budget, ordered by actual body access time then remote path.",
+        "access_clock": "Actual Open, including VFS cache hits; metadata stat/readdir do not count as use.",
+        "cas": [
+          "generation",
+          "candidate access timestamp",
+          "current durable graph protection"
+        ],
+        "busy_policy": "Skip busy path and continue; never force protected content deletion.",
+        "zero_byte_shared_candidates": "Still attempted; final reference release can reclaim shared content.",
+        "measurement": "Store GC RetainedBytes plus immediate VFS fetched-data-byte recalculation; excludes filesystem allocation/metadata overhead.",
+        "quota_is_soft": true
+      },
+      "kernel_probe": {
+        "status": "passed_reported_probe",
+        "backend": "macFUSE kernel",
+        "scope": "Unknown-size managed placeholder on a real local mount; not final installed-payload acceptance.",
+        "before_fix": {
+          "cold_read_bytes": 0,
+          "mmap_status": "failed"
+        },
+        "after_fix": {
+          "normal_io": true,
+          "managed_open_purge_attr": true,
+          "managed_open_purge_ubc": true,
+          "global_direct_io_enabled": false,
+          "read_bytes": 5174,
+          "mmap_bytes": 5174,
+          "read_mmap_contents_equal": true
+        },
+        "metadata_listing": {
+          "materializes_body": false
+        },
+        "background_catalog_update": {
+          "new_name_visible_via_os_readdir": true
+        },
+        "all_editors_and_formats_verified": false
+      },
+      "finder_locations": {
+        "prior_cua_synthetic_probe": "observed under Locations",
+        "existing_user_home_mountpoint_retained": true,
+        "finder_preferences_modified": true,
+        "system_volumes_directory_created": false,
+        "formal_payload_finder_acceptance": {
+          "status": "passed_reported",
+          "observation": "CUA window interface restored; friendly account volume observed under Finder Locations, and a personal child directory listed one Markdown file.",
+          "screenshot": "docs/manual/assets/61-account-volume-locations.png",
+          "scope": "Formal installed payload Finder location and directory-listing observation; not File Provider/cloud-badge acceptance."
+        },
+        "file_provider_or_cloud_badges_implemented": false,
+        "finder_preference_detail": "Previously hidden Finder sidebar was shown through View → Show Sidebar for the user-requested Locations verification; no disk visibility or security preferences changed."
+      },
+      "tests": [
+        {
+          "suite": "Complete bridge/backend/VFS tests",
+          "status": "passed_reported",
+          "duration_seconds": null
+        },
+        {
+          "suite": "Upstream cmd/cmount TestMount",
+          "status": "failed_reported",
+          "failure": "EPERM during a temporary non-local synthetic mount",
+          "included_in_cmount_unit_pass": false,
+          "failure_resolved": false
+        },
+        {
+          "suite": "cmd/cmount units excluding upstream TestMount",
+          "command": "go test -tags cmount ./cmd/cmount -skip '^TestMount$'",
+          "status": "passed_reported",
+          "duration_seconds": 0.853
+        },
+        {
+          "suite": "cgofuse explicitly tagged compatibility bridge tests",
+          "working_directory": "lib/cgofuse",
+          "command": "go test -tags=cgofuse_bridge_test ./fuse -run '^(TestFileInfoBridge|TestHostNotifyOptionalMac)'",
+          "status": "passed_reported",
+          "duration_seconds": 0.689,
+          "performs_real_mount": false
+        },
+        {
+          "suite": "Packaging fixtures",
+          "status": "passed_reported",
+          "test_count": 39,
+          "does_not_prove_signed_or_notarized_release": true
+        }
+      ],
+      "formal_payload_upgrade": {
+        "status": "passed_reported",
+        "protected_data_files_checked": 171,
+        "protected_data_file_hash_changes": 0,
+        "installed_binary_matches_candidate": true,
+        "previously_active_mounts_running": 2,
+        "installed_payload_identifier": null,
+        "identifier_note": "Exact candidate identifier not supplied in the parent report; not inferred from the base source head.",
+        "installed_binary_sha256": "7d16f1d660221997bde21604f47574cd71d0ab9b237fe27e0e3ebcd0dbe45ab3"
+      },
+      "not_verified": [
+        "Windows real-machine behavior",
+        "Linux real-machine behavior",
+        "Production signing and notarization",
+        "Universal inventory of all resources reachable through arbitrary shared links",
+        "Cold-open behavior for every editor and file format",
+        "Complete File Provider lifecycle, cloud badges and offline-after-exit behavior"
+      ],
+      "references": {
+        "macfuse_mount_options": "https://github.com/macfuse/macfuse/wiki/Mount-Options",
+        "macfuse_file_info_flags": "https://github.com/macfuse/library/blob/master/include/fuse_common.h",
+        "google_file_provider_comparison": "https://support.google.com/drive/answer/12178485?hl=en"
+      },
+      "formal_payload_directory_samples": {
+        "scope": "Current authenticated account sample after upgrade; no universal inventory claim.",
+        "root_groups": [
+          "personal",
+          "shared"
+        ],
+        "personal_root_items": 7,
+        "shared_entrances": 9,
+        "personal_child_samples": [
+          {
+            "items": 1,
+            "first_listing_seconds": 0.001,
+            "repeat_listing_seconds": 0
+          },
+          {
+            "items": 0,
+            "first_listing_seconds": 0,
+            "repeat_listing_seconds": 0
+          },
+          {
+            "items": 5,
+            "first_listing_seconds": 0.337,
+            "repeat_listing_seconds": 0
+          }
+        ]
+      },
+      "formal_payload_upload_probe": {
+        "status": "passed_reported",
+        "resource": "Synthetic Markdown in the authorized real test directory",
+        "remote_path": "test/drivebridge-cache-acceptance-20261111-161719.md",
+        "markdown_bytes": 110,
+        "local_save_readback_equal": true,
+        "mount_writeback_seconds": 120,
+        "writeback_note": "Existing validation mount setting; not the global product default.",
+        "automatically_uploaded_after_configured_delay": true,
+        "engine_readback_verified": true,
+        "confirmed_at": "2026-11-11T08:20:45.916925Z",
+        "validation_mount_status": {
+          "cloud_state": "synced",
+          "queued": 0,
+          "inflight": 0,
+          "conflicts": 0
+        },
+        "status_count_scope": "Validation mount only; not aggregate counts across historical mounts.",
+        "independent_web_comparison_performed": false,
+        "local_editor": "Computer Use opened the synced synthetic Markdown in TextEdit and observed complete normalized Markdown; screenshot assets/62-synced-test-markdown-open.png.",
+        "markdown_projection": "New MD is projected to native Feishu document; readback may normalize Markdown escapes, not byte-preserving for MD projection."
+      },
+      "cross_builds": [
+        {
+          "target": "Windows cmount, no CGO",
+          "status": "passed_reported",
+          "exit_code": 0,
+          "real_machine_tested": false
+        },
+        {
+          "target": "Linux amd64 CLI",
+          "status": "passed_reported",
+          "exit_code": 0,
+          "real_machine_tested": false
+        }
+      ],
+      "baseline_comparison": {
+        "base_head": "35f3cb67e",
+        "test": "CGO_CFLAGS=-I/usr/local/include/fuse go test -tags cmount ./cmd/cmount -run ^TestMount$ -count=1",
+        "exit_code": 1,
+        "same_operation_not_permitted": true,
+        "scope": "Pristine main baseline reproduces the same upstream non-local temporary-volume permission failure; no claim the failing test passed."
+      }
+    }
   },
   "owned_login_formal": {
     "status": "macos_development_payload_verified_with_remaining_platform_and_release_limits",

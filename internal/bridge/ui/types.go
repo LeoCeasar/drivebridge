@@ -19,11 +19,13 @@ type RemoteView struct {
 	FolderToken string          `json:"folder_token"`
 }
 type MountView struct {
-	ID         model.MountID     `json:"id"`
-	Name       string            `json:"name"`
-	RemoteID   model.RemoteID    `json:"remote_id"`
-	Mountpoint string            `json:"mountpoint"`
-	State      model.MountStatus `json:"state"`
+	CacheMaxBytes int64             `json:"cache_max_bytes"`
+	CacheMaxAge   string            `json:"cache_max_age"`
+	ID            model.MountID     `json:"id"`
+	Name          string            `json:"name"`
+	RemoteID      model.RemoteID    `json:"remote_id"`
+	Mountpoint    string            `json:"mountpoint"`
+	State         model.MountStatus `json:"state"`
 }
 type ConfigView struct {
 	Platform   string        `json:"platform"`
@@ -44,14 +46,17 @@ type StatusView struct {
 	Conflicts     []ConflictSummary `json:"conflicts"`
 }
 type ConfigRequest struct {
-	Action       string          `json:"action"`
-	Name         string          `json:"name"`
-	Brand        string          `json:"brand,omitempty"`
-	ProfileID    model.ProfileID `json:"profile_id,omitempty"`
-	RemoteID     model.RemoteID  `json:"remote_id,omitempty"`
-	FolderToken  string          `json:"folder_token,omitempty"`
-	Mountpoint   string          `json:"mountpoint,omitempty"`
-	MacOSBackend string          `json:"macos_backend,omitempty"`
+	CacheMaxAge   string          `json:"cache_max_age,omitempty"`
+	CacheSize     string          `json:"cache_size,omitempty"`
+	CacheMaxBytes int64           `json:"cache_max_bytes,omitempty"`
+	Action        string          `json:"action"`
+	Name          string          `json:"name"`
+	Brand         string          `json:"brand,omitempty"`
+	ProfileID     model.ProfileID `json:"profile_id,omitempty"`
+	RemoteID      model.RemoteID  `json:"remote_id,omitempty"`
+	FolderToken   string          `json:"folder_token,omitempty"`
+	Mountpoint    string          `json:"mountpoint,omitempty"`
+	MacOSBackend  string          `json:"macos_backend,omitempty"`
 }
 type ConflictInputs struct {
 	Conflict                   model.Conflict

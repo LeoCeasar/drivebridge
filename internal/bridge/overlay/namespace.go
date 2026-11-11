@@ -35,7 +35,9 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	// A complete listing may introduce the destination mapping. Serialize its
 	// classification with namespace preparation so a new virtual target cannot
 	// slip between the readonly check and an atomic replacement reservation.
-	f.listMu.Lock()
+	if err := f.lockNamespace(ctx, parentPath(src), parentPath(dst)); err != nil {
+		return "", err
+	}
 	defer f.listMu.Unlock()
 	if target, err := f.store.EntryByRemote(ctx, dst); err == nil {
 		if err = f.requireWritable(ctx, target); err != nil {

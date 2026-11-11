@@ -9,6 +9,7 @@ assert.match(stateLabel('needs_browser'),/登录组件/);
 assert.match(stateLabel('needs_extension'),/应用登录窗口/);
 assert.match(stateLabel('browser_disconnected'),/已有清单仍保留/);
 assert.equal(membershipLabels({memberships:['personal','shared_hidden','manual']}),'个人目录、隐藏共享、手动补录');
+assert.match(membershipLabels({memberships:['manual']}),/归属待核实/);
 assert.equal(scanTime({last_scan:'0001-01-01T00:00:00Z'}),'尚未扫描');
 
 class Element {
@@ -68,6 +69,9 @@ const api = async (route,method = 'GET',body) => {
   assert.equal(loginResult({...cachedView,state:'login_pending'}).visible,false);
   assert.match(loginResult({...cachedView,mountpoint:''}).mountpoint,/尚未准备好/);
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname,'../assets/index.html'),'utf8');
+  assert.match(html,/目录清单保存在本机，首次元数据扫描后可立即展示/);
+  assert.match(html,/文件正文在打开时按需下载/);
+  assert.match(html,/补录目录按核验归属展示在个人或共享目录中/);
   assert.ok(!/chrome:\/\/extensions|扩展 ID|扩展所在目录|加载已解压/.test(html),'management UI must not show retired extension setup');
   console.log('discovery states, cached polling and per-account login controls verified');
 })().catch(error => { console.error(error); process.exitCode = 1; });

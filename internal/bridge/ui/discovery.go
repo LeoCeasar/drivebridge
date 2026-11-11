@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -146,6 +147,10 @@ func (h *Host) discovery(w http.ResponseWriter, r *http.Request, tail []string) 
 		v, err = backend.RescanDiscovery(r.Context(), id)
 	case "add":
 		v, err = backend.AddDiscoveryFolder(r.Context(), id, strings.TrimSpace(in.Input))
+	}
+	if errors.Is(err, manager.ErrDiscoveryUnclassified) {
+		respondError(w, 409, "discovery_unclassified")
+		return
 	}
 	if err != nil {
 		respondError(w, 503, "discovery_unavailable")

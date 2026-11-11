@@ -3,7 +3,6 @@
 package cmount
 
 import (
-	"context"
 	"errors"
 	"io"
 	"os"
@@ -27,13 +26,14 @@ const fhUnset = ^uint64(0)
 
 // FS represents the top level filing system
 type FS struct {
-	VFS       *vfs.VFS
-	f         fs.Fs
-	opt       *mountlib.Options
-	ready     chan (struct{})
-	mu        sync.Mutex // to protect the below
-	handles   []vfs.Handle
-	destroyed atomic.Int32
+	VFS            *vfs.VFS
+	f              fs.Fs
+	opt            *mountlib.Options
+	ready          chan (struct{})
+	mu             sync.Mutex // to protect the below
+	nativeNotifyMu sync.RWMutex
+	handles        []vfs.Handle
+	destroyed      atomic.Int32
 }
 
 // NewFS makes a new FS
@@ -101,7 +101,12 @@ func (fsys *FS) closeHandle(fh uint64) (errc int) {
 
 // lookup a Node given a path
 func (fsys *FS) lookupNode(path string) (node vfs.Node, errc int) {
-	node, err := fsys.VFS.Stat(path)
+	var err error
+	if fsys.VFS.ManagedSyncEnabled() {
+		node, err = fsys.VFS.StatMetadata(path)
+	} else {
+		node, err = fsys.VFS.Stat(path)
+	}
 	return node, fsys.translateError(err)
 }
 
@@ -175,6 +180,9 @@ func (fsys *FS) Init() {
 // Destroy call).
 func (fsys *FS) Destroy() {
 	defer log.Trace(fsys.f, "")("")
+	fsys.nativeNotifyMu.Lock()
+	defer fsys.nativeNotifyMu.Unlock()
+	fsys.VFS.SetManagedNativeNotifier(nil)
 	fsys.destroyed.Store(1)
 }
 
@@ -183,9 +191,6 @@ func (fsys *FS) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%v", &errc)
 	node, _, errc := fsys.getNode(path, fh)
 	if errc == 0 {
-		if err := vfs.MaterializeNode(context.Background(), node); err != nil {
-			return fsys.translateError(err)
-		}
 		errc = fsys.stat(node, stat)
 	}
 	return
@@ -321,6 +326,15 @@ func (fsys *FS) OpenEx(path string, fi *fuse.FileInfo_t) (errc int) {
 		fi.DirectIo = true
 	}
 
+	if fsys.VFS.ManagedSyncEnabled() {
+		// Materialization has established the real size. macFUSE must discard
+		// the earlier placeholder vnode size and stale UBC pages before the
+		// first read/mmap. Also refresh warm opens after same-size updates.
+		// PurgeUBC pushes dirty pages before invalidating; it is not direct I/O.
+		fi.PurgeAttr = true
+		fi.PurgeUBC = true
+		fi.KeepCache = false
+	}
 	fi.Fh = fsys.openHandle(handle)
 	return 0
 }

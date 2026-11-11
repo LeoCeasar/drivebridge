@@ -5,8 +5,11 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	_ "github.com/rclone/rclone/backend/local"
 	"github.com/rclone/rclone/cmd/mountlib"
@@ -14,6 +17,7 @@ import (
 	fsconfig "github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/cloud"
+	"github.com/rclone/rclone/internal/bridge/config"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/overlay"
 	"github.com/rclone/rclone/internal/bridge/platform"
@@ -51,6 +55,50 @@ func nativeMountOptions(backend, goos, engine string, base mountlib.Options) (mo
 		base.NoAppleXattr = true
 	}
 	return base, nil
+}
+
+// Finder uses the volume label, not the mount directory, as its display name.
+// A local macFUSE kernel volume participates in Finder's local-volume handling;
+// sidebar visibility still depends on Finder preferences. FSKit does not support
+// all kernel mount flags, so keep its existing backend options unchanged.
+func nativeFinderOptions(spec mountSpec, goos, engine string, base mountlib.Options) mountlib.Options {
+	if goos != "darwin" || engine != "cmount" {
+		return base
+	}
+	if base.VolumeName == "" {
+		label := spec.Mount.Name
+		if spec.Remote.AccountRoot {
+			label = spec.Profile.Name
+		}
+		// Commas delimit FUSE -o options. Never allow a display name to become
+		// another mount option; remove path separators and control bytes too.
+		label = strings.Map(func(r rune) rune {
+			if strings.ContainsRune(",:/\\", r) || unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, label)
+		label = strings.Join(strings.Fields(label), " ")
+		base.VolumeName = "DriveBridge"
+		if label != "" {
+			base.VolumeName += " — " + label
+		}
+		for len(base.VolumeName) > 255 {
+			_, size := utf8.DecodeLastRuneInString(base.VolumeName)
+			base.VolumeName = base.VolumeName[:len(base.VolumeName)-size]
+		}
+	}
+	local, fskit := false, spec.Mount.MacOSBackend == "fskit"
+	for _, option := range base.ExtraOptions {
+		for _, part := range strings.Split(option, ",") {
+			local = local || part == "local"
+			fskit = fskit || part == "backend=fskit"
+		}
+	}
+	if !local && !fskit {
+		base.ExtraOptions = append(append([]string(nil), base.ExtraOptions...), "local")
+	}
+	return base
 }
 
 type nativeRuntime struct {
@@ -105,6 +153,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err != nil {
 		return nil, err
 	}
+	mountOptions = nativeFinderOptions(spec, runtime.GOOS, engineName, mountOptions)
 	if err = checkDriver(); err != nil {
 		return nil, err
 	}
@@ -184,6 +233,15 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	options := vfscommon.Opt
 	options.CacheMode = vfscommon.CacheModeFull
 	options.CacheMaxSize = fs.SizeSuffix(spec.Mount.CacheMaxBytes)
+	cacheAge, err := config.EffectiveCacheMaxAge(spec.Mount)
+	if err != nil {
+		return nil, ErrConfig
+	}
+	vfsAge := cacheAge
+	if vfsAge == 0 {
+		vfsAge = time.Duration(1<<63 - 1)
+	}
+	options.CacheMaxAge = fs.Duration(vfsAge)
 	duration, err := time.ParseDuration(spec.Mount.WriteBack)
 	if err != nil {
 		return nil, ErrConfig
@@ -242,15 +300,30 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			return err
 		}
 		return v.TryExternalUpdate(ctx, entry.Remote, func() (fs.Object, error) { return overlayFS.Publish(ctx, c) })
-	}), ShouldSync: overlayFS.ShouldSync, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries, RefreshDirectories: overlayFS.RefreshDirectories}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
+	}), ShouldSync: overlayFS.ShouldSync, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
 	if err != nil {
 		native.Unmount()
 		return nil, err
 	}
+	indexWake := make(chan struct{}, 1)
+	indexedRun := metadataIndexedRun(engine.Run, func(ctx context.Context) error {
+		return overlayFS.WarmDirectoriesWithNotify(ctx, v.NotifyManagedDirectoryChanged)
+	}, dirs, indexWake)
+	backgroundRun := metadataIndexedRun(indexedRun, func(ctx context.Context) error {
+		_, err := sweepCleanBodies(ctx, s, v, overlayFS.NewObject, cacheAge, spec.Mount.CacheMaxBytes, time.Now().UTC())
+		return err
+	}, 5*time.Minute)
 	success = true
-	return &workerServices{store: s, runtime: native, run: engine.Run, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
-		if err := overlayFS.RefreshDirectories(ctx); err != nil {
+	return &workerServices{store: s, runtime: native, run: backgroundRun, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
+		stats, err := overlayFS.DirectoryStatus(ctx)
+		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
+	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
+		if err := overlayFS.RefreshCatalog(ctx); err != nil {
 			return err
+		}
+		select {
+		case indexWake <- struct{}{}:
+		default:
 		}
 		root, err := v.Root()
 		if err != nil {

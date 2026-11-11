@@ -40,6 +40,10 @@
     $('mount-rows').replaceChildren(); $('mount-empty').hidden = mounts.length > 0;
     for (const mount of mounts) {
       const state = mount.state || {}, row = make('tr'); const name = make('td'); name.append(make('span', mount.name, 'mount-name'), make('span', mount.mountpoint, 'mount-path'));
+      if (state.directory_index) {
+        const index = state.directory_index;
+        name.append(make('small',`目录清单：已缓存 ${index.cached || 0} / 已知 ${index.known || 0} 个目录${index.refreshing ? '，后台更新中' : ''}${index.failed ? '；部分更新失败，保留旧清单' : ''}`,'mount-path'));
+      }
       const local = make('td'); local.append(make('span', state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动'), 'state-tag' + (state.local_saved ? '' : ' pending')));
       const cloud = make('td', cloudLabel(state)); const queue = make('td', `队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', state.running ? '安全停止' : '启动挂载', 'button small');
       button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${state.running ? 'stop' : 'start'}`, 'POST', {}); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);

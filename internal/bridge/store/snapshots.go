@@ -73,6 +73,14 @@ func (s *Store) prepareSnapshot(sn model.Snapshot) (model.Snapshot, error) {
 	return sn, nil
 }
 func (s *Store) saveSnapshot(tx *bolt.Tx, sn model.Snapshot) error {
+	// The earlier preparation check runs outside the Store lock. Recheck when
+	// accepting references so a concurrent clean eviction cannot leave dangling
+	// snapshot edges when callers reuse older immutable blobs.
+	for _, b := range []model.BlobID{sn.XML, sn.Markdown, sn.BlockMap, sn.FileData} {
+		if err := s.checkBlob(b); err != nil {
+			return err
+		}
+	}
 	var old snapshotRecord
 	err := get(tx, "snapshots", string(sn.ID), &old)
 	if err == nil {

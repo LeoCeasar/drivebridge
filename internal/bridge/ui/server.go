@@ -49,6 +49,7 @@ func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
+	messages["discovery_unclassified"] = "暂时无法核验目录属于个人还是共享；旧清单已保留，请重新扫描后重试。"
 	messages["discovery_unavailable"] = "目录操作暂未完成，已有清单仍保留。请查看账号状态，必要时重新打开应用登录窗口或检查目录访问权限。"
 	respond(w, status, map[string]any{"code": code, "retryable": status == 503, "message": messages[code]})
 }
