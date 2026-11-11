@@ -3,26 +3,26 @@
   "date": "2026-11-10 ～ 2026-11-11",
   "platform": "macOS 26.5.1 / Apple Silicon",
   "version": "0.1.0 开发版",
-  "source_head": "a6f56d2a5",
-  "overall": "blocked",
-  "summary": "修复版 a6f56d2a5 已通过系统 Installer 安装，52个既有 Store/Blob 文件哈希保持不变，账号核验通过。kernel 首次尝试被系统判定未批准；用户再次明确批准后，系统日志确认 approvedUnbuiltExtensions，并返回 KMErrorDomain Code=28 要求重启。当前等待批准后的重启，kernel 同步与真实多文件合并尚未通过。",
+  "source_head": "dd5819985",
+  "overall": "partial",
+  "summary": "macOS核心同步链路已实测通过：kernel真实挂载、MD长短变化自动回读、TextEdit保持原Token写回、两份真实冲突的网页草稿/批量合并及云端确认、安全停止与恢复。最新dd5819985已安装，升级保留84个既有Store/Blob文件。整体仍为部分验收：全部共享目录自动发现、托盘视觉/登录自启动、Windows/Linux原生验收及正式签名尚未完成。",
   "steps": [
     {
       "id": "install",
       "title": "安装驱动与 DriveBridge",
       "status": "verified",
       "body": "从 macFUSE 官方网站下载驱动，打开镜像中的 Install macFUSE。完成许可和系统授权后，再安装带挂载引擎的 DriveBridge 桌面包。",
-      "observed": "重启后已通过系统 Installer 将 a6f56d2a5 修复包安装到当前用户目录。安装二进制与候选完全一致；本次升级前52个既有数据库/内容文件哈希均保持不变，短期安装 descriptor 已清理，原账号核验正常。仍为 unsigned 开发测试包。",
+      "observed": "最新 dd5819985 完整桌面包已通过系统 Installer 升级成功，安装二进制与候选一致。升级时两份真实冲突和一份合并草稿存在；84个既有Store/Blob文件逐字节哈希保持不变，短期安装descriptor已清理。仍为unsigned开发包。",
       "checks": [
-        "安装载荷匹配；52个既有Store/Blob文件哈希保持不变",
-        "账号、官方CLI、已编译挂载引擎检查正常",
-        "kernel驱动是否实际加载另行核验，不能由doctor的安装检查替代",
-        "正式签名、公证、Windows/Linux原生安装仍未验证"
+        "安装载荷匹配；84个既有Store/Blob文件哈希不变，包含真实冲突与已保存草稿",
+        "账号和官方CLI保持；完整macOS桌面/挂载包构建通过",
+        "Bridge、feishu、desktop全包cmount测试通过；同源码Windows桌面/Linux双架构CLI交叉编译通过",
+        "正式签名公证与Windows/Linux原生安装仍未验证"
       ],
       "screenshots": [
         {
-          "src": "assets/40-kernel-candidate-installed.png",
-          "caption": "重启后成功安装 a6f56d2a5 修复包。"
+          "src": "assets/48-draftfix-upgrade-success.png",
+          "caption": "最新dd5819985修复包由系统Installer安装成功，真实冲突与草稿保留。"
         }
       ]
     },
@@ -55,19 +55,18 @@
     {
       "id": "mount",
       "title": "挂载共享文件夹",
-      "status": "blocked",
+      "status": "verified",
       "body": "添加测试共享文件夹，选择本地挂载位置，检查挂载状态与目录内容。",
-      "observed": "最新修复版配置读取已恢复可用。Kernel 验收 20261111 首次启动返回 driver_unavailable，系统日志说明扩展未批准。重新打开系统设置后实际读到 Benjamin Fleischer 关闭；用户再次开启并确认OK，macFUSE从阻止列表消失，系统日志确认已批准但尚未构建加载，错误28明确要求重启。目前挂载已安全停止、自动恢复意图禁用，等待本次批准后的重启。",
+      "observed": "再次重启后，kmutil确认io.macfuse.filesystems.macfuse.25（5.5.0）已加载。专用Kernel验收挂载后台启动成功，Finder能列出真实卷内的sync-check.md、conflict-B.md与sync-check.txt。旧FSKit挂载保持停用，未清理其待处理数据。此处使用指定共享目录，不代表自动发现全部共享目录。",
       "checks": [
-        "当前已安装a6f56d2a5，无需再次安装同一包",
-        "macFUSE批准记录：approvedUnbuiltExtensions；加载要求重启",
-        "旧FSKit挂载仍停用；仅准备启动专用kernel验收挂载",
-        "全部共享目录自动发现仍未满足"
+        "内核驱动实际加载，真实卷可读取",
+        "专用挂载路径：~/Shared/DriveBridge-Kernel-20261111",
+        "旧FSKit实例停用；全部共享目录自动发现仍未满足"
       ],
       "screenshots": [
         {
-          "src": "assets/41-kernel-approval-accepted.png",
-          "caption": "再次确认后，系统阻止列表只剩其他厂商；macFUSE批准成功由系统日志进一步核验。"
+          "src": "assets/42-kernel-mount-files.png",
+          "caption": "kernel真实虚拟卷中的三份合成测试文件。"
         }
       ]
     },
@@ -96,55 +95,85 @@
     {
       "id": "bidirectional",
       "title": "验证双向更新",
-      "status": "blocked",
+      "status": "verified",
       "body": "分别修改测试文件的本地和云端内容，核对最终内容及同步确认状态。",
-      "observed": "飞书原生文档 sync-check：通过 VS Code 将本地标记改为 local-2 并保存，在同一云端 Token 回读成功；网页改为等长 cloud-3，本地 QuickLook 自动回读正确。普通 TXT 的 local-2 回写正文正确，但旧版 TextEdit 保存更换了云端 Token。已安装 a6f56d2a5 已加入保留身份的持久安全保存事务，离线回归通过，真实 TextEdit 待重启后复测。FSKit 对长度变化仍会截断：规范化 MD 为124字节，TextEdit只读旧120字节；重挂载恢复完整。已选择 kernel 并批准驱动，再次确认批准已写入，当前等待批准后的系统重启，不能以等长更新代替长度变化的验收。",
+      "observed": "kernel下在飞书网页把MD标记改为cloud-4-longer-content-for-kernel-refresh-validation，再缩短为cloud-5-short；不重挂载，Finder QuickLook均回读完整正文与末行。TextEdit将普通TXT改为kernel-3并保存，延迟写回后同一UJWG…Token的飞书预览显示完整新正文与identity-must-stay-the-same，当前挂载队列归零。先前MD本地local-2写回同一原生文档，以及本轮非重叠修改自动合并也已实际观察。",
       "screenshots": [
         {
-          "src": "assets/37-md-v2-cloud-readback.png",
-          "caption": "本地 MD 的 local-2 写回同一飞书原生文档。"
+          "src": "assets/44-kernel-longer-local-readback.png",
+          "caption": "云端变长后，本地QuickLook完整显示新版本及末行。"
         },
         {
-          "src": "assets/38-md-cloud-v3-local-readback.png",
-          "caption": "网页修改后的等长 cloud-3 已自动回读本地；长度变化仍受 FSKit 阻塞。"
+          "src": "assets/45-kernel-shorter-local-readback.png",
+          "caption": "云端再缩短后，本地自动显示完整短版本。"
         },
         {
-          "src": "assets/35-txt-v2-cloud-readback.png",
-          "caption": "TXT 第二版云端正文正确，文件身份变化仍待新候选复测。"
-        },
-        {
-          "src": "assets/39-kernel-restart-required.png",
-          "caption": "批准 macFUSE kernel 扩展后，系统明确要求重启。"
+          "src": "assets/46-kernel-txt-same-token-readback.png",
+          "caption": "TextEdit保存后，同一飞书文件Token回读kernel-3与身份保持标记。"
         }
       ],
       "checks": [
-        "上游限制：https://github.com/macfuse/macfuse/issues/1222",
-        "维护者说明：https://github.com/macfuse/macfuse/issues/1207",
-        "未修改规范化内容或降低验收标准掩盖截断"
+        "云端长度增加和缩短都完整回读，无需重挂载",
+        "TextEdit普通文件保存后Token不变，正文完成云端确认",
+        "本轮只覆盖受支持的合成MD和TXT，不代表所有格式兼容"
       ]
     },
     {
       "id": "conflict",
       "title": "处理多个文件冲突",
-      "status": "pending",
+      "status": "verified",
       "body": "只对测试文件制造双方变更，在网页 diff 中逐文件编辑草稿并提交已选文件，核对每个文件的独立结果。",
-      "observed": "已准备第二份合成 MD 和独立120s延迟测试配置，尚未得到真实内容冲突与多文件提交的通过证据。旧代码配置读取会探测所有挂载根，导致实际管理请求与目录读取等待；候选 a6f56d2a5 已把挂载目标校验移到启动前，保留私有目录校验，相关回归通过，修复已安装；kernel实际多文件合并待驱动加载后验证。历史 Finder 误冲突不计入验收。"
+      "observed": "两份真实overlapping_edits分别为A本地AAA/云端BBB、B本地local-B/云端cloud-B。网页三方diff保存两份独立合并草稿，切换后保留；导出base/local/remote/draft与manifest成功，draft哈希一致。仅选中两份文件批量提交，页面本机接受2份、失败0份。120s写回后，两份原飞书文档分别回读merged-A / AAA + BBB与merged-B / local-B + cloud-B；Finder亦回读完整规范化MD。当前挂载vfs_pending/queued/inflight/conflicts均0、cloud_state=synced。历史5份误冲突留在停用的旧实例，不计入本次通过。",
+      "screenshots": [
+        {
+          "src": "assets/49-real-conflict-a-saved.png",
+          "caption": "A的原版、本地AAA、云端BBB与已保存合并草稿。"
+        },
+        {
+          "src": "assets/50-real-conflict-b-saved.png",
+          "caption": "B的独立草稿已保存，升级前草稿也成功恢复。"
+        },
+        {
+          "src": "assets/51-two-merges-accepted.png",
+          "caption": "仅两份已复核文件批量接受；“等待同步”尚不等于飞书确认。"
+        },
+        {
+          "src": "assets/52-merge-a-cloud-confirmed.png",
+          "caption": "同一飞书原生文档A确认merged-A / AAA + BBB。"
+        },
+        {
+          "src": "assets/53-merge-b-cloud-confirmed.png",
+          "caption": "同一飞书原生文档B确认merged-B / local-B + cloud-B。"
+        },
+        {
+          "src": "assets/54-merge-a-local-confirmed.png",
+          "caption": "本地真实挂载完整回读A合并内容。"
+        },
+        {
+          "src": "assets/55-merge-b-local-confirmed.png",
+          "caption": "本地真实挂载完整回读B合并内容。"
+        }
+      ]
     },
     {
       "id": "stop",
       "title": "安全停止与恢复",
       "status": "verified",
       "body": "检查待上传、冲突和未确认状态，再安全停止；重启后检查测试文件及队列是否保留。",
-      "observed": "6dabe69ef 实测 feishu mount stop --wait-upload 60s 正常返回 stopped=true，状态 running=false 且队列/冲突均0。随后 mount start --background 返回 running=true、cloud_state=synced；Finder 从恢复后的挂载回读 MD/TXT。未强制卸载、未清空待上传数据。",
+      "observed": "最新dd5819985在当前kernel挂载云端确认且所有待处理数归零后，mount stop --wait-upload 60s返回stopped=true；running=false且队列/冲突仍0。随后mount start --background恢复running=true、cloud_state=synced，各计数0，Finder重新打开卷后再次完整回读A/B最终合并内容。桌面和同步worker保留运行，旧实例继续停用；未注册登录自启动。",
       "screenshots": [
         {
-          "src": "assets/36-md-remount-full-readback.png",
-          "caption": "安全停止并重新启动后，Finder 能读到完整 MD 正文。"
+          "src": "assets/56-restart-final-readback.png",
+          "caption": "最新安装版安全停止并后台恢复后，Finder完整回读最终合并正文。"
+        },
+        {
+          "src": "assets/57-kernel-final-synced-status.png",
+          "caption": "最新kernel挂载显示已确认、队列0/在途0/冲突0；旧实例的历史待处理记录仍保留。"
         }
       ]
     }
   ],
-  "candidate_source_head": "a6f56d2a5",
+  "candidate_source_head": "dd5819985",
   "history": [
     {
       "title": "早期候选包的失败与修复记录",
@@ -276,7 +305,7 @@
     },
     {
       "title": "FSKit 外部内容变化的上游限制",
-      "observed": "本轮长度变化截断与上游开放问题吻合；维护者另在 #1207 说明 FSKit 内部缓存不能由属性超时控制。kernel 路线须在重启后独立复测。",
+      "observed": "本轮FSKit长度截断与上游开放问题吻合；维护者另在#1207说明内部缓存不能由属性超时控制。随后按用户选择切换kernel，长度增加/缩短的实机复测已通过。",
       "source_url": "https://github.com/macfuse/macfuse/issues/1222",
       "screenshots": []
     },
@@ -285,6 +314,45 @@
       "observed": "第一次重启后驱动仍被判定未批准。再次开启Benjamin Fleischer并确认OK后，系统日志记录macFUSE为approvedUnbuiltExtensions，随后错误28要求重启。没有批准无关的Samsung驱动，也没有把仍未加载的kernel后端记为通过。",
       "source_url": "https://github.com/macfuse/macfuse/wiki/Getting-Started",
       "screenshots": []
+    },
+    {
+      "title": "真实冲突验收中修复的两个问题",
+      "observed": "旧版搜索冲突遇到无关离线Store锁会提前失败，导致保存草稿503；另有刷新云端与保存草稿并发时旧副本覆盖草稿。分别用可重现的小范围测试修复，再集成全Bridge测试并安装dd5819985。更新后网页保存草稿、切换文件和批量接受均已实测。",
+      "screenshots": [
+        {
+          "src": "assets/47-real-conflict-b-diff-draft.png",
+          "caption": "修复前真实三方冲突现场：可见编辑内容不代表草稿已持久保存。"
+        }
+      ]
     }
-  ]
+  ],
+  "verification": {
+    "source_head": "dd5819985",
+    "bridge_tests": "CGO_CFLAGS=-I/usr/local/include/fuse go test -p 4 -tags cmount ./internal/bridge/... ./cmd/feishu ./cmd/desktop -count=1；退出0",
+    "platform_builds": "同源码macOS arm64完整桌面包构建/安装通过；Windows amd64桌面、Linux amd64/arm64 CLI交叉编译通过。后两平台没有原生运行证据。",
+    "upgrade": {
+      "protected_files": 84,
+      "changed_files": 0,
+      "installed_matches_candidate": true,
+      "pending_real_conflicts": 2,
+      "saved_merge_drafts": 1
+    },
+    "active_mount": {
+      "backend": "kernel",
+      "write_back": "120s",
+      "running": true,
+      "queued": 0,
+      "inflight": 0,
+      "conflicts": 0,
+      "vfs_pending": 0,
+      "cloud_state": "synced"
+    },
+    "remaining": [
+      "全部共享目录自动发现未满足，本轮明确配置指定共享目录",
+      "托盘图标/菜单视觉与真实登录自启动未完成实测",
+      "Windows/Linux原生安装、挂载与同步未完成实测",
+      "开发包未签名/公证；子目录首次上传及非TXT二进制格式尚未实测",
+      "Feishu接口没有CAS，本地合并不提供原子多人事务保证"
+    ]
+  }
 }

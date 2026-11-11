@@ -1,16 +1,17 @@
 # 桌面客户端实施与验证状态
 
-更新：2026-11-11；工作分支 `feature/feishu-transparent-sync`。最终验收仍未通过，尚未发布完整三平台安装版。
+更新：2026-11-11；工作分支 `feature/feishu-transparent-sync`。macOS核心同步验收通过，完整产品仍为部分验收，尚未发布完整三平台安装版。
 
-## 2026-11-11 实机续验点
+## 2026-11-11 最终实机记录
 
-- 已安装源码 `6dabe69ef`：系统 Installer 升级成功，原账号保留；19 个既有数据库和内容文件哈希未变化。Finder 向真实 FSKit 卷复制 MD/TXT 后，飞书网页回读正文成功，队列与冲突均归零。
-- 同一飞书原生文档已验证本地 `local-2` 写回，以及网页等长 `cloud-3` 自动回读本地。普通 TXT 第二版正文回写正确，但 TextEdit 原子保存导致云端 Token 改变，不能判为保留身份的覆盖通过。
-- FSKit 出现长度缓存截断：规范化 MD 从120变124字节，Overlay/VFS/cmount返回124，TextEdit读取旧120；重挂载恢复完整。上游 [#1222](https://github.com/macfuse/macfuse/issues/1222) 与 [#1207](https://github.com/macfuse/macfuse/issues/1207) 记录了该限制。用户已选择 kernel 后端，并在系统设置批准 macFUSE；系统要求重启，尚未执行 kernel 挂载验收。
-- 已安装修复源码 `a6f56d2a5`，完整 macOS arm64 desktop/cmount 的 pkg、dmg、tar.gz 均已构建，pkg在重启后实际安装成功，52个既有Store/Blob文件哈希未变化，仍为 unsigned 开发版。新增安全保存事务保留原 EntryID/Token，未完成 replacement 的备份保持显式 pending；配置读取不再探测运行中的挂载根，启动前仍检查选中目标，私有目录检查保留。Bridge/CLI 全包（cmount 标签）测试通过；Windows 桌面及 Linux 双架构 CLI 交叉编译通过。
-- 正常 CLI 停止及后台恢复已在 `6dabe69ef` 验证；随后独立冲突挂载的目录读取和管理请求陷入等待，已采样并修复配置读取重入挂载路径的问题，待新候选安装复测。未强制删除待上传或冲突数据。
-- 所有旧测试挂载的桌面 desired 已禁用；准备了未启动的 `Kernel 验收 20261111`（kernel，write-back=120s）。修复已经安装。第一次重启后macFUSE仍被系统判定未批准；用户再次明确开启并确认后，系统日志已记录approvedUnbuiltExtensions和错误28（requires a reboot）。需在本次批准后的重启完成后，只启动该kernel挂载，再验证长度变化、TextEdit身份保持和两份真实文档的diff/合并。
-- 仍未通过：原生托盘视觉与登录自启动、全部共享目录自动发现、真实多文件合并、Windows/Linux 原生安装与挂载、签名公证。单元测试与交叉编译不能替代这些验收。
+- 当前安装源码 `dd5819985`：完整macOS arm64 desktop/cmount包通过系统Installer实际升级；二进制匹配，84个既有Store/Blob文件哈希不变，包含2份真实冲突及1份已保存合并草稿。仍为unsigned开发版。
+- 再次重启后macFUSE kernel 5.5.0实际加载。专用 `Kernel 验收 20261111` 后台运行；云端MD标记变长再缩短，Finder QuickLook均完整自动回读，不重挂载。
+- TextEdit保存普通TXT后，原飞书文件Token保持不变，网页回读 `kernel-3` 与身份保持标记，后台确认同步完成。
+- 两份真实MD冲突（AAA/BBB、local-B/cloud-B）在网页三方diff中保存独立草稿、切换保留、导出受保护的本地副本并批量提交。120s写回后，飞书原文档与本地挂载均回读最终合并内容；当前实例queued/inflight/conflicts/vfs_pending均0、cloud_state=synced。另观察到一轮非重叠变更自动合并。旧FSKit测试实例的5份误冲突与待处理数据保持离线保留，不据此清空全局数字。
+- 实机遇到草稿保存503（无关离线Store锁使搜索提前退出）及云端刷新覆盖新草稿两项问题，分别以可重现窄测试修复，再集成全Bridge测试、构建并安装。修复为 `7ba17cbff`、`dd5819985`；随后网页保存/切换/批量提交均实测通过。
+- 最新版本安全停止 `--wait-upload 60s` 成功，后台恢复后状态仍已同步；Finder再次回读两份最终正文。桌面和当前kernel worker留在后台运行；旧实例停用，未注册真实登录启动项。
+- 最新源码验证：`CGO_CFLAGS=-I/usr/local/include/fuse go test -p 4 -tags cmount ./internal/bridge/... ./cmd/feishu ./cmd/desktop -count=1` 全部退出0；完整macOS桌面包构建通过。同源码Windows amd64 desktop/cmount、Linux amd64/arm64 CLI交叉编译通过，不能替代这些系统的原生运行验证。
+- macOS核心同步链路通过；整体仍为部分验收。全部共享目录自动发现未满足；托盘视觉与登录自启动、Windows/Linux原生安装挂载、正式签名公证、子目录首次上传及其他二进制格式未完成实测。飞书非CAS覆盖窗口仍存在。
 
 逐步说明和真实截图见 [操作手册](../../manual/操作手册.html)，对应 [验证记录](../../manual/验证记录.json)。以下为2026-11-10的历史实现及验证记录。
 
@@ -57,7 +58,7 @@ macOS arm64 合成配置预览进程实际运行，自动打开本机浏览器�
 
 ## 尚未完成的原生交付条件
 
-- macOS：当前缺少 macFUSE `fuse.h`；完整 `--desktop` 挂载包构建明确阻止，没有用 CLI-only 绕过。实际驱动、登录启动、升级退出、签名与公证需要原生验收。
+- macOS：后续实机记录已完成完整桌面/挂载包构建、kernel驱动、维护升级及核心同步验收；原生托盘视觉、登录启动、签名与公证仍待验收。
 - Windows：桌面及挂载代码交叉编译通过；WinFsp、实际托盘、用户任务、MSI/EXE 安装升级与签名未在 Windows 执行。本机没有 PowerShell。
 - Linux：本机没有 pkg-config/GTK/Ayatana 构建环境；本地 Docker CLI 存在但 daemon 不可用，未启动 Docker 或接入远程上下文。原生 GUI 编译、不同桌面的图标可见性、真实 FUSE3 和登录启动未执行。
 - 安装 lease 的原生环境/子进程存活传播仍为 `lifecycle_lease_unverified`，系统级 Linux 安装多用户协调及独立卸载路径保留原有发布限制，不通过托盘代码绕过。
