@@ -1,0 +1,35 @@
+{
+  "checked_at": "2026-11-11T08:41:30.506798+00:00",
+  "initial": {
+    "http": 200,
+    "partial": false,
+    "conflicts": 5,
+    "mounts": 7,
+    "stale_mounts": 0
+  },
+  "parallel_requests": 8,
+  "http_200": 8,
+  "partial_responses": 7,
+  "retained_conflict_counts": [
+    5
+  ],
+  "new_client_served": true,
+  "installed_binary_sha256": "2cd099736db85b2f988709f36cfcb20723e7a49455e3da7763008a211810c6af",
+  "upgrade": {
+    "protected_files": 216,
+    "changed_files": 0,
+    "candidate_matches_installed": true
+  },
+  "base_head": "a9350ea28",
+  "before_fix": {
+    "parallel_cli_status_queries": 6,
+    "pending_errors": 6,
+    "cloud_request_required": false
+  },
+  "scope": "UI status observations only; no conflict resolution, cloud mutation, credential change or cleanup performed",
+  "tests": {
+    "ui_race": "passed",
+    "manager_desktop_tray_feishu_packages": "passed",
+    "frontend_tests_passed": 9
+  }
+}

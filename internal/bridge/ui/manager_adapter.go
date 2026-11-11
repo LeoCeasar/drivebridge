@@ -13,7 +13,10 @@ import (
 )
 
 // ManagerBackend is the sole production UI adapter. It never opens worker databases.
-type ManagerBackend struct{ manager *manager.Manager }
+type ManagerBackend struct {
+	manager   *manager.Manager
+	snapshots statusSnapshots
+}
 
 func NewManagerBackend(m *manager.Manager) (*ManagerBackend, error) {
 	if m == nil {
@@ -48,23 +51,9 @@ func (b *ManagerBackend) Status(ctx context.Context) (StatusView, error) {
 	if err != nil {
 		return StatusView{}, err
 	}
-	v := StatusView{SchemaVersion: 1, Mounts: c.Mounts, Conflicts: []ConflictSummary{}}
-	for i, m := range v.Mounts {
-		status, err := b.manager.Status(ctx, m.ID)
-		if err != nil {
-			return v, err
-		}
-		v.Mounts[i].State = status
-		conflicts, err := b.manager.Conflicts(ctx, m.ID)
-		if err != nil {
-			return v, err
-		}
-		for _, c := range conflicts {
-			v.Conflicts = append(v.Conflicts, ConflictSummary{ID: c.Conflict.ID, MountID: m.ID, Name: c.Entry.Remote})
-		}
-	}
-	return v, nil
+	return b.snapshots.read(ctx, c.Mounts, b.manager), nil
 }
+
 func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (ConfigView, error) {
 	var err error
 	switch r.Action {

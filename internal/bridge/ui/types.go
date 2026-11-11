@@ -19,13 +19,15 @@ type RemoteView struct {
 	FolderToken string          `json:"folder_token"`
 }
 type MountView struct {
-	CacheMaxBytes int64             `json:"cache_max_bytes"`
-	CacheMaxAge   string            `json:"cache_max_age"`
-	ID            model.MountID     `json:"id"`
-	Name          string            `json:"name"`
-	RemoteID      model.RemoteID    `json:"remote_id"`
-	Mountpoint    string            `json:"mountpoint"`
-	State         model.MountStatus `json:"state"`
+	StatusWarning   string            `json:"status_warning,omitempty"`
+	StatusUpdatedAt string            `json:"status_updated_at,omitempty"`
+	CacheMaxBytes   int64             `json:"cache_max_bytes"`
+	CacheMaxAge     string            `json:"cache_max_age"`
+	ID              model.MountID     `json:"id"`
+	Name            string            `json:"name"`
+	RemoteID        model.RemoteID    `json:"remote_id"`
+	Mountpoint      string            `json:"mountpoint"`
+	State           model.MountStatus `json:"state"`
 }
 type ConfigView struct {
 	Platform   string        `json:"platform"`
@@ -40,6 +42,7 @@ type ConflictSummary struct {
 	MountID model.MountID    `json:"mount_id"`
 }
 type StatusView struct {
+	Partial       bool              `json:"partial,omitempty"`
 	SchemaVersion int               `json:"schema_version"`
 	CanRetry      bool              `json:"can_retry"`
 	Mounts        []MountView       `json:"mounts"`

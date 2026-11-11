@@ -7,7 +7,7 @@
   let activeHunk = null, openSeq = 0, activeView = 'workspace';
   let csrf = '', current = null, choices = new Map(), manual = false;
   let draftTimer = null, authFlow = '', authProfile = '';
-  let messageOwner = '';
+  let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false;
   const record = () => current && queue.records.get(current.id);
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
   function message(text, error = false, owner = '') { messageOwner = owner; $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
@@ -39,15 +39,22 @@
   function renderMounts(mounts = [], canRetry = false) {
     $('mount-rows').replaceChildren(); $('mount-empty').hidden = mounts.length > 0;
     for (const mount of mounts) {
+      const stale = Boolean(mount.status_warning), known = !stale || Boolean(mount.status_updated_at);
       const state = mount.state || {}, row = make('tr'); const name = make('td'); name.append(make('span', mount.name, 'mount-name'), make('span', mount.mountpoint, 'mount-path'));
       if (state.directory_index) {
         const index = state.directory_index;
         name.append(make('small',`目录清单：已缓存 ${index.cached || 0} / 已知 ${index.known || 0} 个目录${index.refreshing ? '，后台更新中' : ''}${index.failed ? '；部分更新失败，保留旧清单' : ''}`,'mount-path'));
       }
-      const local = make('td'); local.append(make('span', state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动'), 'state-tag' + (state.local_saved ? '' : ' pending')));
-      const cloud = make('td', cloudLabel(state)); const queue = make('td', `队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', state.running ? '安全停止' : '启动挂载', 'button small');
+      if (stale) {
+        const reasons = {pending:'本机正在处理其他状态查询',auth_required:'账号需要重新授权',identity_changed:'账号身份需要重新核对',worker_unavailable:'挂载服务暂不可用'};
+        const reason = reasons[mount.status_warning] || '本机状态更新暂未完成';
+        name.append(make('small',known ? `${reason}；保留上次结果（${new Date(mount.status_updated_at).toLocaleTimeString()}）` : `${reason}；尚未取得完整状态`,'mount-path'));
+      }
+      const local = make('td'); local.append(make('span', !known ? '等待核对' : (stale ? '上次：' : '') + (state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), 'state-tag' + (state.local_saved ? '' : ' pending')));
+      const cloud = make('td', !known ? '等待核对' : (stale ? '上次：' : '') + cloudLabel(state)); const queue = make('td',!known ? '暂不可读' : `${stale ? '上次：' : ''}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', state.running ? '安全停止' : '启动挂载', 'button small');
+      button.disabled = stale;
       button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${state.running ? 'stop' : 'start'}`, 'POST', {}); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);
-      if (canRetry) { const retry = make('button','重试同步','button small'); retry.disabled = !recovery.canRetry(mount,canRetry); retry.title = state.running ? '重新核验并重试待同步项目' : '请先启动挂载'; retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = !recovery.canRetry(mount,canRetry); } }); action.append(retry); }
+      if (canRetry) { const retry = make('button','重试同步','button small'); retry.disabled = stale || !recovery.canRetry(mount,canRetry); retry.title = state.running ? '重新核验并重试待同步项目' : '请先启动挂载'; retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = stale || !recovery.canRetry(mount,canRetry); } }); action.append(retry); }
       row.append(name, local, cloud, queue, action); $('mount-rows').append(row);
     }
   }
@@ -76,12 +83,38 @@
   function renderConflicts(conflicts) {
     if (conflicts) queue.sync(conflicts);
     const records = [...queue.records.values()];
-    $('conflict-count').textContent = records.filter(r => r.present && r.status !== 'queued').length; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
+    const count = records.filter(r => r.present && r.status !== 'queued').length;
+    $('conflict-count').textContent = statusPartial ? (count ? `${count}（待更新）` : '待更新') : count; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
     for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
     renderQueue();
   }
-  async function refresh() { try { const status = await api('/api/status'); renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts); $('connection').textContent = '已连接本机服务'; if (messageOwner === 'status_refresh') message(''); } catch (e) { $('connection').textContent = '本机连接暂不可用'; message(e.message, true, 'status_refresh'); } }
-  $('refresh').addEventListener('click', refresh);
+  function refresh(interactive = false) {
+    if (statusFlight) return statusFlight;
+    statusFlight = (async () => {
+      try {
+        const status = await api('/api/status');
+        statusPartial = Boolean(status.partial);
+        renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts);
+        statusDelay = 5000;
+        $('connection').textContent = status.partial ? '已连接本机服务，部分状态稍后更新' : '已连接本机服务';
+        if (messageOwner === 'status_refresh') message('');
+      } catch (e) {
+        statusDelay = Math.min(30000,statusDelay * 2);
+        if (e.status === 403) return;
+        $('connection').textContent = '本机状态暂未更新，将自动重试';
+        // Background observation failures must not overwrite an editing/action notice.
+        if (interactive) message('本机状态读取暂未完成，请稍后刷新。',true,'status_refresh');
+      }
+    })().finally(() => { statusFlight = null; });
+    return statusFlight;
+  }
+  function scheduleStatusPoll() {
+    setTimeout(async () => {
+      try { await refresh(); if (activeView === 'settings') await discovery.load(); }
+      finally { scheduleStatusPoll(); }
+    },statusDelay);
+  }
+  $('refresh').addEventListener('click',() => refresh(true));
   function options(select, items, label) { select.replaceChildren(); if (!items.length) { const empty = make('option', label); empty.value = ''; select.append(empty); } for (const item of items) { const option = make('option', item.name); option.value = item.id; select.append(option); } }
   async function loadConfig() {
     const config = await api('/api/config'); $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
@@ -251,7 +284,7 @@
   window.addEventListener('beforeunload',event => { const unsaved = [...queue.records.values()].filter(r => r.input?.text && r.seq !== r.savedSeq); for (const r of unsaved) stash(r); if (unsaved.length) { event.preventDefault(); event.returnValue = ''; } });
   async function start() {
     const fragment = new URLSearchParams(location.hash.slice(1)); const bootstrap = fragment.get('bootstrap'); history.replaceState(null,'',location.pathname + location.search);
-    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); setInterval(() => { refresh(); if (activeView === 'settings') discovery.load(); },5000); } catch (_) { showSessionError(); }
+    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); scheduleStatusPoll(); } catch (_) { showSessionError(); }
   }
   start();
 })();

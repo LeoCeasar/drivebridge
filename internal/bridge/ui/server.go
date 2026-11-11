@@ -16,7 +16,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/rclone/rclone/internal/bridge/auth"
+	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/store"
 )
 
 //go:embed assets/*
@@ -47,6 +49,8 @@ func respond(w http.ResponseWriter, status int, v any) {
 }
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
+	messages["status_unavailable"] = "本机状态读取暂未完成，请稍后刷新。"
+	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
 	messages["discovery_unclassified"] = "暂时无法核验目录属于个人还是共享；旧清单已保留，请重新扫描后重试。"
@@ -55,6 +59,8 @@ func respondError(w http.ResponseWriter, status int, code string) {
 }
 func apiError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, manager.ErrPending), errors.Is(err, store.ErrLocked), errors.Is(err, store.ErrBusy), errors.Is(err, auth.ErrBusy), errors.Is(err, auth.ErrReferencesBusy):
+		respondError(w, 503, "local_busy")
 	case errors.Is(err, auth.ErrUserMissing):
 		respondError(w, http.StatusConflict, "user_authorization_required")
 	case errors.Is(err, model.ErrVersionChanged) || errors.Is(err, model.ErrGenerationChanged) || errors.Is(err, model.ErrIdentityChanged):
@@ -148,11 +154,12 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		v, err := h.backend.Status(r.Context())
 		if err != nil {
-			apiError(w, err)
+			respondError(w, 503, "status_unavailable")
 			return
 		}
 		for i := range v.Mounts {
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
+			v.Mounts[i].StatusWarning = safeCode(v.Mounts[i].StatusWarning)
 		}
 		_, v.CanRetry = h.backend.(SyncRetrier)
 		respond(w, 200, v)
