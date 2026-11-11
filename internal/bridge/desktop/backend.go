@@ -16,9 +16,10 @@ import (
 )
 
 type managerBackend struct {
-	manager *manager.Manager
-	open    func(context.Context) error
-	startup desktopstartup.Spec
+	manager  *manager.Manager
+	open     func(context.Context) error
+	openView func(context.Context, string) error
+	startup  desktopstartup.Spec
 }
 
 func (b *managerBackend) Mounts(ctx context.Context) ([]Mount, error) {
@@ -59,6 +60,36 @@ func (b *managerBackend) Retry(ctx context.Context, id model.MountID) error {
 	return b.manager.Retry(ctx, id)
 }
 func (b *managerBackend) OpenManagement(ctx context.Context) error { return b.open(ctx) }
+func (b *managerBackend) OpenConflicts(ctx context.Context) error {
+	return b.openView(ctx, "conflicts")
+}
+
+// ConflictCount observes persisted status across the complete configuration.
+// Archived mounts remain actionable in the management page and count here too.
+func (b *managerBackend) ConflictCount(ctx context.Context) (int, error) {
+	cfg, err := b.manager.LoadConfig(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return configuredConflictCount(ctx, cfg.Mounts, b)
+}
+
+func configuredConflictCount(ctx context.Context, mounts []model.Mount, reader interface {
+	Status(context.Context, model.MountID) (model.MountStatus, error)
+}) (int, error) {
+	total := 0
+	for _, mount := range mounts {
+		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		status, err := reader.Status(readCtx, mount.ID)
+		cancel()
+		if err != nil {
+			return 0, err
+		}
+		total += status.Conflicts
+	}
+	return total, nil
+}
+
 func (b *managerBackend) OpenFolder(ctx context.Context, id model.MountID) error {
 	m, err := b.manager.ResolveMount(ctx, string(id))
 	if err != nil {

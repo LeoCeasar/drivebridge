@@ -4,16 +4,12 @@ package tray
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"runtime"
 	"sync/atomic"
 
 	"github.com/getlantern/systray"
 )
-
-//go:embed assets/*.png assets/*.ico
-var icons embed.FS
 
 var nativeStarted atomic.Bool
 
@@ -80,23 +76,13 @@ func RunWithShutdown(ctx context.Context, initial View, updates <-chan View, act
 					item.Hide()
 				}
 			}
-			state := v.State
-			switch state {
-			case "ready", "syncing", "conflict", "error", "stopped":
-			case "auth":
-				state = "error"
-			default:
-				state = "unavailable"
+			systray.SetIcon(iconData(v, runtime.GOOS))
+			// macOS shows the count beside the icon. Other desktops use the
+			// bitmap badge; tooltip and menu always retain the exact total.
+			if runtime.GOOS == "darwin" {
+				systray.SetTitle(badgeTitle(v))
 			}
-			ext := ".png"
-			if runtime.GOOS == "windows" {
-				ext = ".ico"
-			}
-			data, _ := icons.ReadFile("assets/" + state + ext)
-			systray.SetIcon(data)
-			// The menu keeps state explicit even on monochrome desktop themes.
-			systray.SetTitle("DB")
-			systray.SetTooltip("DriveBridge · " + stateLabel(v.State) + " " + v.Text)
+			systray.SetTooltip(trayTooltip(v))
 			if !readySent {
 				// Upstream runs onReady on a worker goroutine, never the UI thread.
 				select {

@@ -16,8 +16,9 @@ type Mount struct {
 }
 type MountView struct {
 	Mount
-	Status model.MountStatus `json:"status"`
-	Error  string            `json:"error,omitempty"`
+	Status            model.MountStatus `json:"status"`
+	Error             string            `json:"error,omitempty"`
+	StatusUnavailable bool              `json:"status_unavailable,omitempty"`
 }
 
 // AccountView contains cached discovery status; polling never starts a login or scan.
@@ -31,35 +32,44 @@ type AccountView struct {
 	LastScan   time.Time       `json:"last_scan,omitempty"`
 }
 type State struct {
-	Accounts     []AccountView `json:"accounts,omitempty"`
-	AccountError string        `json:"account_error,omitempty"`
-	Kind         string        `json:"kind"`
-	Text         string        `json:"text"`
-	Mounts       []MountView   `json:"mounts"`
-	Autostart    bool          `json:"autostart"`
-	Busy         bool          `json:"busy"`
-	Error        string        `json:"error,omitempty"`
+	Accounts       []AccountView `json:"accounts,omitempty"`
+	AccountError   string        `json:"account_error,omitempty"`
+	ConflictCount  int           `json:"conflict_count"`
+	ConflictsKnown bool          `json:"conflicts_known"`
+	Kind           string        `json:"kind"`
+	Text           string        `json:"text"`
+	Mounts         []MountView   `json:"mounts"`
+	Autostart      bool          `json:"autostart"`
+	Busy           bool          `json:"busy"`
+	Error          string        `json:"error,omitempty"`
 }
 
 // Aggregate only reports synced for running mounts with positively confirmed
 // cloud and local state. Missing or stopped mounts remain visible in the result.
 func Aggregate(mounts []MountView) State {
-	out := State{Kind: "setup", Text: "尚未配置挂载", Mounts: mounts}
+	out := State{Kind: "setup", Text: "尚未配置挂载", Mounts: mounts, ConflictsKnown: true}
 	if len(mounts) == 0 {
 		return out
 	}
 	priority := -1
 	counts := map[string]int{}
 	for _, m := range mounts {
+		if m.StatusUnavailable {
+			out.ConflictsKnown = false
+		}
+		out.ConflictCount += m.Status.Conflicts
 		kind, rank := mountState(m)
 		counts[kind]++
 		if rank > priority {
 			out.Kind, priority = kind, rank
 		}
 	}
+	if !out.ConflictsKnown {
+		out.ConflictCount = 0
+	}
 	labels := map[string]string{"synced": "已同步", "syncing": "正在同步", "stopped": "有挂载已停止", "starting": "正在恢复挂载", "unavailable": "状态暂不可用", "conflict": "有文件需要合并", "error": "同步需要处理", "unauthorized": "需要重新授权", "offline": "连接暂不可用"}
 	out.Text = labels[out.Kind]
-	if out.Kind == "conflict" {
+	if out.Kind == "conflict" && out.ConflictsKnown {
 		n := 0
 		for _, m := range mounts {
 			n += m.Status.Conflicts

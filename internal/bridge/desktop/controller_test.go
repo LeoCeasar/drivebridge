@@ -83,6 +83,7 @@ func (b *fixtureBackend) Start(_ context.Context, _ model.MountID, _ bool) error
 func (b *fixtureBackend) Stop(context.Context, model.MountID) error       { return nil }
 func (b *fixtureBackend) Retry(context.Context, model.MountID) error      { return nil }
 func (b *fixtureBackend) OpenManagement(context.Context) error            { return nil }
+func (b *fixtureBackend) OpenConflicts(context.Context) error             { return nil }
 func (b *fixtureBackend) OpenFolder(context.Context, model.MountID) error { return nil }
 func (b *fixtureBackend) SetAutostart(context.Context, bool) error        { return nil }
 func (b *fixtureBackend) Autostart(context.Context) (bool, error)         { return false, nil }
@@ -202,5 +203,101 @@ func TestAccountReadFailureKeepsSyncStatusIndependent(t *testing.T) {
 	state := NewController(context.Background(), b, ControllerOptions{}).Poll(context.Background())
 	if state.AccountError != "operation_failed" || state.Kind != "stopped" {
 		t.Fatal(state)
+	}
+}
+
+type countFixtureBackend struct {
+	fixtureBackend
+	statusErr map[model.MountID]error
+	mountsErr error
+}
+
+func (b *countFixtureBackend) Mounts(ctx context.Context) ([]Mount, error) {
+	mounts, err := b.fixtureBackend.Mounts(ctx)
+	if b.mountsErr != nil {
+		err = b.mountsErr
+	}
+	return mounts, err
+}
+func (b *countFixtureBackend) Status(ctx context.Context, id model.MountID) (model.MountStatus, error) {
+	s, _ := b.fixtureBackend.Status(ctx, id)
+	return s, b.statusErr[id]
+}
+func TestTrayConflictCountsRequireEveryMountStatus(t *testing.T) {
+	b := &countFixtureBackend{fixtureBackend: fixtureBackend{mounts: []Mount{{ID: "a"}, {ID: "b"}}, status: map[model.MountID]model.MountStatus{"a": {Conflicts: 2}, "b": {Conflicts: 3}}}}
+	c := NewController(context.Background(), b, ControllerOptions{})
+	v := trayView(c.Poll(context.Background()))
+	if !v.ConflictsKnown || v.ConflictCount != 5 {
+		t.Fatalf("known total: %+v", v)
+	}
+	b.statusErr = map[model.MountID]error{"b": errors.New("unreadable status")}
+	v = trayView(c.Poll(context.Background()))
+	if v.ConflictsKnown || !v.Mounts[1].StatusUnavailable {
+		t.Fatalf("partial total claimed complete: %+v", v)
+	}
+	b.mountsErr = errors.New("unreadable config")
+	if v = trayView(c.Poll(context.Background())); v.ConflictsKnown {
+		t.Fatalf("failed config claimed zero: %+v", v)
+	}
+	b.mountsErr = nil
+	b.mounts = nil
+	if v = trayView(c.Poll(context.Background())); !v.ConflictsKnown || v.ConflictCount != 0 {
+		t.Fatalf("empty configured mounts: %+v", v)
+	}
+}
+
+func TestOpenConflictsReachesManagementConflictView(t *testing.T) {
+	var opened string
+	b := &managerBackend{openView: func(_ context.Context, view string) error { opened = view; return nil }}
+	if err := NewController(context.Background(), b, ControllerOptions{}).Handle(context.Background(), "open_conflicts", ""); err != nil {
+		t.Fatal(err)
+	}
+	if opened != "conflicts" {
+		t.Fatalf("opened view %q", opened)
+	}
+}
+
+type globalCountBackend struct {
+	fixtureBackend
+	count     int
+	err       error
+	statusErr error
+}
+
+func (b *globalCountBackend) Status(ctx context.Context, id model.MountID) (model.MountStatus, error) {
+	status, _ := b.fixtureBackend.Status(ctx, id)
+	return status, b.statusErr
+}
+func (b *globalCountBackend) ConflictCount(context.Context) (int, error) { return b.count, b.err }
+func TestGlobalConflictCountOverridesActiveMountSubtotal(t *testing.T) {
+	b := &globalCountBackend{fixtureBackend: fixtureBackend{mounts: []Mount{{ID: "active"}}, status: map[model.MountID]model.MountStatus{"active": {Conflicts: 2}}}, count: 5}
+	c := NewController(context.Background(), b, ControllerOptions{})
+	v := trayView(c.Poll(context.Background()))
+	if !v.ConflictsKnown || v.ConflictCount != 5 || v.Text != "5 个冲突需要处理" {
+		t.Fatalf("archived conflict count lost or inconsistent: %+v", v)
+	}
+	b.err = errors.New("archived state unreadable")
+	v = trayView(c.Poll(context.Background()))
+	if v.ConflictsKnown {
+		t.Fatalf("unreadable archived mount reported complete: %+v", v)
+	}
+	b.err = nil
+	b.mounts = []Mount{{ID: "active"}}
+	b.statusErr = errors.New("active state unreadable")
+	v = trayView(c.Poll(context.Background()))
+	if v.ConflictsKnown {
+		t.Fatalf("failed active read hidden by global count: %+v", v)
+	}
+}
+func TestConfiguredConflictCountIncludesArchivedMountsAndRejectsPartialReads(t *testing.T) {
+	mounts := []model.Mount{{ID: "active"}, {ID: "archived", Archived: true}}
+	b := &countFixtureBackend{fixtureBackend: fixtureBackend{status: map[model.MountID]model.MountStatus{"active": {Conflicts: 2}, "archived": {Conflicts: 5}}}}
+	count, err := configuredConflictCount(context.Background(), mounts, b)
+	if err != nil || count != 7 {
+		t.Fatalf("global count %d: %v", count, err)
+	}
+	b.statusErr = map[model.MountID]error{"archived": errors.New("state unreadable")}
+	if count, err = configuredConflictCount(context.Background(), mounts, b); err == nil || count != 0 {
+		t.Fatalf("partial count %d: %v", count, err)
 	}
 }

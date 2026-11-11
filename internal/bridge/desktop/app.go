@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"time"
@@ -80,7 +81,7 @@ func Run(ctx context.Context, o Options) error {
 	if host != nil {
 		defer host.Close(context.Background())
 	}
-	openManagement := func(ctx context.Context) error {
+	openView := func(ctx context.Context, view string) error {
 		var address string
 		var err error
 		if host != nil {
@@ -91,9 +92,14 @@ func Run(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
+		address, err = managementViewURL(address, view)
+		if err != nil {
+			return err
+		}
 		return open(ctx, address)
 	}
-	backend := &managerBackend{manager: o.Manager, open: openManagement, startup: desktopstartup.Spec{Executable: o.Executable, ConfigFile: o.Manager.ConfigFile(), CLIExecutable: o.CLIExecutable}}
+	openManagement := func(ctx context.Context) error { return openView(ctx, "") }
+	backend := &managerBackend{manager: o.Manager, open: openManagement, openView: openView, startup: desktopstartup.Spec{Executable: o.Executable, ConfigFile: o.Manager.ConfigFile(), CLIExecutable: o.CLIExecutable}}
 	controller := NewController(ctx, backend, ControllerOptions{ErrorCode: func(err error) string {
 		if err == nil {
 			return ""
@@ -225,15 +231,29 @@ func Run(ctx context.Context, o Options) error {
 }
 func trayView(s State) tray.View {
 	kind := trayState(s.Kind)
-	v := tray.View{State: kind, Text: s.Text, Autostart: s.Autostart, Busy: s.Busy, AccountError: s.AccountError}
+	v := tray.View{State: kind, Text: s.Text, Autostart: s.Autostart, Busy: s.Busy, AccountError: s.AccountError, ConflictCount: s.ConflictCount, ConflictsKnown: s.ConflictsKnown}
 	for _, account := range s.Accounts {
 		v.Accounts = append(v.Accounts, tray.Account{ID: string(account.ID), Name: account.Name, State: account.State, Configured: account.Configured, Enabled: account.Enabled, CanRescan: account.CanRescan, LastScan: account.LastScan})
 	}
 	for _, m := range s.Mounts {
 		state, _ := mountState(m)
-		v.Mounts = append(v.Mounts, tray.Mount{ID: string(m.ID), Name: m.Name, Mountpoint: m.Mountpoint, State: trayState(state), Running: m.Status.Running, Desired: m.Desired, Pending: m.Status.Queued + m.Status.Inflight + m.Status.VFSPending, Conflicts: m.Status.Conflicts, Error: mountError(m)})
+		v.Mounts = append(v.Mounts, tray.Mount{ID: string(m.ID), Name: m.Name, Mountpoint: m.Mountpoint, State: trayState(state), Running: m.Status.Running, Desired: m.Desired, Pending: m.Status.Queued + m.Status.Inflight + m.Status.VFSPending, Conflicts: m.Status.Conflicts, StatusUnavailable: m.StatusUnavailable, Error: mountError(m)})
 	}
 	return v
+}
+
+// Keep the private bootstrap fragment while selecting the existing conflict UI.
+func managementViewURL(address, view string) (string, error) {
+	u, err := url.Parse(address)
+	if err != nil {
+		return "", err
+	}
+	if view != "" {
+		query := u.Query()
+		query.Set("view", view)
+		u.RawQuery = query.Encode()
+	}
+	return u.String(), nil
 }
 
 func trayState(kind string) string {

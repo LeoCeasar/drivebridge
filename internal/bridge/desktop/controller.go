@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ type Backend interface {
 	Stop(context.Context, model.MountID) error
 	Retry(context.Context, model.MountID) error
 	OpenManagement(context.Context) error
+	OpenConflicts(context.Context) error
 	OpenFolder(context.Context, model.MountID) error
 	SetAutostart(context.Context, bool) error
 	Autostart(context.Context) (bool, error)
@@ -26,6 +28,13 @@ type AccountBackend interface {
 	Accounts(context.Context) ([]AccountView, error)
 	RescanAccount(context.Context, model.ProfileID) error
 }
+
+// ConflictCountBackend includes every configured mount, including archived ones.
+// A failed read must return an error rather than a partial total.
+type ConflictCountBackend interface {
+	ConflictCount(context.Context) (int, error)
+}
+
 type ControllerOptions struct {
 	Now       func() time.Time
 	ErrorCode func(error) string
@@ -78,6 +87,7 @@ func (c *Controller) Poll(ctx context.Context) State {
 		v := MountView{Mount: m, Status: s}
 		if err != nil {
 			v.Error = c.o.ErrorCode(err)
+			v.StatusUnavailable = true
 		}
 		if !s.Running && m.Desired && !permanent(v.Error) && !permanent(s.LastError) {
 			c.recoverMount(m.ID)
@@ -95,6 +105,19 @@ func (c *Controller) Poll(ctx context.Context) State {
 		views = append(views, v)
 	}
 	out := Aggregate(views)
+	if counts, ok := c.b.(ConflictCountBackend); ok {
+		out.ConflictCount, err = counts.ConflictCount(ctx)
+		out.ConflictsKnown = out.ConflictsKnown && err == nil
+		if !out.ConflictsKnown {
+			out.ConflictCount = 0
+		}
+		if out.Kind == "conflict" {
+			out.Text = "有文件需要合并"
+			if out.ConflictsKnown {
+				out.Text = fmt.Sprintf("%d 个冲突需要处理", out.ConflictCount)
+			}
+		}
+	}
 	if accounts, ok := c.b.(AccountBackend); ok {
 		out.Accounts, err = accounts.Accounts(ctx)
 		if err != nil {
@@ -185,6 +208,8 @@ func (c *Controller) Handle(ctx context.Context, kind string, id model.MountID) 
 	switch kind {
 	case "open_manager":
 		err = c.b.OpenManagement(ctx)
+	case "open_conflicts":
+		err = c.b.OpenConflicts(ctx)
 	case "enable_autostart":
 		err = c.b.SetAutostart(ctx, true)
 	case "disable_autostart":

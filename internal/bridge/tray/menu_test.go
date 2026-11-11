@@ -228,3 +228,68 @@ func TestMissingRuntimeTrayDoesNotClaimSavedLogin(t *testing.T) {
 		t.Fatal("runtime recovery guidance missing")
 	}
 }
+
+func TestConflictMenuShowsExactTotalsAndDispatchesMergeAction(t *testing.T) {
+	for _, tc := range []struct {
+		view    View
+		label   string
+		enabled bool
+	}{
+		{View{}, "需要合并 · 状态待确认", true},
+		{View{ConflictsKnown: true}, "无需合并（0）", false},
+		{View{ConflictsKnown: true, ConflictCount: 125}, "需要合并（125）", true},
+	} {
+		found := false
+		for _, e := range menu(tc.view) {
+			if e.Key == "conflicts" {
+				found = true
+				if e.Label != tc.label || e.Enabled != tc.enabled || e.Action.Kind != "open_conflicts" {
+					t.Fatalf("unexpected merge action: %+v", e)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("merge action missing")
+		}
+	}
+}
+
+func TestUnreadableMountDoesNotReportZeroCounts(t *testing.T) {
+	for _, e := range menu(View{Mounts: []Mount{{ID: "m", StatusUnavailable: true}}}) {
+		if strings.HasSuffix(e.Key, ":status") && (strings.Contains(e.Label, "0") || !strings.Contains(e.Label, "待确认")) {
+			t.Fatalf("unreadable mount counts: %s", e.Label)
+		}
+	}
+}
+
+func TestServeDispatchesMergeActionAndRejectsKnownZero(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clicks, actions := make(chan string, 2), make(chan Action, 2)
+	updates, renders := make(chan View), make(chan struct{}, 2)
+	go func() {
+		_ = serve(ctx, View{ConflictsKnown: true, ConflictCount: 125}, updates, clicks, actions, func(View, []menuEntry) { renders <- struct{}{} })
+	}()
+	<-renders
+	clicks <- "conflicts"
+	select {
+	case a := <-actions:
+		if a != (Action{Kind: "open_conflicts"}) {
+			t.Fatal(a)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("merge action not dispatched")
+	}
+	updates <- View{ConflictsKnown: true}
+	<-renders
+	clicks <- "conflicts"
+	clicks <- "open"
+	select {
+	case a := <-actions:
+		if a != (Action{Kind: "open_manager"}) {
+			t.Fatalf("disabled zero-count action dispatched: %+v", a)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("menu consumer stalled")
+	}
+}

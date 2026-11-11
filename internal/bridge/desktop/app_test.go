@@ -301,3 +301,14 @@ func TestDesktopShutdownClosesOwnedResourcesBeforeNativeTermination(t *testing.T
 	default:
 	}
 }
+
+func TestConflictManagementURLPreservesPrivateBootstrap(t *testing.T) {
+	got, err := managementViewURL("http://127.0.0.1:1234/?existing=value#bootstrap=private-token", "conflicts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(got)
+	if err != nil || u.Query().Get("view") != "conflicts" || u.Query().Get("existing") != "value" || u.Fragment != "bootstrap=private-token" {
+		t.Fatalf("conflicts URL lost bootstrap or target: %q (%v)", got, err)
+	}
+}

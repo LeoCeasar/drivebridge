@@ -20,6 +20,8 @@ type View struct {
 	State, Text     string
 	Accounts        []Account
 	AccountError    string
+	ConflictCount   int
+	ConflictsKnown  bool
 	Mounts          []Mount
 	Autostart, Busy bool
 }
@@ -27,6 +29,7 @@ type View struct {
 type Mount struct {
 	ID, Name, Mountpoint, State string
 	Running, Desired            bool
+	StatusUnavailable           bool
 	Pending, Conflicts          int
 	Error                       string
 }
@@ -69,6 +72,7 @@ func menu(v View) []menuEntry {
 	}
 	entries := []menuEntry{
 		{Key: "status", Label: "DriveBridge · " + text},
+		{Key: "conflicts", Label: conflictLabel(v), Enabled: !v.ConflictsKnown || v.ConflictCount > 0, Action: Action{Kind: "open_conflicts"}},
 		{Key: "open", Label: "打开管理页", Enabled: true, Action: Action{Kind: "open_manager"}},
 		{Key: "mounts", Label: "挂载", Enabled: len(v.Mounts) > 0},
 	}
@@ -104,9 +108,13 @@ func menu(v View) []menuEntry {
 		if name == "" {
 			name = m.ID
 		}
+		counts := fmt.Sprintf("待处理 %d · 冲突 %d", m.Pending, m.Conflicts)
+		if m.StatusUnavailable {
+			counts = "待处理与冲突：状态待确认"
+		}
 		entries = append(entries,
 			menuEntry{Key: parent, Parent: "mounts", Label: name + " · " + stateLabel(m.State), Tooltip: m.Error, Enabled: true},
-			menuEntry{Key: parent + ":status", Parent: parent, Label: fmt.Sprintf("待处理 %d · 冲突 %d", m.Pending, m.Conflicts), Tooltip: m.Error},
+			menuEntry{Key: parent + ":status", Parent: parent, Label: counts, Tooltip: m.Error},
 		)
 		if m.Error != "" {
 			entries = append(entries, menuEntry{Key: parent + ":error", Parent: parent, Label: "错误：" + m.Error})
@@ -133,6 +141,16 @@ func menu(v View) []menuEntry {
 		menuEntry{Key: "quit", Label: "退出托盘（继续同步）", Enabled: true, Action: Action{Kind: "quit"}},
 	)
 	return entries
+}
+
+func conflictLabel(v View) string {
+	if !v.ConflictsKnown {
+		return "需要合并 · 状态待确认"
+	}
+	if v.ConflictCount <= 0 {
+		return "无需合并（0）"
+	}
+	return fmt.Sprintf("需要合并（%d）", v.ConflictCount)
 }
 
 // serve owns the menu model and queues actions without stalling state updates.
