@@ -94,6 +94,21 @@ func (m *Manager) WithInstallationLease(ctx context.Context, fn func() error) er
 			if err != nil {
 				return err
 			}
+			recorded := false
+			for _, owner := range old {
+				if owner.Root == spec.Paths.Root {
+					recorded = true
+					break
+				}
+			}
+			if !recorded {
+				// A configuration entry is intent, not evidence of a historical
+				// store. The global lifecycle lease prevents its first start here.
+				if err = installationUnusedRoot(spec.Paths.Root); err != nil {
+					return err
+				}
+				continue
+			}
 			owners = append(owners, ownershipFor(file, spec))
 		}
 	}
@@ -182,6 +197,33 @@ func (m *Manager) WithInstallationLease(ctx context.Context, fn func() error) er
 		return err
 	}
 	return fn()
+}
+
+// Only an absent or strictly empty plain root can represent an unstarted mount.
+// Never adopt an occupied directory, even if it contains an otherwise valid DB;
+// persisted historical owners always take the full store audit path instead.
+func installationUnusedRoot(root string) error {
+	if err := platform.CheckNoSymlinks(root); err != nil {
+		return err
+	}
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return ErrConfig
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("%w: configured mount has unaccounted data", ErrConfig)
+	}
+	return nil
 }
 
 func installationRegular(path string) error {

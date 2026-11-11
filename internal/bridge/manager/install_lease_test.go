@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,5 +310,104 @@ func TestInstallationLeaseRejectsOpenHandlesWithoutDiscardingCache(t *testing.T)
 	defer runtime.mu.Unlock()
 	if runtime.unmounted || !runtime.pending {
 		t.Fatal("unsafe forced stop")
+	}
+}
+
+func TestInstallationLeaseAllowsUnstartedConfiguredMountWithoutCreatingStore(t *testing.T) {
+	for _, emptyDirectory := range []bool{false, true} {
+		t.Run(fmt.Sprint(emptyDirectory), func(t *testing.T) {
+			m, id, _, _ := fixture(t, nil)
+			installationGates(m)
+			spec, err := m.spec(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if emptyDirectory {
+				if err = os.MkdirAll(spec.Paths.Root, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			called := false
+			if err = m.WithInstallationLease(context.Background(), func() error { called = true; return nil }); err != nil || !called {
+				t.Fatalf("unstarted mount blocks installer: called=%v err=%v", called, err)
+			}
+			contents, err := os.ReadDir(spec.Paths.Root)
+			if emptyDirectory {
+				if err != nil || len(contents) != 0 {
+					t.Fatal("installation wrote into unused root", contents, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatal("installation created unused root", contents, err)
+			}
+		})
+	}
+}
+
+func TestInstallationLeaseStillRejectsHistoricalMissingStore(t *testing.T) {
+	m, id, _, _ := fixture(t, nil)
+	installationGates(m)
+	spec, err := m.spec(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.recordOwner(spec); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err = m.WithInstallationLease(context.Background(), func() error { called = true; return nil }); err == nil || called {
+		t.Fatalf("missing historical store accepted: called=%v err=%v", called, err)
+	}
+	if _, err = os.Lstat(spec.Paths.Root); !os.IsNotExist(err) {
+		t.Fatal("missing historical root was created", err)
+	}
+}
+
+func TestInstallationLeaseRejectsUnaccountedNonemptyConfiguredRoot(t *testing.T) {
+	for _, content := range []string{"file", "directory", "valid-store"} {
+		t.Run(content, func(t *testing.T) {
+			m, id, _, _ := fixture(t, nil)
+			installationGates(m)
+			spec, err := m.spec(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.MkdirAll(spec.Paths.Root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			switch content {
+			case "file":
+				if err = os.WriteFile(filepath.Join(spec.Paths.Root, "unaccounted"), []byte("retain"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err = os.Mkdir(filepath.Join(spec.Paths.Root, "empty-child"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "valid-store":
+				s, err := store.Open(spec.Paths.Root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = s.BindScope(context.Background(), ownershipFor(m.ConfigFile(), spec).Scope); err != nil {
+					t.Fatal(err)
+				}
+				if err = s.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.ReadDir(spec.Paths.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err = m.WithInstallationLease(context.Background(), func() error { called = true; return nil })
+			if err == nil || called {
+				t.Fatalf("unaccounted occupied root accepted: called=%v err=%v", called, err)
+			}
+			after, err := os.ReadDir(spec.Paths.Root)
+			if err != nil || len(after) != len(before) {
+				t.Fatal("unaccounted root changed", before, after, err)
+			}
+		})
 	}
 }
