@@ -61,10 +61,13 @@ def verify(root, target=None, arch=None):
         safe_name(name)
         if not isinstance(h, str) or len(h) != 64:
             raise ValueError('invalid Git runtime digest')
-    if metadata.get('version') != json.loads((HERE / 'git-runtime-lock.json').read_text())['version']:
+    lock = json.loads((HERE / 'git-runtime-lock.json').read_text())
+    if metadata.get('version') != lock['version']:
         raise ValueError('Git runtime version differs from lock')
     suffix = '.exe' if metadata['platform'] == 'windows' else ''
     required = {'bin/git' + suffix, 'SOURCE.json'}
+    if metadata['platform'] == 'windows':
+        required |= {'bin/' + name for name in lock['windows'][metadata['architecture']].get('runtime_dlls', [])}
     if not required <= metadata['files'].keys() or not any(p.startswith('licenses/') for p in metadata['files']):
         raise ValueError('Git runtime or license missing')
     if inventory(root) != metadata['files']:
@@ -94,6 +97,7 @@ def build(args):
         (result / 'licenses').mkdir()
         if args.platform == 'windows':
             pin = lock['windows'][args.architecture]
+            dlls = pin.get('runtime_dlls')
             archive = work / 'mingit.zip'
             download(pin, archive)
             with zipfile.ZipFile(archive) as z:
@@ -107,7 +111,7 @@ def build(args):
                 for info in z.infolist():
                     safe_name(info.filename.rstrip('/'))
                     name = info.filename
-                    if name == bindir + 'git.exe' or name.startswith(bindir) and name.endswith('.dll'):
+                    if name == bindir + 'git.exe' or name.startswith(bindir) and name.endswith('.dll') and (dlls is None or PurePosixPath(name).name in dlls):
                         dest = result / 'bin' / PurePosixPath(name).name
                     elif name.startswith(licenses) and not info.is_dir():
                         dest = result / 'licenses' / name.removeprefix(licenses)

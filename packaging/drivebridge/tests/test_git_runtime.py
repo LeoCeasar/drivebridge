@@ -22,6 +22,9 @@ class GitRuntimeTests(unittest.TestCase):
             with zipfile.ZipFile(archive, 'w') as z:
                 z.writestr('ucrt64/bin/git.exe', b'Git binary')
                 z.writestr('ucrt64/bin/libiconv-2.dll', b'Native dependency')
+                for name in ('libintl-8.dll', 'libpcre2-8-0.dll', 'zlib1.dll'):
+                    z.writestr('ucrt64/bin/' + name, b'Native dependency')
+                z.writestr('ucrt64/bin/MicroCom.Runtime.dll', b'Unused credential-manager dependency')
                 z.writestr('ucrt64/share/licenses/libiconv/COPYING', 'dependency license')
                 z.writestr('LICENSE.txt', 'Git for Windows license')
                 z.writestr('cmd/git.exe', b'Wrapper that must not replace the real binary')
@@ -34,6 +37,7 @@ class GitRuntimeTests(unittest.TestCase):
             self.assertEqual((out / 'bin/libiconv-2.dll').read_bytes(), b'Native dependency')
             self.assertEqual((out / 'licenses/git-for-windows.LICENSE.txt').read_text(), 'Git for Windows license')
             self.assertEqual((out / 'licenses/libiconv/COPYING').read_text(), 'dependency license')
+            self.assertFalse((out / 'bin/MicroCom.Runtime.dll').exists(), 'unrelated credential-manager libraries must not ship')
 
     def fixture(self, root):
         (root / 'bin').mkdir()
