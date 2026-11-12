@@ -32,6 +32,8 @@ if ($Desktop) { $mode += '--desktop' }
 Invoke-Native python (@("$here/package.py", 'preflight', '--platform', 'windows', '--arch', $Arch) + $mode)
 $wixVersion = (& wix --version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $wixVersion -notmatch '^4\.') { throw 'WiX Toolset 4 is required' }
+$innoVersion = (Get-Item -LiteralPath (Get-Command ISCC).Source).VersionInfo.ProductVersion
+if (-not $innoVersion -or $innoVersion -notmatch '^6\.') { throw 'Inno Setup 6 is required' }
 if (-not $CliOnly) {
     $driver = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' -ErrorAction SilentlyContinue
     if (-not $driver -or -not (Test-Path (Join-Path $driver.InstallDir 'bin/winfsp-x64.dll'))) {
@@ -86,8 +88,6 @@ try {
     Invoke-Native python (@("$here/package.py", 'stage', '--platform', 'windows', '--arch', $Arch,
         '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--consume-binary', '--edition', $Edition, '--lark-package', $LarkPackage,
         '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode + $desktopStage + $sessionStage + $gitStage)
-    $innoVersion = (& ISCC '/?' 2>&1 | Out-String).Trim().Split("`n")[0]
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Inno Setup version' }
     $versions = @{ wix = $wixVersion; inno = $innoVersion; powershell = $PSVersionTable.PSVersion.ToString(); dotnet = $dotnetVersion }
     $versions | ConvertTo-Json | Set-Content "$work/tools.json" -Encoding utf8NoBOM
     $signature = 'unsigned_test'
