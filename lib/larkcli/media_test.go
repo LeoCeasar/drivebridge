@@ -36,7 +36,9 @@ func TestMediaCLIProcess(t *testing.T) {
 	}
 	cwd, err := os.Getwd()
 	info, statErr := os.Stat(cwd)
-	if err != nil || statErr != nil || info.Mode().Perm()&0077 != 0 || os.Getenv("LARKSUITE_CLI_CONFIG_DIR") == "" {
+	// Windows reports 0777 for every directory; privacy there is ACL-based.
+	public := runtime.GOOS != "windows" && statErr == nil && info.Mode().Perm()&0077 != 0
+	if err != nil || statErr != nil || public || os.Getenv("LARKSUITE_CLI_CONFIG_DIR") == "" {
 		os.Exit(92)
 	}
 	body := mediaPNG
@@ -228,6 +230,9 @@ func TestOpenDocMediaPrivateRelativeDownloadAndCleanup(t *testing.T) {
 func TestOpenDocMediaRejectsIncompleteUnownedOrNonImageOutput(t *testing.T) {
 	for _, scenario := range []string{"text", "empty", "mismatch", "oversize", "large-file", "quoted", "negative", "escape", "different", "symlink", "directory", "missing", "failed", "pending", "null-result", "no-size", "null-size", "no-path", "null-path", "public-directory", "auto-wrong-extension", "auto-unknown-extension", "auto-sibling", "auto-traversal", "auto-double-extension", "identity", "exit", "error"} {
 		t.Run(scenario, func(t *testing.T) {
+			if scenario == "public-directory" && runtime.GOOS == "windows" {
+				t.Skip("POSIX mode bits do not express directory privacy on Windows")
+			}
 			d, temp, _ := mediaDrive(t, scenario)
 			rc, err := d.OpenDocMedia(context.Background(), "imageToken")
 			if err == nil || rc != nil {
