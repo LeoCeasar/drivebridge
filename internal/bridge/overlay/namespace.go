@@ -333,7 +333,8 @@ func (f *Fs) remove(ctx context.Context, remote string, folder bool) error {
 			if j.State == model.StatusMerging || j.State == model.StatusUploading || j.State == model.StatusAwaitingVerification {
 				return errors.Join(ErrDeleteConflict, store.ErrBusy)
 			}
-			return f.deleteConflict(ctx, e)
+			// Explicit unlink supersedes already-durable, undispatched edits.
+			// CommitNamespace retains recovery records and settles old conflicts.
 		}
 	}
 

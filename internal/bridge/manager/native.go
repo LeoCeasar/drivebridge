@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -216,7 +217,9 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err != nil {
 		return nil, err
 	}
-	f, err := overlay.New(overlay.Dependencies{Store: s, Cloud: client, ProfileID: spec.Profile.ID, MountID: spec.Mount.ID, Account: account})
+	f, err := overlay.New(overlay.Dependencies{Store: s, Cloud: client, ProfileID: spec.Profile.ID, MountID: spec.Mount.ID, Account: account,
+		DeletionCommit: func(context.Context, model.Entry, func() (bool, error)) error { return store.ErrBusy },
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +256,24 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	if err != nil {
 		return nil, err
 	}
+	deletionCommit := func(ctx context.Context, entry model.Entry, commit func() (bool, error)) error {
+		err := v.TryExternalReconcile(ctx, entry.Remote, func() (fs.Object, error) {
+			removed, err := commit()
+			if err != nil || removed {
+				return nil, err
+			}
+			return overlayFS.NewObject(ctx, entry.Remote)
+		})
+		if err == nil {
+			parent := path.Dir(entry.Remote)
+			if parent == "." {
+				parent = ""
+			}
+			v.NotifyManagedDirectoryChanged(parent)
+		}
+		return err
+	}
+	overlayFS.SetDeletionCommit(deletionCommit)
 	var native *nativeRuntime
 	defer func() {
 		if !success {
@@ -285,7 +306,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		native.Unmount()
 		return nil, ErrConfig
 	}
-	engine, err := syncer.New(syncer.Dependencies{CheckIdentity: func(ctx context.Context) error {
+	engine, err := syncer.New(syncer.Dependencies{DeletionCommit: deletionCommit, CheckIdentity: func(ctx context.Context) error {
 		binding, err := a.Resolve(ctx, spec.Profile.ID)
 		if err != nil {
 			return err

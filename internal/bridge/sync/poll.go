@@ -167,12 +167,12 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 		var fetchErr error
 		sn, _, fetchErr = e.fetchDoc(ctx, en.Token)
 		if fetchErr != nil {
-			return fetchErr
+			return e.deletionAfterReadFailure(ctx, en, fetchErr)
 		}
 	} else if en.Kind == model.KindFile {
 		sn, err = e.observeFile(ctx, en.Token)
 		if err != nil {
-			return err
+			return e.deletionAfterReadFailure(ctx, en, err)
 		}
 	} else {
 		return nil

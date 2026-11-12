@@ -30,6 +30,11 @@ func (s *Store) SaveConflict(ctx context.Context, c model.Conflict) error {
 			if old.Resolved {
 				return ErrInvalidState
 			}
+			// A pre-deletion remote refresh cannot turn a durable absence
+			// decision back into an ordinary content conflict.
+			if old.Reason == model.ConflictRemoteDeleted && c.Reason != model.ConflictRemoteDeleted {
+				return model.ErrVersionChanged
+			}
 			// SaveDraft owns the draft field. A remote refresh can have waited on
 			// network I/O while the user saved a newer draft in this same record.
 			c.Draft = old.Draft
@@ -39,6 +44,13 @@ func (s *Store) SaveConflict(ctx context.Context, c model.Conflict) error {
 		e, er := entryTx(tx, c.EntryID)
 		if er != nil {
 			return er
+		}
+		var metadata Metadata
+		if er = get(tx, "metadata", string(e.ID), &metadata); er != nil {
+			return er
+		}
+		if metadata.Tombstone {
+			return ErrNotFound
 		}
 		if e.Generation != c.Generation {
 			return model.ErrGenerationChanged
@@ -115,7 +127,7 @@ func (s *Store) resolve(ctx context.Context, r model.ResolveRequest, remote *mod
 		if er := get(tx, "conflicts", string(r.ConflictID), &c); er != nil {
 			return er
 		}
-		if c.Resolved {
+		if c.Resolved || c.Reason == model.ConflictRemoteDeleted {
 			return ErrInvalidState
 		}
 		if c.RemoteRevision != r.ExpectedRemoteRevision {

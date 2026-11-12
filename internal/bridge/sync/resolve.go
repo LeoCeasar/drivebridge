@@ -29,8 +29,14 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 	if captured == nil {
 		return model.Entry{}, model.Job{}, store.ErrNotFound
 	}
-	if err = e.store.SaveDraft(ctx, r.ConflictID, bytes.NewReader(r.Content)); err != nil {
-		return model.Entry{}, model.Job{}, err
+	deleted := captured.Reason == model.ConflictRemoteDeleted
+	if (deleted && r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete) || (!deleted && r.Action != "") {
+		return model.Entry{}, model.Job{}, model.ErrUnsupportedContent
+	}
+	if r.Action != model.ResolveAcceptDelete && (r.Content != nil || r.Action == "") {
+		if err = e.store.SaveDraft(ctx, r.ConflictID, bytes.NewReader(r.Content)); err != nil {
+			return model.Entry{}, model.Job{}, err
+		}
 	}
 	if err = e.check(ctx); err != nil {
 		return model.Entry{}, model.Job{}, err
@@ -46,6 +52,40 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 	}
 	if en.Generation != r.ExpectedGeneration || captured.Generation != r.ExpectedGeneration {
 		return en, model.Job{}, model.ErrGenerationChanged
+	}
+	if captured.Reason == model.ConflictRemoteDeleted {
+		if r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete {
+			return en, model.Job{}, model.ErrUnsupportedContent
+		}
+		items, missing, checkErr := e.remoteMissing(ctx, en)
+		if checkErr != nil {
+			return en, model.Job{}, checkErr
+		}
+		if !missing {
+			return en, model.Job{}, model.ErrVersionChanged
+		}
+		if r.Action == model.ResolveRestoreLocal {
+			name := en.CloudName
+			if name == "" {
+				name = cloudName(en)
+			}
+			for _, item := range items {
+				if item.Name == name {
+					return en, model.Job{}, model.ErrVersionChanged
+				}
+			}
+		}
+		var accepted model.Entry
+		var job model.Job
+		err = e.commitDeletion(ctx, en, func() (bool, error) {
+			var commitErr error
+			accepted, job, commitErr = e.store.ResolveRemoteDeletion(ctx, r)
+			return r.Action == model.ResolveAcceptDelete, commitErr
+		})
+		return accepted, job, err
+	}
+	if r.Action != "" {
+		return en, model.Job{}, model.ErrUnsupportedContent
 	}
 	if en.Token == "" || (en.Kind != model.KindDocx && !model.IsMarkdownFile(en)) {
 		return en, model.Job{}, model.ErrUnsupportedContent
@@ -112,6 +152,55 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 	en, err := e.store.Entry(ctx, c.EntryID)
 	if err != nil {
 		return c, err
+	}
+	if en.Token != "" && (en.Kind == model.KindFile || en.Kind == model.KindDocx) {
+		if cloudErr = e.check(ctx); cloudErr != nil {
+			return c, cloudErr
+		}
+		_, missing, scanErr := e.remoteMissing(ctx, en)
+		if scanErr != nil {
+			return c, scanErr
+		}
+		if missing {
+			fresh, _, missingErr := e.observeDeletion(ctx, en)
+			if missingErr == nil && fresh.ID != "" && fresh.ID != c.ID {
+				list, err := e.store.Conflicts(ctx)
+				if err != nil {
+					return c, err
+				}
+				for _, current := range list {
+					if current.ID == c.ID {
+						return current, nil
+					}
+				}
+				return c, store.ErrNotFound
+			}
+			if fresh.ID != "" {
+				return fresh, missingErr
+			}
+			return c, missingErr
+		}
+		if c.Reason == model.ConflictRemoteDeleted {
+			var actual model.Snapshot
+			if en.Kind == model.KindFile {
+				actual, err = e.observeFile(ctx, en.Token)
+			} else {
+				actual, _, err = e.fetchDoc(ctx, en.Token)
+			}
+			if err != nil {
+				return c, err
+			}
+			if err = e.store.RefreshReappearedConflict(ctx, c, actual); err != nil {
+				return c, err
+			}
+			list, err := e.store.Conflicts(ctx)
+			for _, current := range list {
+				if current.ID == c.ID {
+					return current, err
+				}
+			}
+			return c, store.ErrNotFound
+		}
 	}
 	if (en.Kind == model.KindDocx || model.IsMarkdownFile(en)) && en.Token != "" {
 		cloudErr = e.check(ctx)

@@ -359,6 +359,8 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			return
 		}
 		v := ConflictView{Hunks: []DiffHunk{}, Stale: in.Stale, RefreshWarning: safeCode(in.RefreshWarning), HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
+		v.Reason = in.Conflict.Reason
+		v.RemoteDeleted = in.Conflict.Reason == model.ConflictRemoteDeleted
 		_, v.CanExportCopies = h.backend.(ConflictExporter)
 		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
 			v.Base = string(in.Base)
@@ -431,14 +433,37 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 400, "invalid_request")
 			return
 		}
-		if err := h.backend.SaveDraft(r.Context(), cid, in.Content); err != nil {
-			apiError(w, err)
-			return
-		}
 		current, err := h.backend.Conflict(r.Context(), cid)
 		if err != nil {
 			apiError(w, err)
 			return
+		}
+		deleted := current.Conflict.Reason == model.ConflictRemoteDeleted
+		if (deleted && in.Action != model.ResolveRestoreLocal && in.Action != model.ResolveAcceptDelete) || (!deleted && in.Action != "") {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		// A deletion decision may retain a binary blob without supplying content.
+		// Following deletion must never replace a meaningful saved draft with nil.
+		save := !deleted || (in.Action == model.ResolveRestoreLocal && in.Content != nil)
+		if deleted && save && (!current.Text || !utf8.Valid(in.Content)) {
+			respondError(w, 422, "unsupported_content")
+			return
+		}
+		if save {
+			if err := h.backend.SaveDraft(r.Context(), cid, in.Content); err != nil {
+				apiError(w, err)
+				return
+			}
+			current, err = h.backend.Conflict(r.Context(), cid)
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			if (current.Conflict.Reason == model.ConflictRemoteDeleted) != deleted {
+				respondError(w, 409, "version_changed")
+				return
+			}
 		}
 		if current.Conflict.EntryID != current.Entry.ID || current.Conflict.Generation != in.ExpectedGeneration || current.Entry.Generation != in.ExpectedGeneration || current.Conflict.RemoteRevision != in.ExpectedRemoteRevision {
 			respondError(w, 409, "version_changed")
@@ -448,7 +473,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 503, "refresh_required")
 			return
 		}
-		if !current.Text || !utf8.Valid(in.Content) {
+		if (!deleted || save) && (!current.Text || !utf8.Valid(in.Content)) {
 			respondError(w, 422, "unsupported_content")
 			return
 		}

@@ -59,15 +59,17 @@ func (s cloudSource) ObserveFile(ctx context.Context, t string) (FileObservation
 }
 
 type Dependencies struct {
-	Store        *store.Store
-	Cloud        *cloud.Client
-	ProfileID    model.ProfileID
-	MountID      model.MountID
-	Source       Source
-	TempPatterns []string
-	Account      *AccountOptions
+	DeletionCommit func(context.Context, model.Entry, func() (bool, error)) error
+	Store          *store.Store
+	Cloud          *cloud.Client
+	ProfileID      model.ProfileID
+	MountID        model.MountID
+	Source         Source
+	TempPatterns   []string
+	Account        *AccountOptions
 }
 type Fs struct {
+	deletionCommit    func(context.Context, model.Entry, func() (bool, error)) error
 	store             *store.Store
 	source            Source
 	scope             store.Scope
@@ -138,6 +140,7 @@ func New(d Dependencies) (fs.Fs, error) {
 		}
 	}
 	f := &Fs{store: d.Store, source: source, scope: sc, patterns: patterns, refreshing: make(map[model.EntryID]*directoryRefresh), directoryFailures: make(map[model.EntryID]bool), warmSeen: make(map[model.EntryID]bool), warmQueued: make(map[model.EntryID]bool), materializing: make(map[model.EntryID]*materialization), active: make(map[model.EntryID]time.Time), listed: make(map[model.EntryID]bool)}
+	f.deletionCommit = d.DeletionCommit
 	f.features = &fs.Features{CanHaveEmptyDirectories: true, Move: f.Move}
 	if _, err = d.Store.ObserveEntry(context.Background(), store.Observation{Remote: "", Kind: model.KindFolder, Token: sc.FolderToken}); err != nil {
 		return nil, err

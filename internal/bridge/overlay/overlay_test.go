@@ -286,7 +286,7 @@ func TestCaseFoldAndReservedNameMapping(t *testing.T) {
 		t.Fatal("mapping changed after collision disappears")
 	}
 }
-func TestDeleteVsPendingEditConflict(t *testing.T) {
+func TestLocalDeleteSupersedesQueuedEdit(t *testing.T) {
 	f, st, s := fixture(t)
 	s.items = []larkcli.DriveItem{{Token: "t", Name: "file", Type: "file"}}
 	s.bodies["t"] = "original"
@@ -296,14 +296,14 @@ func TestDeleteVsPendingEditConflict(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = o.Remove(ctx); !errors.Is(e, ErrDeleteConflict) {
+	if e = o.Remove(ctx); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = st.EntryByRemote(ctx, "file"); e != nil {
+	if _, e = st.EntryByRemote(ctx, "file"); !errors.Is(e, store.ErrNotFound) {
 		t.Fatal(e)
 	}
 	cs, e := st.Conflicts(ctx)
-	if e != nil || len(cs) != 1 {
+	if e != nil || len(cs) != 0 {
 		t.Fatal(cs, e)
 	}
 }

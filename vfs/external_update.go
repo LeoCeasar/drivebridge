@@ -176,6 +176,17 @@ func (v *VFS) ManagedSyncEnabled() bool { return v.managed.Load() != nil }
 // TryExternalUpdate reserves the path before checking its cache. commit must only
 // publish already prepared local metadata: no network, VFS recursion or blob copy.
 func (v *VFS) TryExternalUpdate(ctx context.Context, remote string, commit func() (fs.Object, error)) error {
+	return v.tryExternalUpdate(ctx, remote, commit, false)
+}
+
+// TryExternalReconcile uses the same open/dirty-file admission barrier as
+// publication, but a nil object represents a committed remote deletion.
+// commit must be local-only and must retain local edits on a failed CAS.
+func (v *VFS) TryExternalReconcile(ctx context.Context, remote string, commit func() (fs.Object, error)) error {
+	return v.tryExternalUpdate(ctx, remote, commit, true)
+}
+
+func (v *VFS) tryExternalUpdate(ctx context.Context, remote string, commit func() (fs.Object, error), allowRemoval bool) error {
 	m := v.managed.Load()
 	if m == nil {
 		return ErrManagedSyncDisabled
@@ -205,6 +216,13 @@ func (v *VFS) TryExternalUpdate(ctx context.Context, remote string, commit func(
 		return e
 	}
 	if o == nil {
+		if allowRemoval {
+			parent, leaf := path.Split(name)
+			if d := v.root.cachedDir(strings.TrimSuffix(parent, "/")); d != nil {
+				d.delObject(leaf)
+			}
+			return nil
+		}
 		return fmt.Errorf("managed publication returned nil object")
 	}
 	// A successful local commit must reach the live inode even after cancellation.

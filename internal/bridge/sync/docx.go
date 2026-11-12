@@ -97,7 +97,11 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		}
 		sn, current, err := e.fetchDoc(ctx, en.Token)
 		if err != nil {
-			return e.pause(ctx, j, err)
+			checked := e.deletionAfterReadFailure(ctx, en, err)
+			if errors.Is(checked, model.ErrVersionChanged) {
+				return checked
+			}
+			return e.pause(ctx, j, checked)
 		}
 		merge, err := markdown.PlanStep(base, local, current)
 		if journal.HumanResolution {

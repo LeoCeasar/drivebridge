@@ -214,6 +214,7 @@ func setupOptions(t *testing.T, kind model.Kind, options store.Options) (*store.
 		t.Fatal(err)
 	}
 	source := &fixtureCloud{directory: root, xml: `<title id="doc">Title</title><p id="a">alpha one</p><p id="b">beta two</p>`, revision: 1, file: []byte("old"), grants: true}
+	source.items = []larkcli.DriveItem{{Token: e.Token, Name: e.CloudName, Type: string(kind), ParentToken: sc.FolderToken}}
 	engine, err := New(Dependencies{Store: s, Source: source, Publisher: PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
 		_, err := s.CommitPublication(ctx, c)
 		return err
@@ -563,7 +564,7 @@ func TestCreateUnknownMultipleMatchesDoesNotBind(t *testing.T) {
 	if err = e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnknownResult) {
 		t.Fatal(err)
 	}
-	copy := c.items[0]
+	copy := c.items[len(c.items)-1]
 	copy.Token = "ambiguous-other"
 	c.items = append(c.items, copy)
 	if err = e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnknownResult) {

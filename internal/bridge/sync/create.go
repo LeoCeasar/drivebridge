@@ -86,7 +86,13 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 		} else if journal.Desired != j.Local || len(journal.Operations) != 0 {
 			return en, model.ErrUnknownResult
 		}
-		created, err := e.store.PrepareCreate(ctx, j.ID, parent, cloudName(en))
+		name := cloudName(en)
+		if journal.HumanResolution && en.CloudName != "" {
+			// Restoring a deleted resource retains its original cloud name;
+			// the local spelling may contain escaping or a collision suffix.
+			name = en.CloudName
+		}
+		created, err := e.store.PrepareCreate(ctx, j.ID, parent, name)
 		if err != nil {
 			return en, err
 		}

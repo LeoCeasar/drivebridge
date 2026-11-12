@@ -270,6 +270,7 @@ type PublishCandidate struct {
 }
 
 type ResolveRequest struct {
+	Action                 string     `json:"action,omitempty"`
 	ConflictID             ConflictID `json:"conflict_id"`
 	ExpectedGeneration     uint64     `json:"expected_generation"`
 	ExpectedRemoteRevision string     `json:"expected_remote_revision"`

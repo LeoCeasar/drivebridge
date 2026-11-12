@@ -5,10 +5,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"unicode/utf8"
 
+	"github.com/rclone/rclone/internal/bridge/auth"
+	"github.com/rclone/rclone/internal/bridge/cloud"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
+	syncer "github.com/rclone/rclone/internal/bridge/sync"
 )
 
 type ConflictView struct {
@@ -155,13 +160,7 @@ func (m *Manager) Conflict(ctx context.Context, id model.ConflictID) (ConflictVi
 	err = m.withStore(ctx, summary.Entry.MountID, "/conflict", struct {
 		ID model.ConflictID `json:"id"`
 	}{id}, &out, func(s *store.Store) error {
-		view, err := findSummary(ctx, s, id)
-		if err != nil {
-			return err
-		}
-		view.Stale = true
-		view.RefreshWarning = "offline"
-		out, err = materializeConflict(ctx, s, view)
+		out, err = m.stoppedConflict(ctx, s, id, m.buildConflictEngine)
 		return err
 	})
 	return out, err
@@ -178,15 +177,119 @@ func (m *Manager) SaveDraft(ctx context.Context, id model.ConflictID, content []
 	}{id, content}, &out, func(s *store.Store) error { return s.SaveDraft(ctx, id, bytes.NewReader(content)) })
 }
 func (m *Manager) ResolveConflict(ctx context.Context, r model.ResolveRequest) error {
+	if r.Action != "" && r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete {
+		return model.ErrUnsupportedContent
+	}
 	view, err := m.findConflict(ctx, r.ConflictID)
 	if err != nil {
 		return err
 	}
-	if err = m.SaveDraft(ctx, r.ConflictID, r.Content); err != nil {
-		return err
+	if r.Action != model.ResolveAcceptDelete && (r.Action != model.ResolveRestoreLocal || r.Content != nil) {
+		if err = m.SaveDraft(ctx, r.ConflictID, r.Content); err != nil {
+			return err
+		}
 	}
 	var out struct{}
-	return m.call(ctx, view.Entry.MountID, "/resolve", r, &out)
+	return m.withStore(ctx, view.Entry.MountID, "/resolve", r, &out, func(s *store.Store) error {
+		return m.stoppedResolve(ctx, s, r, m.buildConflictEngine)
+	})
+}
+
+type conflictEngine interface {
+	RefreshConflict(context.Context, model.ConflictID) (model.Conflict, error)
+	Resolve(context.Context, model.ResolveRequest) (model.Entry, model.Job, error)
+}
+
+type conflictEngineBuilder func(context.Context, mountSpec, *store.Store) (conflictEngine, error)
+
+// buildConflictEngine permits explicit review and local resolution while no
+// runtime owns the store. It never starts a worker, publishes, or writes cloud
+// content, including when the mount configuration is archived.
+func (m *Manager) buildConflictEngine(ctx context.Context, spec mountSpec, s *store.Store) (conflictEngine, error) {
+	scope, err := s.Scope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope != ownershipFor(m.options.ConfigFile, spec).Scope {
+		return nil, model.ErrIdentityChanged
+	}
+	a, err := m.Auth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	runner, err := a.ManagedRunner(ctx, spec.Profile.ID)
+	if err != nil {
+		return nil, err
+	}
+	verifyIdentity := func(ctx context.Context) error {
+		identity, err := a.Status(ctx, spec.Profile.ID)
+		if err != nil {
+			return err
+		}
+		if auth.IdentityHash(identity.Brand, identity.AppID, identity.UserOpenID) != spec.Profile.IdentityHash {
+			return model.ErrIdentityChanged
+		}
+		return nil
+	}
+	if err = verifyIdentity(ctx); err != nil {
+		return nil, err
+	}
+	transportDir := filepath.Join(spec.Paths.Root, "transport")
+	if err = platform.EnsurePrivateDir(transportDir); err != nil {
+		return nil, err
+	}
+	client, err := cloud.New(runner, cloud.Options{CheckIdentity: verifyIdentity, CheckMutation: func(context.Context) error {
+		return ErrUnavailable
+	}, TempDir: transportDir})
+	if err != nil {
+		return nil, err
+	}
+	return syncer.New(syncer.Dependencies{CheckIdentity: verifyIdentity, Store: s, Cloud: client, Publisher: syncer.PublisherFunc(func(context.Context, model.PublishCandidate) error {
+		return ErrUnavailable
+	})}, syncer.Options{})
+}
+
+func (m *Manager) stoppedConflict(ctx context.Context, s *store.Store, id model.ConflictID, build conflictEngineBuilder) (ConflictView, error) {
+	view, err := findSummary(ctx, s, id)
+	if err != nil {
+		return view, err
+	}
+	spec, refreshErr := m.spec(ctx, view.Entry.MountID)
+	if refreshErr == nil {
+		var engine conflictEngine
+		engine, refreshErr = build(ctx, spec, s)
+		if refreshErr == nil {
+			_, refreshErr = engine.RefreshConflict(ctx, id)
+			// Refresh may have saved a newer observation even if it also reports
+			// a cloud error. Always materialize the durable capture.
+			view, err = findSummary(ctx, s, id)
+			if err != nil {
+				return view, err
+			}
+		}
+	}
+	if refreshErr != nil {
+		view.Stale = true
+		view.RefreshWarning = errorCode(refreshErr)
+	}
+	return materializeConflict(ctx, s, view)
+}
+
+func (m *Manager) stoppedResolve(ctx context.Context, s *store.Store, r model.ResolveRequest, build conflictEngineBuilder) error {
+	view, err := findSummary(ctx, s, r.ConflictID)
+	if err != nil {
+		return err
+	}
+	spec, err := m.spec(ctx, view.Entry.MountID)
+	if err != nil {
+		return err
+	}
+	engine, err := build(ctx, spec, s)
+	if err != nil {
+		return err
+	}
+	_, _, err = engine.Resolve(ctx, r)
+	return err
 }
 func (m *Manager) ClaimConflictNotification(ctx context.Context, id model.ConflictID) (bool, error) {
 	view, err := m.findConflict(ctx, id)
