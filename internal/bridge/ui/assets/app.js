@@ -287,6 +287,11 @@
     $('merge').hidden = false; view(activeView === 'settings' ? 'conflicts' : activeView);
     $('merge-name').textContent = r.name; $('merge-version').textContent = current.local_delete_pending ? `本地代次 ${current.generation}，尚未上传到云端。` : current.remote_deleted ? '云端文件已不在原目录，本地修改已保留。' : `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
     $('merge-hint').hidden = deletionDecision(current);
+    $('merge-hint').textContent = current.reason === 'unsupported_content'
+      ? '草稿已保留。当前修改包含暂不支持写回的结构，或无法准确定位的内容；请保留表格、图片等结构后核对正文。提交仍会进行安全检查。'
+      : current.reason === 'ambiguous_mapping'
+        ? '草稿已保留。部分段落重复或位置变化，暂时无法准确定位；请核对三份来源后修改结果，避免覆盖错误段落。'
+        : '三份来源保持只读。在右侧编辑结果，或逐个差异选择内容。提交时会重新检查本地和云端版本。';
     renderSources(); $('merged-text').value = r.text; recoveryControls(); renderHunks();
     $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
     draftState(r.status === 'queued' ? r.decision === 'accept_delete' ? deletedLabel(r) : (r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步') : r.seq !== r.savedSeq ? '页面草稿已保留' : current.has_draft ? '已载入本机草稿' : '草稿未修改');

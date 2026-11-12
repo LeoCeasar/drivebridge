@@ -104,7 +104,7 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 			err = e.checkPlainConflictBlob(ctx, actual.FileData)
 		}
 	} else {
-		actual, _, err = e.fetchDoc(ctx, en.Token)
+		actual, _, err = e.fetchEntryDoc(ctx, en)
 	}
 	if err != nil {
 		return en, model.Job{}, err
@@ -202,7 +202,7 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 			if en.Kind == model.KindFile {
 				actual, err = e.observeFile(ctx, en.Token)
 			} else {
-				actual, _, err = e.fetchDoc(ctx, en.Token)
+				actual, _, err = e.fetchEntryDoc(ctx, en)
 			}
 			if err != nil {
 				return c, err
@@ -226,7 +226,7 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 			if model.IsMarkdownFile(en) {
 				sn, cloudErr = e.observeFile(ctx, en.Token)
 			} else {
-				sn, _, cloudErr = e.fetchDoc(ctx, en.Token)
+				sn, _, cloudErr = e.fetchEntryDoc(ctx, en)
 			}
 			if cloudErr == nil {
 				c.Remote = sn.ContentBlob()

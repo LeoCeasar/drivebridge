@@ -118,7 +118,13 @@ func parseXML(b []byte) ([]*xnode, error) {
 }
 func Decode(b []byte, r string) (model.DocView, error) { return DecodeWithOptions(b, r, Options{}) }
 func DecodeWithOptions(b []byte, r string, o Options) (model.DocView, error) {
-	d := model.DocView{XML: bytes.Clone(b), Revision: r, SourceURL: o.SourceURL, ReferenceMap: append(json.RawMessage(nil), o.ReferenceMap...)}
+	if o.ProjectionVersion != 1 {
+		return decodeReadable(b, r, o)
+	}
+	return decodeLegacy(b, r, o)
+}
+func decodeLegacy(b []byte, r string, o Options) (model.DocView, error) {
+	d := model.DocView{ProjectionVersion: 1, XML: bytes.Clone(b), Revision: r, SourceURL: o.SourceURL, ReferenceMap: append(json.RawMessage(nil), o.ReferenceMap...)}
 	if len(b) > 8*MaxMarkdownBytes {
 		return d, &ContentError{"body_too_large", "XML exceeds codec limit"}
 	}

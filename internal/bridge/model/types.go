@@ -217,32 +217,45 @@ type OperationCapability struct {
 
 // Block Start/End are half-open UTF-8 byte offsets; RawXML and IDs belong in sidecars.
 type Block struct {
-	LocalID  string `json:"local_id"`
-	RemoteID string `json:"remote_id"`
-	ParentID string `json:"parent_id"`
-	Kind     string `json:"kind"`
-	Hash     string `json:"hash"`
-	Start    int    `json:"start"`
-	End      int    `json:"end"`
-	Opaque   bool   `json:"opaque"`
-	RawXML   []byte `json:"raw_xml"`
+	Children []Block `json:"children,omitempty"`
+	Readable bool    `json:"readable,omitempty"`
+	LocalID  string  `json:"local_id"`
+	RemoteID string  `json:"remote_id"`
+	ParentID string  `json:"parent_id"`
+	Kind     string  `json:"kind"`
+	Hash     string  `json:"hash"`
+	Start    int     `json:"start"`
+	End      int     `json:"end"`
+	Opaque   bool    `json:"opaque"`
+	RawXML   []byte  `json:"raw_xml"`
+}
+
+type DocAsset struct {
+	Token string `json:"token"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	MIME  string `json:"mime"`
 }
 
 type DocView struct {
-	SourceURL    string          `json:"source_url,omitempty"`
-	ReferenceMap json.RawMessage `json:"reference_map,omitempty"`
-	XML          []byte          `json:"xml"`
-	Markdown     []byte          `json:"markdown"`
-	Revision     string          `json:"revision"`
-	Blocks       []Block         `json:"blocks"`
+	ProjectionVersion int             `json:"projection_version,omitempty"`
+	Assets            []DocAsset      `json:"assets,omitempty"`
+	SourceURL         string          `json:"source_url,omitempty"`
+	ReferenceMap      json.RawMessage `json:"reference_map,omitempty"`
+	XML               []byte          `json:"xml"`
+	Markdown          []byte          `json:"markdown"`
+	Revision          string          `json:"revision"`
+	Blocks            []Block         `json:"blocks"`
 }
 
 // DocSidecar retains projection context alongside separate immutable XML and
 // Markdown blobs. References describe source content, never permission to replay it.
 type DocSidecar struct {
-	Blocks       []Block         `json:"blocks"`
-	SourceURL    string          `json:"source_url,omitempty"`
-	ReferenceMap json.RawMessage `json:"reference_map,omitempty"`
+	ProjectionVersion int             `json:"projection_version,omitempty"`
+	Assets            []DocAsset      `json:"assets,omitempty"`
+	Blocks            []Block         `json:"blocks"`
+	SourceURL         string          `json:"source_url,omitempty"`
+	ReferenceMap      json.RawMessage `json:"reference_map,omitempty"`
 }
 
 type Hunk struct {

@@ -23,6 +23,9 @@ func safeSaveSibling(src, dst string) bool {
 }
 
 func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, error) {
+	if isDocAssetPath(src) || isDocAssetPath(dst) {
+		return "", fs.ErrorPermissionDenied
+	}
 	if err := validPath(src, false); err != nil {
 		return "", err
 	}
@@ -226,6 +229,9 @@ func (f *Fs) ReplayManagedNamespace(ctx context.Context, reconcile func(src, dst
 // Move is a safe local fallback. Managed VFS must use Begin before Flush and
 // Finish only after its cache/node update, instead of generic delete-then-Move.
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	if isDocAssetPath(remote) || (src != nil && isDocAssetPath(src.Remote())) {
+		return nil, fs.ErrorPermissionDenied
+	}
 	o, ok := src.(*Object)
 	if !ok || o.f != f {
 		return nil, fs.ErrorCantMove
@@ -248,6 +254,9 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	return result, nil
 }
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+	if isDocAssetPath(dir) {
+		return fs.ErrorPermissionDenied
+	}
 	if err := validPath(dir, true); err != nil {
 		return err
 	}
@@ -287,6 +296,9 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	return f.remove(ctx, dir, true)
 }
 func (f *Fs) remove(ctx context.Context, remote string, folder bool) error {
+	if isDocAssetPath(remote) {
+		return fs.ErrorPermissionDenied
+	}
 	if remote == "" {
 		return fs.ErrorPermissionDenied
 	}

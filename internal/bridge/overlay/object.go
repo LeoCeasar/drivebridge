@@ -292,6 +292,20 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 func (o *Object) Remove(ctx context.Context) error { return o.f.remove(ctx, o.Remote(), false) }
 
 func (f *Fs) MaterializeManaged(ctx context.Context, remote string) (fs.Object, error) {
+	if isDocAssetPath(remote) {
+		o, err := f.newDocAsset(ctx, remote)
+		if err != nil {
+			return nil, err
+		}
+		r, err := o.Open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.Close(); err != nil {
+			return nil, err
+		}
+		return o, nil
+	}
 	if allowed, err := f.SyncPathAllowed(ctx, remote); err != nil {
 		return nil, err
 	} else if !allowed {
@@ -410,7 +424,7 @@ func (f *Fs) materialize(ctx context.Context, e model.Entry) (fs.Object, error) 
 		if err != nil {
 			return nil, err
 		}
-		sidecar, err := json.Marshal(model.DocSidecar{Blocks: view.Blocks, SourceURL: view.SourceURL, ReferenceMap: view.ReferenceMap})
+		sidecar, err := json.Marshal(model.DocSidecar{ProjectionVersion: view.ProjectionVersion, Assets: view.Assets, Blocks: view.Blocks, SourceURL: view.SourceURL, ReferenceMap: view.ReferenceMap})
 		if err != nil {
 			return nil, err
 		}

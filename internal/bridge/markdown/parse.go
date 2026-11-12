@@ -28,8 +28,9 @@ func unsupported(s string) error      { return &ContentError{"unsupported_conten
 
 // Options supplies transport-owned context. ReferenceMap is retained, never replayed.
 type Options struct {
-	SourceURL    string
-	ReferenceMap json.RawMessage
+	ProjectionVersion int
+	SourceURL         string
+	ReferenceMap      json.RawMessage
 }
 type atom struct {
 	model.Block

@@ -164,6 +164,9 @@ func (f *Fs) Precision() time.Duration { return time.Nanosecond }
 func (f *Fs) Hashes() hash.Set         { return hash.NewHashSet(hash.SHA256) }
 func (f *Fs) Features() *fs.Features   { return f.features }
 func (f *Fs) LocalOnly(remote string) bool {
+	if isDocAssetPath(remote) {
+		return true
+	}
 	kind := model.KindFile
 	if entry, err := f.store.EntryByRemote(context.Background(), remote); err == nil {
 		kind = entry.Kind
@@ -246,6 +249,9 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	if err := validPath(dir, true); err != nil {
 		return nil, err
 	}
+	if isDocAssetPath(dir) {
+		return f.listDocAssets(ctx, dir)
+	}
 	if allowed, err := f.SyncPathAllowed(ctx, dir); err != nil {
 		return nil, err
 	} else if !allowed {
@@ -325,6 +331,13 @@ func (f *Fs) cachedDirectory(ctx context.Context, parent model.Entry) (fs.DirEnt
 			result = append(result, o)
 		}
 	}
+	assets, err := f.docAssets(ctx, parent.Remote)
+	if err != nil {
+		return nil, err
+	}
+	if len(assets) > 0 {
+		result = append(result, fs.NewDir(path.Join(parent.Remote, docAssetsDirectory), time.Time{}))
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Remote() < result[j].Remote() })
 	return result, nil
 }
@@ -345,7 +358,7 @@ func (f *Fs) observeItems(ctx context.Context, dir, parentToken string, items []
 	var rows []observed
 	tokens := map[string]bool{}
 	sort.Slice(items, func(i, j int) bool { return items[i].Token < items[j].Token })
-	used := map[string]bool{}
+	used := map[string]bool{docAssetsDirectory: true}
 	for _, e := range existing {
 		used[foldName(path.Base(e.Remote))] = true
 	}
@@ -427,6 +440,9 @@ func (f *Fs) find(ctx context.Context, remote string) (model.Entry, error) {
 	return f.store.EntryByRemote(ctx, remote)
 }
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+	if isDocAssetPath(remote) {
+		return f.newDocAsset(ctx, remote)
+	}
 	e, err := f.find(ctx, remote)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fs.ErrorObjectNotFound
@@ -448,6 +464,9 @@ func newKind(remote string) model.Kind {
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
 	if src == nil {
 		return nil, errors.New("missing object metadata")
+	}
+	if isDocAssetPath(src.Remote()) {
+		return nil, fs.ErrorPermissionDenied
 	}
 	if err := validPath(src.Remote(), false); err != nil {
 		return nil, err

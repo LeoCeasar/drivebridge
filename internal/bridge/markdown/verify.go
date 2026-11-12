@@ -25,6 +25,9 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 			index = i
 		}
 	}
+	if index < 0 && before.ProjectionVersion == 2 && after.ProjectionVersion == 2 && op.Kind == model.OperationBlockReplace {
+		return verifyNestedParagraph(before, after, op, p)
+	}
 	position := index
 	switch op.Kind {
 	case model.OperationBlockReplace, model.OperationBlockDelete:
@@ -135,4 +138,70 @@ func withoutNode(xml []byte, id string) (string, error) {
 		out.WriteString(serialize(n))
 	}
 	return out.String(), nil
+}
+
+// Nested edits are verified at the same structural location, with the complete
+// outside XML unchanged. A server-generated new ID is accepted only at that node.
+func verifyNestedParagraph(before, after model.DocView, op model.Operation, p model.OperationPayload) error {
+	unknown := model.ErrUnknownResult
+	a, e := parseXML(before.XML)
+	if e != nil {
+		return unknown
+	}
+	b, e := parseXML(after.XML)
+	if e != nil {
+		return unknown
+	}
+	var old, new *xnode
+	matches := 0
+	var walk func([]*xnode, []*xnode, bool)
+	walk = func(aa, bb []*xnode, inTable bool) {
+		if len(aa) != len(bb) {
+			return
+		}
+		for i, n := range aa {
+			m := bb[i]
+			inside := inTable || n.tag == "table"
+			if n.attr("id") == op.BlockID {
+				matches++
+				if inTable {
+					old = n
+					new = m
+				}
+			}
+			if n.tag == m.tag {
+				walk(n.kids, m.kids, inside)
+			}
+		}
+	}
+	walk(a, b, false)
+	if matches != 1 || old == nil || new == nil || old.tag != "p" || new.tag != "p" || len(elements(old)) != 0 || len(elements(new)) != 0 || !old.allowed("align") || !new.allowed("align") || new.attr("id") == "" || p.BeforeHash == "" || p.AfterHash == "" || hashNode("p", old) != p.BeforeHash || hashNode("p", new) != p.AfterHash {
+		return unknown
+	}
+	if !p.ExplicitResolution {
+		for _, roots := range [][]*xnode{a, b} {
+			count := 0
+			var countWalk func(*xnode)
+			countWalk = func(n *xnode) {
+				if n.tag == "p" && (hashNode("p", n) == p.BeforeHash || hashNode("p", n) == p.AfterHash) {
+					count++
+				}
+				for _, c := range n.kids {
+					countWalk(c)
+				}
+			}
+			for _, n := range roots {
+				countWalk(n)
+			}
+			if count != 1 {
+				return unknown
+			}
+		}
+	}
+	outsideA := append(append([]byte(nil), before.XML[:old.start]...), before.XML[old.end:]...)
+	outsideB := append(append([]byte(nil), after.XML[:new.start]...), after.XML[new.end:]...)
+	if !bytes.Equal(outsideA, outsideB) {
+		return unknown
+	}
+	return nil
 }

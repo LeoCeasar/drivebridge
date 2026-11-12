@@ -50,6 +50,7 @@ func respond(w http.ResponseWriter, status int, v any) {
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
 	messages["status_unavailable"] = "本机状态读取暂未完成，请稍后刷新。"
+	messages["unsupported_content"] = "此内容暂不支持安全提交，草稿已保留。请检查文件格式或文档结构。"
 	messages["mount_archived"] = "此挂载已移除，请先恢复挂载配置，再启动同步。"
 	messages["mount_in_use"] = "暂时不能移除：请先关闭正在使用该挂载的文件，等待本机写入完成后重试；已有数据会保留。"
 	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"

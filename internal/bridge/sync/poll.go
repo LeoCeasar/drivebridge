@@ -182,7 +182,7 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 		if err != nil {
 			return err
 		}
-		if en.Kind == model.KindDocx && sn.Revision == prior.Revision {
+		if en.Kind == model.KindDocx && sn.Revision == prior.Revision && sn.Markdown == prior.Markdown && sn.BlockMap == prior.BlockMap {
 			return nil
 		}
 		if en.Kind == model.KindFile && sn.FileData == prior.FileData {

@@ -632,6 +632,10 @@ func (vfs *VFS) OpenFile(name string, flags int, perm os.FileMode) (fd Handle, e
 		return nil, EINVAL
 	}
 
+	if err := vfs.validateManagedOpen(vfs.ctx, name, flags&accessModeMask != os.O_RDONLY || flags&(os.O_TRUNC|os.O_CREATE) != 0); err != nil {
+		return nil, err
+	}
+
 	node, err := vfs.Stat(name)
 	if err != nil {
 		if err != ENOENT || flags&os.O_CREATE == 0 {

@@ -1,0 +1,333 @@
+package overlay
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/internal/bridge/markdown"
+	"github.com/rclone/rclone/internal/bridge/model"
+)
+
+const docAssetsDirectory = ".drivebridge-assets"
+
+// DocMediaSource is optional: ordinary metadata/file sources need not implement it.
+// A media read owns its temporary download until Close. Stat or io.Seeker lets
+// the overlay determine its size without copying an already downloaded body.
+type DocMediaSource interface {
+	OpenDocMedia(context.Context, string) (io.ReadCloser, error)
+}
+
+func (s cloudSource) OpenDocMedia(ctx context.Context, token string) (io.ReadCloser, error) {
+	return s.c.OpenDocMedia(ctx, token)
+}
+func (s *accountSource) OpenDocMedia(ctx context.Context, token string) (io.ReadCloser, error) {
+	source, ok := s.Source.(DocMediaSource)
+	if !ok {
+		return nil, model.ErrUnsupportedContent
+	}
+	return source.OpenDocMedia(ctx, token)
+}
+
+// ValidateManagedOpen keeps readonly assets out of the writable VFS cache,
+// including unknown children that must never become ordinary upload candidates.
+func (f *Fs) ValidateManagedOpen(_ context.Context, remote string, write bool) error {
+	if write && isDocAssetPath(remote) {
+		return fs.ErrorPermissionDenied
+	}
+	return nil
+}
+
+func isDocAssetPath(remote string) bool {
+	for _, part := range strings.Split(remote, "/") {
+		if foldName(part) == docAssetsDirectory {
+			return true
+		}
+	}
+	return false
+}
+
+// assetDirectoryParent accepts exactly the reserved directory or one flat child.
+func assetDirectoryParent(remote string) (parent string, directory bool, ok bool) {
+	parts := strings.Split(remote, "/")
+	for i, p := range parts {
+		if p == docAssetsDirectory {
+			if len(parts)-i > 2 {
+				return "", false, false
+			}
+			return strings.Join(parts[:i], "/"), len(parts)-i == 1, true
+		}
+	}
+	return "", false, false
+}
+
+type docAssetReference struct {
+	asset   model.DocAsset
+	owner   model.Entry
+	modTime time.Time
+}
+
+// docAssets reads only immutable sidecars bound to current accepted checkpoints
+// in this Store. Merely saving an unrelated/unpublished snapshot grants nothing.
+func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetReference, error) {
+	if _, err := f.directory(ctx, parent); err != nil {
+		return nil, err
+	}
+	policy, err := f.accountPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := f.store.Entries(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]docAssetReference)
+	for _, e := range entries {
+		if e.Kind != model.KindDocx || e.Token == "" || e.RemoteCheckpoint == "" || !policy.allows(e.Remote) {
+			continue
+		}
+		sn, err := f.store.Snapshot(ctx, e.RemoteCheckpoint)
+		if err != nil {
+			return nil, err
+		}
+		if sn.Token != e.Token || sn.BlockMap == "" {
+			continue
+		}
+		r, err := f.store.ReadBlob(ctx, sn.BlockMap)
+		if err != nil {
+			return nil, err
+		}
+		var sidecar model.DocSidecar
+		err = json.NewDecoder(r).Decode(&sidecar)
+		closeErr := r.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if sidecar.ProjectionVersion != 2 || len(sidecar.Assets) == 0 || sn.XML == "" {
+			continue
+		}
+		raw, err := f.store.ReadBlob(ctx, sn.XML)
+		if err != nil {
+			return nil, err
+		}
+		xml, err := io.ReadAll(raw)
+		closeErr = raw.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		view, err := markdown.DecodeWithOptions(xml, sn.Revision, markdown.Options{ProjectionVersion: 2, SourceURL: sidecar.SourceURL, ReferenceMap: sidecar.ReferenceMap})
+		if err != nil {
+			continue
+		}
+		originalAssets := make(map[model.DocAsset]bool, len(view.Assets))
+		for _, asset := range view.Assets {
+			originalAssets[asset] = true
+		}
+		metadata, err := f.store.Metadata(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		if metadata.Tombstone {
+			continue
+		}
+		current, err := f.store.Entry(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		if current.Remote != e.Remote || current.Token != e.Token || current.RemoteCheckpoint != e.RemoteCheckpoint {
+			continue
+		}
+		for _, asset := range sidecar.Assets {
+			if !originalAssets[asset] || asset.Token == "" || strings.ContainsAny(asset.Token, "/\\:\x00 \t\n\r") || asset.Path != markdown.AssetPath(asset.Token, asset.Name, asset.MIME) {
+				continue
+			}
+			remote := path.Join(parent, asset.Path)
+			result[remote] = docAssetReference{asset: asset, owner: e, modTime: metadata.ModTime}
+		}
+	}
+	return result, nil
+}
+func (f *Fs) listDocAssets(ctx context.Context, remote string) (fs.DirEntries, error) {
+	parent, directory, ok := assetDirectoryParent(remote)
+	if !ok {
+		return nil, fs.ErrorDirNotFound
+	}
+	if !directory {
+		return nil, fs.ErrorIsFile
+	}
+	assets, err := f.docAssets(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	if len(assets) == 0 {
+		return nil, fs.ErrorDirNotFound
+	}
+	result := make(fs.DirEntries, 0, len(assets))
+	for name, ref := range assets {
+		result = append(result, &docAssetObject{f: f, remote: name, ref: ref, size: -1})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Remote() < result[j].Remote() })
+	return result, nil
+}
+func (f *Fs) newDocAsset(ctx context.Context, remote string) (*docAssetObject, error) {
+	if err := validPath(remote, false); err != nil {
+		return nil, err
+	}
+	parent, directory, ok := assetDirectoryParent(remote)
+	if !ok {
+		return nil, fs.ErrorObjectNotFound
+	}
+	assets, err := f.docAssets(ctx, parent)
+	if err != nil {
+		return nil, mapNotFound(err)
+	}
+	if directory {
+		if len(assets) > 0 {
+			return nil, fs.ErrorIsDir
+		}
+		return nil, fs.ErrorObjectNotFound
+	}
+	ref, ok := assets[remote]
+	if !ok {
+		return nil, fs.ErrorObjectNotFound
+	}
+	return &docAssetObject{f: f, remote: remote, ref: ref, size: -1}, nil
+}
+
+type docAssetObject struct {
+	mu     sync.RWMutex
+	f      *Fs
+	remote string
+	ref    docAssetReference
+	size   int64
+}
+
+func (o *docAssetObject) Fs() fs.Info                       { return o.f }
+func (o *docAssetObject) Remote() string                    { return o.remote }
+func (o *docAssetObject) String() string                    { return o.remote }
+func (o *docAssetObject) ID() string                        { return "doc-media:" + o.remote }
+func (o *docAssetObject) ModTime(context.Context) time.Time { return o.ref.modTime }
+func (o *docAssetObject) Size() int64                       { o.mu.RLock(); defer o.mu.RUnlock(); return o.size }
+func (*docAssetObject) Storable() bool                      { return false }
+func (o *docAssetObject) MimeType(context.Context) string   { return o.ref.asset.MIME }
+func (*docAssetObject) Hash(context.Context, hash.Type) (string, error) {
+	return "", hash.ErrUnsupported
+}
+func (*docAssetObject) SetModTime(context.Context, time.Time) error { return fs.ErrorPermissionDenied }
+func (*docAssetObject) Update(context.Context, io.Reader, fs.ObjectInfo, ...fs.OpenOption) error {
+	return fs.ErrorPermissionDenied
+}
+func (*docAssetObject) Remove(context.Context) error { return fs.ErrorPermissionDenied }
+func (o *docAssetObject) Open(ctx context.Context, opts ...fs.OpenOption) (io.ReadCloser, error) {
+	if err := checkOptions(opts, true); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	current, err := o.f.newDocAsset(ctx, o.remote)
+	if err != nil {
+		return nil, err
+	}
+	if current.ref.asset.Token != o.ref.asset.Token {
+		return nil, fs.ErrorObjectNotFound
+	}
+	source, ok := o.f.source.(DocMediaSource)
+	if !ok {
+		return nil, model.ErrUnsupportedContent
+	}
+	r, err := source.OpenDocMedia(ctx, o.ref.asset.Token)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, errors.New("media source returned no body")
+	}
+	r, size, err := sizedDocMedia(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	o.mu.Lock()
+	o.size = size
+	o.mu.Unlock()
+	if err := o.f.store.TouchBodyAccess(ctx, current.ref.owner.ID, time.Now().UTC()); err != nil {
+		r.Close()
+		return nil, err
+	}
+	return rangeReader(ctx, r, size, opts)
+}
+
+// Streams without size metadata get an ephemeral read lease, never a durable
+// cache blob. The production transport already exposes Stat and needs no copy.
+func sizedDocMedia(ctx context.Context, r io.ReadCloser) (io.ReadCloser, int64, error) {
+	if stat, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		info, err := stat.Stat()
+		if err != nil {
+			r.Close()
+			return nil, 0, err
+		}
+		if info.Size() < 0 {
+			r.Close()
+			return nil, 0, errors.New("invalid media size")
+		}
+		return r, info.Size(), nil
+	}
+	if seeker, ok := r.(io.Seeker); ok {
+		size, err := seeker.Seek(0, io.SeekEnd)
+		if err == nil {
+			_, err = seeker.Seek(0, io.SeekStart)
+		}
+		if err != nil || size < 0 {
+			r.Close()
+			if err == nil {
+				err = errors.New("invalid media size")
+			}
+			return nil, 0, err
+		}
+		return r, size, nil
+	}
+	temp, err := os.CreateTemp("", "drivebridge-media-read-*")
+	if err != nil {
+		r.Close()
+		return nil, 0, err
+	}
+	lease := &temporaryDocMedia{File: temp}
+	size, err := io.Copy(temp, &readLease{ctx: ctx, Reader: r, closer: r})
+	closeErr := r.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		_, err = temp.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		lease.Close()
+		return nil, 0, err
+	}
+	return lease, size, nil
+}
+
+type temporaryDocMedia struct{ *os.File }
+
+func (r *temporaryDocMedia) Close() error {
+	err := r.File.Close()
+	removeErr := os.Remove(r.Name())
+	return errors.Join(err, removeErr)
+}
+
+var _ fs.Object = (*docAssetObject)(nil)

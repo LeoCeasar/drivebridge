@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -21,6 +22,28 @@ var ErrManagedSyncDisabled = errors.New("managed sync disabled")
 // cache. Attribute queries do not count as body use.
 type ManagedAccessTracker interface {
 	TouchManagedAccess(context.Context, string) error
+}
+
+// ManagedOpenValidator rejects per-path write intent before materialization,
+// cache mutation or creation. It is optional and used only in managed mode.
+// Implementations must perform local validation without network or cache I/O.
+type ManagedOpenValidator interface {
+	ValidateManagedOpen(context.Context, string, bool) error
+}
+
+func (v *VFS) validateManagedOpen(ctx context.Context, remote string, write bool) error {
+	if v.managed.Load() == nil {
+		return nil
+	}
+	validator, ok := v.f.(ManagedOpenValidator)
+	if !ok {
+		return nil
+	}
+	err := validator.ValidateManagedOpen(ctx, remote, write)
+	if errors.Is(err, fs.ErrorPermissionDenied) || errors.Is(err, os.ErrPermission) {
+		return EPERM
+	}
+	return err
 }
 
 // ManagedMaterializer binds an unknown-size object to one complete local snapshot.
