@@ -10,6 +10,7 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/lib/ranges"
 )
 
@@ -21,15 +22,6 @@ type managedIOOps struct {
 }
 
 const managedTempPrefix = ".rclone-managed-meta-"
-
-func syncDirectory(name string) error {
-	f, e := os.Open(name)
-	if e != nil {
-		return e
-	}
-	e = f.Sync()
-	return errors.Join(e, f.Close())
-}
 
 // Called with Item.mu held. A failed replace leaves the previous valid checkpoint.
 func (item *Item) saveManaged() error {
@@ -195,7 +187,7 @@ func (c *Cache) FlushManagedPath(ctx context.Context, name string, fn StoreFn) (
 // New cache directories may themselves have been created during this save.
 func syncParents(dir string) error {
 	for {
-		if e := syncDirectory(dir); e != nil {
+		if e := platform.SyncDir(dir); e != nil {
 			return e
 		}
 		next := filepath.Dir(dir)

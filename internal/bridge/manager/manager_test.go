@@ -75,7 +75,7 @@ func fixture(t *testing.T, gate chan struct{}) (*Manager, model.MountID, *fakeRu
 	mount.RemoteID = rid
 	mount.Mountpoint = filepath.Join(root, "mountpoint")
 	c.Mounts = []model.Mount{mount}
-	if err = os.Mkdir(mount.Mountpoint, 0700); err != nil {
+	if err = validateMountpoint(mount.Mountpoint); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(root, "settings", "config.json")
@@ -564,7 +564,7 @@ func TestMountWorkerIsolation(t *testing.T) {
 	other.ID = model.MountID(uuid.NewString())
 	other.Name = "second"
 	other.Mountpoint = filepath.Join(filepath.Dir(other.Mountpoint), "second-mountpoint")
-	if err = os.Mkdir(other.Mountpoint, 0700); err != nil {
+	if err = validateMountpoint(other.Mountpoint); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = m.AddMount(context.Background(), other); err != nil {

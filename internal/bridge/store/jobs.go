@@ -186,22 +186,28 @@ func (s *Store) stage(ctx context.Context, id model.EntryID, expected *uint64, s
 	if err != nil {
 		return e, j, err
 	}
-	if current.Kind == model.KindDocx {
-		f, er := s.blobSize(b)
-		if er != nil {
-			return e, j, er
-		}
-		if f > LargeSnapshotBytes {
-			return e, j, model.ErrUnsupportedContent
-		}
+	return s.StagePreparedBlob(ctx, id, expected, b, localOnly)
+}
+
+// StagePreparedBlob accepts bytes already persisted by PutBlob.
+func (s *Store) StagePreparedBlob(ctx context.Context, id model.EntryID, expected *uint64, b model.BlobID, localOnly bool) (e model.Entry, j model.Job, err error) {
+	if !blobName.MatchString(string(b)) {
+		return e, j, errors.New("invalid blob ID")
 	}
 	err = s.update(ctx, func(tx *bolt.Tx) error {
+		before, er := entryTx(tx, id)
+		if er != nil {
+			return er
+		}
+		size, er := s.blobSize(b)
+		if er != nil {
+			return er
+		}
+		if before.Kind == model.KindDocx && size > LargeSnapshotBytes {
+			return model.ErrUnsupportedContent
+		}
 		receipt := false
 		if localOnly {
-			before, er := entryTx(tx, id)
-			if er != nil {
-				return er
-			}
 			receipt, er = eligibleLocalReceipt(tx, before, "")
 			if er != nil {
 				return er

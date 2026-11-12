@@ -16,6 +16,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
+	"github.com/rclone/rclone/lib/file"
 	"github.com/rclone/rclone/vfs/vfscache"
 )
 
@@ -102,7 +103,7 @@ func offlineCachePending(o ownership) (bool, error) {
 		return unmanifestedCachePending(o.VFSRoot)
 	}
 	for _, p := range []string{manifest.DataRoot, manifest.MetaRoot} {
-		relative, err := filepath.Rel(o.VFSRoot, p)
+		relative, err := filepath.Rel(file.UNCPath(o.VFSRoot), file.UNCPath(p))
 		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || !filepath.IsAbs(p) {
 			return false, ErrConfig
 		}

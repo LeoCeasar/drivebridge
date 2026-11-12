@@ -116,7 +116,14 @@ func (s *Store) PutBlob(ctx context.Context, src io.Reader) (model.BlobID, error
 		return "", err
 	}
 	if err = s.io.Rename(name, target); err != nil {
-		return "", err
+		// Windows refuses to replace a file another handle holds open (readers
+		// open blobs without FILE_SHARE_DELETE). The name is the SHA-256 of the
+		// content, so an existing regular file of the same length already holds
+		// exactly these bytes: keep it, drop the redundant temp file and still
+		// refresh the grace timestamp and directory durability below.
+		if !replaceDenied(err) || !s.sameBlobExists(target, size) {
+			return "", err
+		}
 	}
 	// Equal content can reuse an old hash while its accepting transaction is
 	// still waiting. Refresh its grace before letting any collector observe it.
@@ -191,4 +198,11 @@ func (s *Store) checkBlob(id model.BlobID) error {
 		return errors.New("blob is not regular file")
 	}
 	return nil
+}
+
+// sameBlobExists reports whether target is already a regular, non-symlink file
+// of the expected length. Content addressing makes that sufficient to reuse it.
+func (s *Store) sameBlobExists(target string, size int64) bool {
+	info, err := os.Lstat(target)
+	return err == nil && info.Mode().IsRegular() && info.Size() == size
 }

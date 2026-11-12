@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -161,6 +162,9 @@ func TestDesktopEnableRejectsSymlinkState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, m.ConfigFile()+".desktop.json"); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink creation requires Windows privileges: %v", err)
+		}
 		t.Fatal(err)
 	}
 	if err := m.enableDesktop(context.Background(), func(context.Context, platform.StartupSpec, bool) error { return nil }); err == nil {

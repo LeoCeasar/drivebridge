@@ -24,6 +24,17 @@ import (
 
 const fhUnset = ^uint64(0)
 
+// materializeOnGetattr reports whether a path-based Getattr (no file handle)
+// must resolve an unknown managed body size by materializing the file.
+//
+// WinFsp's FUSE layer answers CreateFile with the FileInfo from a path-based
+// getattr issued BEFORE open() and never refreshes it afterwards, so the size
+// observed by the first handle (GetFileInformationByHandle, FileInfo.Length,
+// .NET File.ReadAllBytes) is whatever that getattr returned. macFUSE has
+// PurgeAttr and Linux re-stats after open, so those platforms keep the
+// metadata-only behaviour. It is a variable so tests can exercise both modes.
+var materializeOnGetattr = runtime.GOOS == "windows"
+
 // FS represents the top level filing system
 type FS struct {
 	VFS            *vfs.VFS
@@ -186,10 +197,25 @@ func (fsys *FS) Destroy() {
 	fsys.destroyed.Store(1)
 }
 
+// getattrNode finds the node for Getattr. On platforms where the pre-open
+// getattr determines the first handle's size (see materializeOnGetattr) a
+// managed unknown-size file is materialized here; failures propagate instead
+// of being reported as a zero length file. Directory listings never reach this
+// path because Readdir supplies placeholder stats.
+func (fsys *FS) getattrNode(path string, fh uint64) (node vfs.Node, errc int) {
+	if fh == fhUnset && materializeOnGetattr && fsys.VFS.ManagedSyncEnabled() {
+		var err error
+		node, err = fsys.VFS.Stat(path)
+		return node, fsys.translateError(err)
+	}
+	node, _, errc = fsys.getNode(path, fh)
+	return node, errc
+}
+
 // Getattr reads the attributes for path
 func (fsys *FS) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%v", &errc)
-	node, _, errc := fsys.getNode(path, fh)
+	node, errc := fsys.getattrNode(path, fh)
 	if errc == 0 {
 		errc = fsys.stat(node, stat)
 	}
@@ -257,12 +283,15 @@ func (fsys *FS) Readdir(dirPath string,
 			fs.Errorf(dirPath, "Name too long (%d bytes) for FUSE, skipping: %s", len(name), name)
 			continue
 		}
-		if fsys.VFS.ManagedSyncEnabled() {
+		if fsys.VFS.ManagedSyncEnabled() && !materializeOnGetattr {
 			if entry := node.DirEntry(); entry != nil && entry.Size() < 0 {
 				fill(name, nil, 0)
 				continue
 			}
 		}
+		// With materializeOnGetattr a nil stat would make WinFsp call
+		// Getattr per entry, downloading every cold body on listing. The
+		// placeholder stat below (Size() is pure and reports 0) avoids that.
 		// We have called host.SetCapReaddirPlus() so supply the stat information
 		// It is very cheap at this point so supply it regardless of OS capabilities
 		var stat fuse.Stat_t

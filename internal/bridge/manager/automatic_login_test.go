@@ -22,13 +22,36 @@ type automaticAuthFixture struct {
 	gate        chan struct{}
 	completeErr error
 	stageGates  map[string]chan struct{}
+	// startErrs[n] is returned by the n-th Start call (nil entries start a flow).
+	// reconcileErrs[n] is returned by the n-th Reconcile call; past the end
+	// reconcile reports the application as ready without a user.
+	startErrs     []error
+	appConfigErr  error
+	startCalls    int
+	reconcileErrs []error
+	reconciles    int
 }
 
+func (f *automaticAuthFixture) Reconcile(context.Context, model.ProfileID) (auth.Identity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.reconciles
+	f.reconciles++
+	if i < len(f.reconcileErrs) {
+		return auth.Identity{}, f.reconcileErrs[i]
+	}
+	return auth.Identity{}, auth.ErrUserMissing
+}
 func (f *automaticAuthFixture) Start(ctx context.Context, _ model.ProfileID) (auth.AuthFlow, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return auth.AuthFlow{}, err
+	}
+	call := f.startCalls
+	f.startCalls++
+	if call < len(f.startErrs) && f.startErrs[call] != nil {
+		return auth.AuthFlow{}, f.startErrs[call]
 	}
 	i := f.starts
 	f.starts++
@@ -55,6 +78,9 @@ func (f *automaticAuthFixture) Complete(ctx context.Context, id string) (auth.Id
 	f.completes++
 	for _, flow := range f.flows {
 		if flow.ID == id && flow.Kind == "app_config" {
+			if f.appConfigErr != nil {
+				return auth.Identity{}, f.appConfigErr
+			}
 			return auth.Identity{}, auth.ErrUserMissing
 		}
 	}

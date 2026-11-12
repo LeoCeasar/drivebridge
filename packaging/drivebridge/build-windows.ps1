@@ -31,7 +31,7 @@ Invoke-Native python (@("$here/package.py", 'preflight', '--platform', 'windows'
 $wixVersion = (& wix --version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $wixVersion -notmatch '^4\.') { throw 'WiX Toolset 4 is required' }
 if (-not $CliOnly) {
-    $driver = Get-ItemProperty 'HKLM:\SOFTWARE\WinFsp' -ErrorAction SilentlyContinue
+    $driver = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' -ErrorAction SilentlyContinue
     if (-not $driver -or -not (Test-Path (Join-Path $driver.InstallDir 'bin/winfsp-x64.dll'))) {
         throw 'WinFsp driver/runtime missing; full native build blocked. Explicit -CliOnly -Unsigned is test-only.'
     }

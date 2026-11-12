@@ -14,8 +14,9 @@ import (
 
 // ManagerBackend is the sole production UI adapter. It never opens worker databases.
 type ManagerBackend struct {
-	manager   *manager.Manager
-	snapshots statusSnapshots
+	manager    *manager.Manager
+	snapshots  statusSnapshots
+	openFolder func(string) error
 }
 
 func NewManagerBackend(m *manager.Manager) (*ManagerBackend, error) {
@@ -30,7 +31,8 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		return ConfigView{}, err
 	}
 	_, canRecover := any(b.manager).(auth.RecoveryGuard)
-	v := ConfigView{Platform: runtime.GOOS, CanRecover: canRecover, Profiles: []ProfileView{}, Remotes: []RemoteView{}, Mounts: []MountView{}}
+	_, canOpen := any(b).(FolderOpener)
+	v := ConfigView{Platform: runtime.GOOS, OpenFolderLabel: FolderOpenLabel(runtime.GOOS), CanOpenFolder: canOpen, CanRecover: canRecover, Profiles: []ProfileView{}, Remotes: []RemoteView{}, Mounts: []MountView{}}
 	for _, p := range c.Profiles {
 		v.Profiles = append(v.Profiles, ProfileView{ID: p.ID, Name: p.Name, Brand: p.Brand, Authorized: p.AuthRef != "" && p.IdentityHash != ""})
 	}
@@ -46,7 +48,9 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		if err != nil {
 			return ConfigView{}, err
 		}
-		v.Mounts = append(v.Mounts, MountView{Archived: m.Archived, BackgroundPullExcludedExtensions: rules, ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age})
+		view := MountView{Archived: m.Archived, BackgroundPullExcludedExtensions: rules, ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age}
+		describeMount(&view, c.Remotes, c.Profiles)
+		v.Mounts = append(v.Mounts, view)
 	}
 	return v, nil
 }
@@ -105,6 +109,10 @@ func (b *ManagerBackend) Conflict(ctx context.Context, id model.ConflictID) (Con
 	v, err := b.manager.Conflict(ctx, id)
 	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL, Stale: v.Stale, RefreshWarning: v.RefreshWarning}, err
 }
+func (b *ManagerBackend) ConflictForResolve(ctx context.Context, id model.ConflictID) (ConflictInputs, error) {
+	v, err := b.manager.ConflictForResolve(ctx, id)
+	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL, Stale: v.Stale, RefreshWarning: v.RefreshWarning}, err
+}
 func (b *ManagerBackend) Retry(ctx context.Context, id model.MountID) error {
 	return b.manager.Retry(ctx, id)
 }
@@ -140,3 +148,4 @@ func (b *ManagerBackend) ClaimConflictNotification(ctx context.Context, id model
 var _ Backend = (*ManagerBackend)(nil)
 var _ SyncRetrier = (*ManagerBackend)(nil)
 var _ ConflictExporter = (*ManagerBackend)(nil)
+var _ ResolveVersionReader = (*ManagerBackend)(nil)

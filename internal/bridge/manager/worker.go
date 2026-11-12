@@ -27,6 +27,7 @@ type mountRuntime interface {
 }
 type workerServices struct {
 	directoryStatus    func(context.Context) (model.DirectoryIndexStatus, error)
+	cacheBytes         func() (int64, bool)
 	store              *store.Store
 	runtime            mountRuntime
 	run                func(context.Context) error
@@ -224,6 +225,11 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	}
 	_, writers, _ := services.runtime.Activity()
 	out.LocalSaved = out.VFSPending == 0 && writers == 0
+	if services.cacheBytes != nil {
+		if bytes, ok := services.cacheBytes(); ok {
+			out.CacheBytes = &bytes
+		}
+	}
 	if services.directoryStatus != nil {
 		if metadata, metadataErr := services.directoryStatus(ctx); metadataErr == nil {
 			out.DirectoryIndex = &metadata

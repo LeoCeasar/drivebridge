@@ -3,11 +3,13 @@ package vfscache
 import (
 	"context"
 	"fmt"
-	"github.com/rclone/rclone/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/internal/bridge/platform"
 )
 
 // Called only during managed cache construction, before item reload. The overlay
@@ -29,7 +31,7 @@ func (c *Cache) discardCommittedNamespace(src, dst string) error {
 			}
 			parent := filepath.Dir(p)
 			for {
-				f, e := os.Open(parent)
+				_, e := os.Stat(parent)
 				if os.IsNotExist(e) {
 					next := filepath.Dir(parent)
 					if next == parent {
@@ -41,13 +43,8 @@ func (c *Cache) discardCommittedNamespace(src, dst string) error {
 				if e != nil {
 					return e
 				}
-				e = f.Sync()
-				ce := f.Close()
-				if e != nil {
+				if e := platform.SyncDir(parent); e != nil {
 					return e
-				}
-				if ce != nil {
-					return ce
 				}
 				break
 			}

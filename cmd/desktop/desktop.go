@@ -134,6 +134,10 @@ func NewCommand() *cobra.Command {
 			if e != nil {
 				return e
 			}
+			// Claim the state root before the launcher writes its first log.
+			if err = m.InitializeConfig(ctx); err != nil {
+				return err
+			}
 			if _, err = platform.SpawnDetached(ctx, desktop, args, filepath.Join(state, "logs", "desktop.stderr.log")); err != nil {
 				return err
 			}

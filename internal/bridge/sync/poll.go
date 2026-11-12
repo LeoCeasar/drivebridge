@@ -56,7 +56,7 @@ func (e *Engine) refreshActive(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-docs.C:
-			if e.deps.ActiveEntries == nil {
+			if e.deps.ActiveEntries == nil || e.backgroundShouldYield() {
 				continue
 			}
 			for _, id := range e.deps.ActiveEntries() {
@@ -72,6 +72,10 @@ func (e *Engine) refreshActive(ctx context.Context) {
 func (e *Engine) cycle(ctx context.Context) error {
 	if err := e.check(ctx); err != nil {
 		return err
+	}
+	// A user is resolving conflicts: leave the shared account lock to them.
+	if e.backgroundShouldYield() {
+		return nil
 	}
 	// Namespace intent precedes dependent content, particularly new parent folders.
 	namespaceErr := e.syncNamespace(ctx)

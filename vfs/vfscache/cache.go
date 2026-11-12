@@ -22,6 +22,7 @@ import (
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/rc"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/lib/diskusage"
 	"github.com/rclone/rclone/lib/encoder"
 	"github.com/rclone/rclone/lib/file"
@@ -143,7 +144,7 @@ func newCache(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn A
 		avFn:       avFn,
 	}
 
-	c.managedIO = managedIOOps{syncFile: func(f *os.File) error { return f.Sync() }, rename: os.Rename}
+	c.managedIO = managedIOOps{syncFile: func(f *os.File) error { return f.Sync() }, rename: platform.ReplaceFile}
 	if managed {
 		c.opt.HandleCaching = 0
 	}
