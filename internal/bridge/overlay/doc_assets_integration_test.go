@@ -32,8 +32,8 @@ func TestDocAssetsManagedVFSCacheLifecycle(t *testing.T) {
 	if err != nil || string(data) != source.body {
 		t.Fatal(string(data), err)
 	}
-	if source.opens != 2 {
-		t.Fatal("expected size acquisition and body read", source.opens)
+	if source.opens != 1 {
+		t.Fatal("expected one durable image download", source.opens)
 	}
 	called := false
 	err = managed.TryExternalUpdate(ctx, p, func() (fs.Object, error) { called = true; return f.NewObject(ctx, p) })
@@ -58,7 +58,7 @@ func TestDocAssetsManagedVFSCacheLifecycle(t *testing.T) {
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if source.opens != 2 {
+	if source.opens != 1 {
 		t.Fatal("VFS missed cache", source.opens)
 	}
 	acceptAssets(t, st, "manual.md", "doc", "2", nil)

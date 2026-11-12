@@ -1,0 +1,11 @@
+{
+  "date": "2026-11-12",
+  "environment": "git version 2.50.1 (Apple Git-155)",
+  "explicit_fsync_options_accepted": true,
+  "empty_blob_reads_as_zero_bytes": true,
+  "missing_body_returns_error": true,
+  "json_oid_alone_does_not_make_object_reachable": true,
+  "power_loss_tested": false,
+  "app_integration_tested": false,
+  "scope": "Isolated synthetic repository; configuration acceptance is not proof of crash durability."
+}

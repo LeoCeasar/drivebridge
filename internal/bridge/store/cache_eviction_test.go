@@ -40,10 +40,12 @@ func TestCleanCacheEvictPreservesPlaceholderAndRehydratesAcrossRestart(t *testin
 	if m.LastBodyAccess.Before(before) {
 		t.Fatal("old touch moved LRU backwards")
 	}
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation+1)
 	if err != nil || ok {
 		t.Fatalf("stale generation: %v %v", ok, err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err = s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("evict: %v %v", ok, err)
@@ -102,6 +104,7 @@ func TestCleanCacheEvictsConfirmedEditAndTerminalHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	ageCacheBlobs(t, s)
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -176,6 +179,7 @@ func TestCleanCacheProtectsDurableWork(t *testing.T) {
 			e := cleanCacheEntry(t, s, "protected.bin", "safe")
 			tc.protect(t, s, e)
 			now, _ := s.Entry(ctx, e.ID)
+			acknowledgeHistory(t, s)
 			ok, err := s.EvictCleanEntry(ctx, e.ID, now.Generation)
 			if err != nil || ok {
 				t.Fatalf("unsafe eviction %v %v", ok, err)
@@ -197,12 +201,14 @@ func TestCleanCacheLeaseAndSharedBlobProtection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, a.ID, a.Generation)
 	if err != nil || ok {
 		t.Fatalf("leased: %v %v", ok, err)
 	}
 	r.Close()
 	ageCacheBlobs(t, s)
+	acknowledgeHistory(t, s)
 	ok, err = s.EvictCleanEntry(ctx, a.ID, a.Generation)
 	if err != nil || !ok {
 		t.Fatalf("shared: %v %v", ok, err)
@@ -213,6 +219,7 @@ func TestCleanCacheLeaseAndSharedBlobProtection(t *testing.T) {
 	if err = s.Validate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err = s.EvictCleanEntry(ctx, b.ID, b.Generation)
 	if err != nil || !ok {
 		t.Fatalf("last: %v %v", ok, err)
@@ -228,6 +235,7 @@ func TestCleanCacheRejectsLocalReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || ok {
 		t.Fatalf("%v %v", ok, err)
@@ -259,6 +267,7 @@ func TestCleanCacheEvictionRespectsPreparationGrace(t *testing.T) {
 	if b != e.Local {
 		t.Fatal("different content address")
 	}
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -296,6 +305,7 @@ func TestCleanCacheRechecksHistoricalJournals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			acknowledgeHistory(t, s)
 			ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 			if err != nil || ok {
 				t.Fatalf("unconfirmed historical job: %v %v", ok, err)
@@ -340,6 +350,7 @@ func TestCleanCacheRecoveryProtectsConfirmedJobAndFinishedNamespace(t *testing.T
 			if err != nil || len(cs) != 0 {
 				t.Fatalf("protected candidate %+v %v", cs, err)
 			}
+			acknowledgeHistory(t, s)
 			ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 			if err != nil || ok {
 				t.Fatalf("%v %v", ok, err)
@@ -360,6 +371,7 @@ func TestCleanCachePrunesOnlyConfirmedNamespaceHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	ageCacheBlobs(t, s)
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -395,6 +407,7 @@ func TestCleanCacheDocxEvictsSidecarsAndPreservesPreparedBlob(t *testing.T) {
 	}
 	ageCacheBlobs(t, s)
 	prepared := putBody("prepared separately")
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -423,6 +436,7 @@ func TestCleanCacheAccessCASProtectsReadAfterCandidateScan(t *testing.T) {
 	if err = s.TouchBodyAccess(ctx, e.ID, candidate.AccessedAt.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation, candidate.AccessedAt)
 	if err != nil || ok {
 		t.Fatalf("stale access CAS: %v %v", ok, err)
@@ -434,6 +448,7 @@ func TestCleanCacheAccessCASProtectsReadAfterCandidateScan(t *testing.T) {
 	if err != nil || len(fresh) != 1 {
 		t.Fatalf("%+v %v", fresh, err)
 	}
+	acknowledgeHistory(t, s)
 	ok, err = s.EvictCleanEntry(ctx, e.ID, e.Generation, fresh[0].AccessedAt)
 	if err != nil || !ok {
 		t.Fatalf("current access CAS: %v %v", ok, err)
@@ -456,6 +471,7 @@ func TestCleanCacheEvictionRejectsDelayedSnapshotAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	ageCacheBlobs(t, s)
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("%v %v", ok, err)
@@ -512,6 +528,7 @@ func TestCleanCacheEvictsSupersededUnsentAutosavesAfterCurrentConfirmation(t *te
 		t.Fatalf("autosave candidates %+v %v", candidates, err)
 	}
 	ageCacheBlobs(t, s)
+	acknowledgeHistory(t, s)
 	ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 	if err != nil || !ok {
 		t.Fatalf("confirmed final save with unsent predecessor: %v %v", ok, err)
@@ -585,6 +602,7 @@ func TestCleanCacheProtectsAmbiguousSupersededHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			acknowledgeHistory(t, s)
 			ok, err := s.EvictCleanEntry(ctx, e.ID, e.Generation)
 			if err != nil || ok {
 				t.Fatalf("unsafe superseded history eviction: %v %v", ok, err)
@@ -596,5 +614,27 @@ func TestCleanCacheProtectsAmbiguousSupersededHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// These eviction cases start after an archive has issued durable receipts.
+// Unacknowledged history retention is exercised separately in history_test.go.
+func acknowledgeHistory(t *testing.T, s *Store) {
+	t.Helper()
+	var after uint64
+	for {
+		events, err := s.HistoryEvents(ctx, after, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) == 0 {
+			return
+		}
+		for _, ev := range events {
+			if err = s.AckHistory(ctx, ev.Sequence, ev.ID); err != nil {
+				t.Fatal(err)
+			}
+			after = ev.Sequence
+		}
 	}
 }

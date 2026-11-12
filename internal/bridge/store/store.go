@@ -37,7 +37,7 @@ const (
 	CleanCacheBudget   int64  = 5 << 30
 )
 
-var buckets = []string{"meta", "entries", "jobs", "conflicts", "paths", "recovery", "namespace", "createops", "snapshots", "metadata", "publications"}
+var buckets = []string{"meta", "entries", "jobs", "conflicts", "paths", "recovery", "namespace", "createops", "snapshots", "metadata", "publications", "history_events", "history_last", "history_receipts", "history_restore", "history_media_cache"}
 
 type Scope struct {
 	MountID      model.MountID   `json:"mount_id"`
@@ -47,16 +47,18 @@ type Scope struct {
 	FolderToken  string          `json:"folder_token"`
 }
 type Metadata struct {
-	LastBodyAccess    time.Time     `json:"last_body_access,omitempty"`
-	DirectoryCachedAt time.Time     `json:"directory_cached_at,omitempty"`
-	SafeSavePending   string        `json:"safe_save_pending,omitempty"`
-	SafeSaveParked    bool          `json:"safe_save_parked,omitempty"`
-	SafeSaveOriginal  model.EntryID `json:"safe_save_original,omitempty"`
-	FirstObserved     time.Time     `json:"first_observed"`
-	ModTime           time.Time     `json:"mod_time"`
-	SourceURL         string        `json:"source_url,omitempty"`
-	VirtualType       string        `json:"virtual_type,omitempty"`
-	Tombstone         bool          `json:"tombstone,omitempty"`
+	HistorySnapshot   model.SnapshotID `json:"history_snapshot,omitempty"`
+	HistoryMediaBody  model.BlobID     `json:"history_media_body,omitempty"`
+	LastBodyAccess    time.Time        `json:"last_body_access,omitempty"`
+	DirectoryCachedAt time.Time        `json:"directory_cached_at,omitempty"`
+	SafeSavePending   string           `json:"safe_save_pending,omitempty"`
+	SafeSaveParked    bool             `json:"safe_save_parked,omitempty"`
+	SafeSaveOriginal  model.EntryID    `json:"safe_save_original,omitempty"`
+	FirstObserved     time.Time        `json:"first_observed"`
+	ModTime           time.Time        `json:"mod_time"`
+	SourceURL         string           `json:"source_url,omitempty"`
+	VirtualType       string           `json:"virtual_type,omitempty"`
+	Tombstone         bool             `json:"tombstone,omitempty"`
 }
 type Observation struct {
 	Remote                      string
@@ -150,7 +152,7 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 	if err = db.Update(func(tx *bolt.Tx) error {
 		if m := tx.Bucket([]byte("meta")); m != nil {
 			v := m.Get([]byte("schema_version"))
-			if string(v) != "1" {
+			if string(v) != "1" && string(v) != "2" {
 				return fmt.Errorf("unsupported store schema %q", v)
 			}
 		}
@@ -159,7 +161,26 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 				return err
 			}
 		}
-		return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("1"))
+		if err := initHistoryTx(tx); err != nil {
+			return err
+		}
+		if tx.Bucket([]byte("meta")).Get([]byte("history_media_seeded")) == nil {
+			if err := each[snapshotRecord](tx, "snapshots", func(r snapshotRecord) error { return indexHistoryMediaTx(tx, r.Snapshot) }); err != nil {
+				return err
+			}
+			if err := tx.Bucket([]byte("meta")).Put([]byte("history_media_seeded"), []byte("1")); err != nil {
+				return err
+			}
+		}
+		if tx.Bucket([]byte("meta")).Get([]byte("history_seeded")) == nil {
+			if err := each[model.Entry](tx, "entries", func(e model.Entry) error { return captureHistoryTx(tx, e.ID, nil) }); err != nil {
+				return err
+			}
+			if err := tx.Bucket([]byte("meta")).Put([]byte("history_seeded"), []byte("1")); err != nil {
+				return err
+			}
+		}
+		return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("2"))
 	}); err != nil {
 		db.Close()
 		l.Unlock()
@@ -294,7 +315,27 @@ func put(tx *bolt.Tx, b, k string, v any) error {
 	if err != nil {
 		return err
 	}
-	return tx.Bucket([]byte(b)).Put([]byte(k), x)
+	if err := tx.Bucket([]byte(b)).Put([]byte(k), x); err != nil {
+		return err
+	}
+	if b == "snapshots" {
+		var r snapshotRecord
+		if err := json.Unmarshal(x, &r); err != nil {
+			return err
+		}
+		return indexHistoryMediaTx(tx, r.Snapshot)
+	}
+	if b == "entries" || b == "metadata" {
+		return captureHistoryTx(tx, model.EntryID(k), nil)
+	}
+	if b == "conflicts" {
+		var c model.Conflict
+		if err := json.Unmarshal(x, &c); err != nil {
+			return err
+		}
+		return captureHistoryTx(tx, c.EntryID, &c)
+	}
+	return nil
 }
 
 // Decode before callbacks so transactional journal updates cannot invalidate a bucket cursor.

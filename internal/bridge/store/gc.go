@@ -68,6 +68,9 @@ func (s *Store) GC(ctx context.Context, o GCOptions) (result GCResult, err error
 		mark(b)
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
+		if er := historyProtectedTx(tx, mark); er != nil {
+			return er
+		}
 		all := make(map[model.SnapshotID]snapshotRecord)
 		groups := make(map[string][]snapshotRecord)
 		if er := each[snapshotRecord](tx, "snapshots", func(r snapshotRecord) error {
@@ -85,7 +88,17 @@ func (s *Store) GC(ctx context.Context, o GCOptions) (result GCResult, err error
 				}
 			}
 		}
-		if er := each[model.Entry](tx, "entries", func(e model.Entry) error { markEntry(e); return nil }); er != nil {
+		if er := each[model.Entry](tx, "entries", func(e model.Entry) error {
+			markEntry(e)
+			var m Metadata
+			if err := get(tx, "metadata", string(e.ID), &m); err != nil {
+				return err
+			}
+			if m.HistorySnapshot != "" && m.HistoryMediaBody == e.Local {
+				snrefs[m.HistorySnapshot] = true
+			}
+			return nil
+		}); er != nil {
 			return er
 		}
 		jobgroups := make(map[model.EntryID][]jobRecord)
@@ -155,13 +168,25 @@ func (s *Store) GC(ctx context.Context, o GCOptions) (result GCResult, err error
 		}); er != nil {
 			return er
 		}
+		// A legacy accepted/pending snapshot may predate DocMedia. Its
+		// immutable cache-bearing sibling must live as long as that revision.
+		liveRevisions := map[string]bool{}
+		for id := range snrefs {
+			if r, ok := all[id]; ok {
+				liveRevisions[r.Snapshot.Token+"\x00"+r.Snapshot.Revision] = true
+			}
+		}
+		for id, r := range all {
+			if len(r.Snapshot.DocMedia) > 0 && liveRevisions[r.Snapshot.Token+"\x00"+r.Snapshot.Revision] {
+				snrefs[id] = true
+			}
+		}
 		for id, r := range all {
 			if snrefs[id] {
 				sn := r.Snapshot
-				mark(sn.XML)
-				mark(sn.Markdown)
-				mark(sn.BlockMap)
-				mark(sn.FileData)
+				for _, blob := range sn.Blobs() {
+					mark(blob)
+				}
 			} else {
 				if er := tx.Bucket([]byte("snapshots")).Delete([]byte(id)); er != nil {
 					return er

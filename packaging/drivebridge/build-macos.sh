@@ -31,7 +31,7 @@ if ! $DB_UNSIGNED; then
   codesign --verify --strict "$DB_WORK/signed-lark-cli"
   DB_CLI_SIGNED="$(python3 "$DB_HERE/package.py" hash-file --path "$DB_WORK/signed-lark-cli")"
   DB_EXTRA_LDFLAGS="-X github.com/rclone/rclone/internal/bridge/manager.ReleaseCLIArtifactSHA256=$DB_CLI_SIGNED -X github.com/rclone/rclone/internal/bridge/manager.ReleaseCLIUpstreamSHA256=$DB_CLI_UPSTREAM"
-  DB_STAGE_EXTRA_ARGS=(--signed-cli "$DB_WORK/signed-lark-cli" --cli-upstream-sha "$DB_CLI_UPSTREAM")
+  DB_STAGE_EXTRA_ARGS+=(--signed-cli "$DB_WORK/signed-lark-cli" --cli-upstream-sha "$DB_CLI_UPSTREAM")
 fi
 build_stage "$DB_CGO" "$DB_TAGS"
 python3 - "$DB_WORK/tools.json" <<'PY'

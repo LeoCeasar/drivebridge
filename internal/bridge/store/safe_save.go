@@ -43,6 +43,19 @@ func cleanSafeSaveSource(tx *bolt.Tx, e model.Entry, namespace string) (bool, er
 	}
 	return safe, nil
 }
+
+// Unlike a remote rename, a local editor backup may preserve an upload that
+// is queued, blocked or already in flight. It neither cancels nor replays it.
+func editorBackupSource(tx *bolt.Tx, e model.Entry, namespace string) (bool, error) {
+	if (e.Kind != model.KindFile && e.Kind != model.KindDocx) || e.Token == "" || e.Local == "" || e.Visible != e.Local || e.RemoteCheckpoint == "" || e.LocalCheckpoint == "" || (e.FrozenBy != "" && e.FrozenBy != namespace) {
+		return false, nil
+	}
+	var metadata Metadata
+	if err := get(tx, "metadata", string(e.ID), &metadata); err != nil {
+		return false, err
+	}
+	return !metadata.Tombstone && metadata.SafeSavePending == "" && !metadata.SafeSaveParked, nil
+}
 func (s *Store) ConfigureSafeSaveBackup(ctx context.Context, id string) error {
 	return s.update(ctx, func(tx *bolt.Tx) error {
 		var r namespaceRecord
@@ -73,7 +86,12 @@ func commitSafeSaveBackup(tx *bolt.Tx, r namespaceRecord) (model.Entry, error) {
 	if err != nil {
 		return model.Entry{}, err
 	}
-	safe, err := cleanSafeSaveSource(tx, original, r.Op.ID)
+	var safe bool
+	if model.EditorTildeBackup(r.Op.Src, r.Op.Dst) {
+		safe, err = editorBackupSource(tx, original, r.Op.ID)
+	} else {
+		safe, err = cleanSafeSaveSource(tx, original, r.Op.ID)
+	}
 	if err != nil {
 		return model.Entry{}, err
 	}
@@ -98,6 +116,22 @@ func commitSafeSaveBackup(tx *bolt.Tx, r namespaceRecord) (model.Entry, error) {
 	}
 	if err = saveEntry(tx, original); err != nil {
 		return model.Entry{}, err
+	}
+	if r.Op.DstExists {
+		previous, err := entryTx(tx, r.Op.DstID)
+		if err != nil {
+			return model.Entry{}, err
+		}
+		var prior Metadata
+		if err = get(tx, "metadata", string(previous.ID), &prior); err != nil {
+			return model.Entry{}, err
+		}
+		if previous.Token != "" || prior.SafeSaveOriginal != original.ID {
+			return model.Entry{}, ErrInvalidState
+		}
+		if err = tombstone(tx, previous); err != nil {
+			return model.Entry{}, err
+		}
 	}
 	now := time.Now().UTC()
 	shadow := model.Entry{ID: model.EntryID(uuid.NewString()), MountID: original.MountID, ProfileID: original.ProfileID, Remote: r.Op.Dst, CloudName: r.Op.Dst, Kind: original.Kind, Generation: 1, Local: original.Local, Visible: original.Local, Status: model.StatusQueued}

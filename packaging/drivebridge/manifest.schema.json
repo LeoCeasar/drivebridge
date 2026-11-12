@@ -24,6 +24,7 @@
     "native_login"
   ],
   "properties": {
+    "edition": {"enum": ["feishu", "full"]},
     "schema_version": {
       "const": 1
     },
@@ -191,6 +192,28 @@
         },
         "verification": {
           "const": "not_verified"
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "git_runtime",
+        "verification"
+      ],
+      "properties": {
+        "git_runtime": {
+          "type": "boolean"
+        },
+        "verification": {
+          "enum": [
+            "not_verified",
+            "verified"
+          ]
+        },
+        "git_version": {
+          "type": "string"
         }
       }
     }

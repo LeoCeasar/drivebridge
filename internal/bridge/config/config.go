@@ -213,6 +213,9 @@ func Validate(c Config, p Paths) error {
 	identities := map[string]string{}
 	refs := map[string]string{}
 	for _, profile := range c.Profiles {
+		if profile.History != nil && !profile.History.Valid() {
+			return errors.New("invalid history retention policy")
+		}
 		if err := claim(string(profile.ID)); err != nil {
 			return err
 		}
@@ -255,6 +258,9 @@ func Validate(c Config, p Paths) error {
 			accountRemotes[remote.ID] = true
 		} else if strings.HasPrefix(remote.FolderToken, "drivebridge-account-") {
 			return fmt.Errorf("reserved account directory token")
+		}
+		if remote.MountRemoved && !remote.AccountRoot {
+			return fmt.Errorf("only account roots have a mount removal intent")
 		}
 	}
 	privatePaths := []string{filepath.Dir(p.ConfigFile), p.StateDir, p.CacheDir}

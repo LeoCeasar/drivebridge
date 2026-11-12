@@ -1,17 +1,18 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/discovery-view.js" defer></script><script src="/auth-view.js" defer></script><script src="/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>DriveBridge 文件管理</title><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/discovery-view.js" defer></script><script src="/auth-view.js" defer></script><script src="/history-view.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <div class="app-shell">
 <aside class="sidebar"><a class="brand" href="/" aria-label="DriveBridge 首页"><span class="brand-mark" aria-hidden="true">桥</span><span>DriveBridge<small>本机文件管理</small></span></a>
-<nav aria-label="主导航"><button class="nav-button active" data-view="workspace">文件与同步</button><button class="nav-button" data-view="conflicts">冲突与合并</button><button class="nav-button" data-view="settings">账号与目录</button></nav>
+<nav aria-label="主导航"><button class="nav-button active" data-view="workspace">文件与同步</button><button class="nav-button" data-view="conflicts">冲突与合并</button><button class="nav-button" data-view="history">修改历史</button><button class="nav-button" data-view="settings">账号与目录</button></nav>
 <section class="conflict-nav"><div class="sidebar-heading">需要合并 <span id="conflict-count" class="count">0</span></div><div id="conflict-list"></div><p id="conflict-empty" class="quiet">没有待处理的冲突。</p></section>
 <div class="sidebar-foot"><span id="connection" class="connection">正在连接本机服务</span><p>关闭此页面不影响挂载。</p></div></aside>
 <main>
-<header class="topbar"><div><span id="page-label">文件与同步</span><span class="host-label">本机管理界面</span></div><button id="refresh" class="button small">刷新状态</button></header>
+<header class="topbar"><div><span id="page-label">文件与同步</span><span class="host-label">本机管理界面</span></div><button id="sync-attention" class="button small" hidden>需要处理</button><button id="refresh" class="button small">刷新状态</button></header>
 <div id="message" class="message" role="status" aria-live="polite" hidden></div>
 <section id="workspace" class="page">
 <div class="page-heading"><div><h1 id="workspace-title">文件与同步</h1><p id="workspace-description">查看本机保存和云端确认，处理需要你决定的差异。</p></div><button id="setup-shortcut" class="button">添加共享目录</button></div>
+<section id="sync-issues" class="sync-issues" aria-labelledby="sync-issue-count" hidden><h2 id="sync-issue-count">需要处理</h2><p class="quiet">以下是未能完成的上传任务，与多人编辑冲突分别展示。本地副本下载不会重试、覆盖或删除云端文件。</p><div id="sync-issue-list"></div></section>
 <div id="mount-panel" class="table-wrap"><table class="mount-table"><thead><tr><th>挂载目录</th><th>本机保存</th><th>云端状态</th><th>待处理</th><th>操作</th></tr></thead><tbody id="mount-rows"></tbody></table><div id="mount-empty" class="empty-state"><h2>登录飞书后自动挂载账号盘</h2><p>完成飞书授权和应用内登录后自动挂载，无需选择目录。</p><button id="start-setup" class="button primary">开始设置</button></div><details id="archived-mount-panel" class="advanced-settings archived-mounts" hidden><summary>已移除挂载（本机数据保留）</summary><p class="field-help">移除不会删除飞书文件，也不会清空待上传、冲突或缓存数据。恢复配置后只回到列表，需要你再启动同步。</p><table class="mount-table"><thead><tr><th>挂载目录</th><th>本机保存</th><th>状态</th><th>保留数据</th><th>操作</th></tr></thead><tbody id="archived-mount-rows"></tbody></table></details></div>
 <section id="conflict-queue" class="conflict-queue" aria-label="多文件合并队列">
 <div class="queue-heading"><div><h2>合并队列</h2><p class="quiet">逐个打开文件核对差异。切换文件会保留各自草稿，勾选复核过的文件后一起提交。</p></div><div class="merge-actions"><button id="select-reviewed" class="button small">选择可提交文件</button><button id="clear-selection" class="button small">清空选择</button><button id="submit-selected" class="button primary" disabled>提交已选文件（0）</button></div></div>
@@ -26,6 +27,17 @@
 <div class="merge-footer"><span>本机保存成功与飞书确认是两个状态；并发修改仍可能发生。</span><button id="later" class="text-button">稍后处理</button></div>
 </section>
 </section>
+<section id="history" class="page" hidden>
+<div class="page-heading"><div><h1>修改历史</h1><p>自动记录本机保存和已取得的云端版本，查看差异不会生成比较副本。</p></div><button id="history-refresh" class="button">刷新历史</button></div>
+<p id="history-state" class="quiet" role="status"></p><p id="history-notice" class="message" role="status" hidden></p>
+<div class="history-filters"><label>账号<select id="history-profile"><option value="">全部账号</option></select></label><label>查找文件<input id="history-search" type="search" placeholder="输入文件名或目录" autocomplete="off"></label></div>
+<details class="advanced-settings"><summary>历史保留设置</summary><p class="quiet">选择一个账号后可修改。固定版本、未上传修改及未解决冲突不按普通保留策略删除。容量为软预算，受保护内容可能超过预算。</p><form id="history-policy-form" class="history-filters"><label>保留天数<input id="history-keep-days" type="number" min="1" max="36500" required value="30"></label><label>每文件至少保留版本数<input id="history-minimum" type="number" min="1" max="100000" required value="10"></label><label>历史软预算（GiB）<input id="history-budget" type="number" min="0.001" step="0.001" required value="5"></label><button id="history-policy-save" class="button" type="submit" disabled>保存设置</button></form></details>
+<section id="history-pending-panel" hidden><h2>已在本机保存，正在归档</h2><p class="quiet">最近 50 条待归档记录。可立即查看正文和差异，无需等待 Git；归档后自动进入下方历史。</p><div class="table-wrap"><table class="mount-table"><thead><tr><th>文件</th><th>状态</th><th>本机时间</th><th>操作</th></tr></thead><tbody id="history-pending-rows"></tbody></table></div></section>
+<div class="table-wrap"><table class="mount-table"><thead><tr><th>文件</th><th>记录</th><th>时间</th><th>操作</th></tr></thead><tbody id="history-rows"></tbody></table><p id="history-empty" class="quiet">暂无历史记录。文件保存后由后台自动归档，未打开的文件不会为建库下载。</p></div><button id="history-load-more" class="button" hidden>加载更多</button>
+<section id="history-detail" class="history-detail" hidden><div class="merge-heading"><div><h2 id="history-file-name"></h2><p id="history-version-info" class="quiet"></p><p id="history-target-info" class="quiet"></p></div><button id="history-pin" class="button" disabled>固定保留此版本</button><button id="history-restore" class="button primary" disabled>恢复为新的本地修改</button></div>
+<details><summary>查看此版本正文</summary><pre id="history-body" class="history-code" tabindex="0"></pre><div id="history-media" class="history-media"></div></details>
+<div class="history-filters"><label>原版本<select id="history-compare-left"></select></label><label>新版本<select id="history-compare-right"></select></label><button id="history-compare" class="button">查看差异</button></div><pre id="history-diff" class="history-code" tabindex="0" aria-label="历史版本差异"></pre>
+</section></section>
 <section id="settings" class="page" hidden>
 <div class="page-heading"><div><h1>账号与目录</h1><p>设置保存在当前系统用户下，本机管理页不会取得飞书凭据。</p></div></div>
 <section class="discovery-panel" aria-labelledby="discovery-title">

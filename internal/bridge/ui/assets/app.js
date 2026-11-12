@@ -8,21 +8,35 @@
   let csrf = '', current = null, choices = new Map(), manual = false;
   let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '';
   let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false;
+  let currentPlatform='';
   const record = () => current && queue.records.get(current.id);
   const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
   const deletedLabel = r => r?.input?.local_delete_pending ? '已确认本地删除，上传已取消' : '已跟随云端删除';
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
   function message(text, error = false, owner = '') { messageOwner = owner; $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
-  function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; $('connection').textContent = '本机会话已失效'; }
+  function removalHelp(error,mount) {
+    message(error.message,true);
+    if (!['mount_unsynced','history_pending','mount_in_use'].includes(error.code)) return;
+    const actions=make('div',undefined,'merge-actions');
+    const inspect=make('button',error.code==='history_pending'?'查看历史归档':mount.state?.conflicts?'处理冲突':'查看同步任务','button small');
+    inspect.addEventListener('click',()=>{view(error.code==='history_pending'?'history':mount.state?.conflicts?'conflicts':'workspace');if(error.code!=='history_pending'&&!mount.state?.conflicts)$('sync-issues').scrollIntoView({block:'start'});});actions.append(inspect);
+    if(!mount.status_warning&&(mount.archived||!mount.state?.running)){
+      const resume=make('button',mount.archived?'恢复并启动同步':'启动同步','button small');
+      resume.addEventListener('click',async()=>{resume.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived?'restore_start':'start'}`,'POST',{});message('同步已启动，待上传与冲突处理完成后可重新删除。');await loadConfig();await refresh();}catch(e){message(e.message,true);}finally{resume.disabled=false;}});actions.append(resume);
+    }
+    $('message').append(actions);
+  }
+  function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; if ($('history')) $('history').hidden = true; $('connection').textContent = '本机会话已失效'; }
   async function api(route, method = 'GET', body) {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && csrf) headers['X-CSRF-Token'] = csrf;
     const response = await fetch(route, {method, headers, credentials: 'same-origin', cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body)});
     let data = {}; try { data = await response.json(); } catch (_) { /* Stable fallback below. */ }
-    if (!response.ok) { if (response.status === 403) showSessionError(); const error = new Error(data.message || '本机服务暂时不可用，请稍后重试。'); error.status = response.status; error.code = data.code; throw error; }
+    if (!response.ok) { if (response.status === 403 && data.code !== 'history_identity_changed') showSessionError(); const error = new Error(data.message || '本机服务暂时不可用，请稍后重试。'); error.status = response.status; error.code = data.code; throw error; }
     return data;
   }
+  const historyView = window.DriveBridgeHistory?.create({document,api,onMessage:message,confirm:text=>window.confirm(text)});
   const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh()});
   const authMonitor = window.DriveBridgeAuth.create({api,storage:window.localStorage,onProgress:renderAuthProgress,onError:(error,terminal) => {
     $('auth-flow').hidden = false;
@@ -57,16 +71,18 @@
   function bytes(text) { const data = new TextEncoder().encode(text); let result = ''; for (let i = 0; i < data.length; i += 8192) result += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(result); }
   function view(name) {
     activeView = name;
-    for (const key of ['workspace', 'settings']) $(key).hidden = key !== (name === 'conflicts' ? 'workspace' : name);
+    for (const key of ['workspace', 'settings', 'history']) $(key).hidden = key !== (name === 'conflicts' ? 'workspace' : name);
     document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
     const conflicts = name === 'conflicts';
-    $('page-label').textContent = name === 'settings' ? '账号与目录' : conflicts ? '冲突与合并' : '文件与同步';
+    if (name === 'history') historyView?.load();
+    $('page-label').textContent = name === 'history' ? '修改历史' : name === 'settings' ? '账号与目录' : conflicts ? '冲突与合并' : '文件与同步';
     $('workspace-title').textContent = conflicts ? '冲突与合并' : '文件与同步';
     $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '查看本机保存和云端确认，处理需要你决定的差异。';
     $('mount-panel').hidden = conflicts; $('setup-shortcut').hidden = conflicts;
   }
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
   for (const id of ['setup-shortcut', 'start-setup']) $(id).addEventListener('click', () => view('settings'));
+  $('sync-attention').addEventListener('click',()=>{view('workspace');$('sync-issues').scrollIntoView?.({block:'start',behavior:'smooth'});});
   function cloudLabel(state) { const value = state.cloud_state; const labels = {synced:'已确认',queued:'等待同步',uploading:'正在上传',merging:'正在合并',awaiting_verification:'等待回读核验',conflict:'需要合并',blocked:'已阻塞',paused:'已暂停',offline:'离线'}; return labels[value] || (state.running ? '等待确认' : '挂载未启动'); }
   function renderMounts(mounts = [], canRetry = false) {
     $('mount-rows').replaceChildren(); $('archived-mount-rows').replaceChildren();
@@ -85,16 +101,66 @@
         name.append(make('small',known ? `${reason}；保留上次结果（${new Date(mount.status_updated_at).toLocaleTimeString()}）` : `${reason}；尚未取得完整状态`,'mount-path'));
       }
       const local = make('td'); local.append(make('span', !known ? '等待核对' : (stale ? '上次：' : '') + (state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), 'state-tag' + (state.local_saved ? '' : ' pending')));
-      const cloud = make('td', !known ? '等待核对' : (stale ? '上次：' : '') + cloudLabel(state)); const queue = make('td',!known ? '暂不可读' : `${stale ? '上次：' : ''}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', mount.archived ? '恢复挂载配置' : state.running ? '停止同步' : '启动挂载', 'button small');
+      const cloud = make('td', !known ? '等待核对' : (stale ? '上次：' : '') + cloudLabel(state)); const queue = make('td',!known ? '暂不可读' : `${stale ? '上次：' : ''}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', mount.archived ? '恢复并启动同步' : state.running ? '暂停同步' : '启动挂载', 'button small');
       button.disabled = stale;
-      button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived ? 'restore' : state.running ? 'stop' : 'start'}`, 'POST', {}); if (mount.archived) message('挂载配置已恢复；需要你再启动同步，保留数据尚未上传。'); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);
-      if (!mount.archived) {
-        const remove = make('button','移除挂载','button small'); remove.disabled = stale; remove.title = '停止并从常规列表移除；保留飞书文件及本机恢复数据';
-        remove.addEventListener('click',async () => { remove.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/archive`,'POST',{}); message('挂载已移除；本机数据保留，可在下方“已移除挂载”中恢复。'); await loadConfig(); await refresh(); } catch(error) { message(error.message,true); } finally { remove.disabled = stale; } }); action.append(remove);
-      }
+      button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived ? 'restore_start' : state.running ? 'stop' : 'start'}`, 'POST', {}); if (mount.archived) message('挂载已恢复并启动，后台将继续处理同步任务。'); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);
+      const remove = make('button','删除挂载及缓存','button small'); remove.disabled = stale; remove.title = '删除本机挂载配置和缓存；保留飞书文件与 Git 历史。有未同步内容时会阻止删除。';
+      remove.addEventListener('click',async () => { remove.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/delete`,'POST',{}); message('挂载配置与本地缓存已删除；飞书文件和 Git 历史仍保留。'); await loadConfig(); await refresh(); } catch(error) { removalHelp(error,mount); if(error.code==='cleanup_pending'){await loadConfig();await refresh();} } finally { remove.disabled = stale; } }); action.append(remove);
       if (canRetry && !mount.archived) { const retry = make('button','重试同步','button small'); retry.disabled = stale || !recovery.canRetry(mount,canRetry); retry.title = state.running ? '重新核验并重试待同步项目' : '请先启动挂载'; retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = stale || !recovery.canRetry(mount,canRetry); } }); action.append(retry); }
       row.append(name, local, cloud, queue, action); $(mount.archived ? 'archived-mount-rows' : 'mount-rows').append(row);
     }
+  }
+  function issueAdvice(issue) {
+    switch (issue.code) {
+      case 'unsupported_content':
+        return issue.new_document ? {title:'文档关联或格式需要处理',reason:'当前保存被识别为新文档，其中的图片、表格等结构不能直接作为新文档安全上传。',steps:['先下载本地副本，保留此次修改。','如果这是原有飞书文档，请在飞书中找到原文档，对照副本补回修改，或等待文档关联修复后同步。','如果这是全新文档，请先使用标准 Markdown 创建；不要删除现有副本。重试不会自动修复文档关联。']} : {title:'文档结构暂不支持安全写回',reason:'此次保存包含无法安全转换回飞书的结构变化，系统已停止上传。',steps:['先下载本地副本。','在飞书原文档中应用复杂表格、图片或其他结构变化；本地可编辑已支持的段落和代码块。','修正内容后重新保存；格式问题未解决前，重复重试不会生效。']};
+      case 'permission_denied': case 'auth_required': case 'unauthorized': case 'identity_changed':
+        return {title:'账号或权限需要检查',reason:'当前账号无法完成这项上传。',settings:true,steps:['确认使用的是拥有该文件编辑权限的账号。','在“账号与目录”中重新授权，或请目录所有者恢复编辑权限，然后重试。']};
+      case 'network_or_protocol': case 'rate_limited': case 'canceled': case 'offline':
+        return {title:'上传暂未完成',reason:issue.code === 'rate_limited' ? '飞书暂时限制了请求频率，后台会退避重试。' : '网络或服务响应暂未通过核验，后台会重试。',retry:true,steps:['检查网络连接；已有修改保留在本机。','恢复连接后可点击“重试同步”，仍需等待云端回读确认。']};
+      case 'driver_unavailable':
+        return {driver:true,title:'挂载驱动需要检查',reason:'系统挂载组件暂不可用。',steps:currentPlatform==='darwin'?['安装 macFUSE 后，在“系统设置 → 隐私与安全性”完成安装程序要求的授权。','若系统提示重启，完成重启后点击“启动挂载”；已保存内容保留。']:currentPlatform==='windows'?['从下方官方入口安装 WinFsp 运行组件。','安装完成后点击“启动挂载”，已有账号和待上传内容保留。']:['安装系统发行版提供的 FUSE3 运行组件，并确认当前用户可以访问 /dev/fuse。','然后点击“启动挂载”；已有文件和草稿保留。']};
+      case 'unknown_result':
+        return {title:'云端结果尚未确认',reason:'上传可能已经到达云端，但回读核验尚未完成。',retry:true,steps:['保留本地修改，不要另外创建同名云端文件。','恢复网络后重试，后台会先核验已有请求的结果。']};
+      case 'empty_file_unsupported':
+        return {title:'暂不支持上传空文件',reason:'当前上传接口尚未验证空文件上传能力。',steps:['先保留本地文件。','写入实际内容并保存后再同步，或在飞书中创建空文件。']};
+      default:
+        return {title:'同步需要处理',reason:'这项上传尚未通过安全核验，本地保存与云端完成是两个状态。',steps:['先保留或下载本地副本。','查看下方错误标识和文件路径；未确认原因前，不要删除文件或强制覆盖云端。']};
+    }
+  }
+  function renderIssues(mounts = [], canRetry = false) {
+    $('sync-issue-list').replaceChildren(); let count = 0;
+    for (const mount of mounts) {
+      const state = mount.state || {}, stale = Boolean(mount.status_warning);
+      const issues = state.issues?.length ? state.issues : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
+      for (const issue of issues) {
+        count++; const advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
+        card.append(make('h3',issue.name || mount.name),make('strong',advice.title),make('p',advice.reason));
+        if (mount.archived) card.append(make('p','此任务属于以前移除的挂载。先恢复并启动同步，处理完未同步内容后可彻底删除挂载与缓存。','quiet'));
+        card.append(make('p',issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
+        if (stale) card.append(make('p','这是上次记录，当前状态更新尚未完成；请先刷新。','quiet'));
+        const steps = make('ol'); for (const step of advice.steps) steps.append(make('li',step)); card.append(steps);
+        const actions = make('div',undefined,'merge-actions');
+        if(advice.driver){const links={darwin:'https://macfuse.github.io/',windows:'https://winfsp.dev/rel/',linux:'https://github.com/libfuse/libfuse'};if(links[currentPlatform]){const help=make('a','官方驱动安装帮助','button small');help.href=links[currentPlatform];help.target='_blank';help.rel='noopener noreferrer';actions.append(help);}}
+        if(!stale && (mount.archived || !state.running)) {
+          const start=make('button',mount.archived?'恢复并启动同步':'启动挂载','button small');
+          start.addEventListener('click',async()=>{start.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived?'restore_start':'start'}`,'POST',{});await loadConfig();await refresh();}catch(e){message(e.message,true);}finally{start.disabled=false;}});actions.append(start);
+        }
+        if (issue.can_download && issue.job_id && !stale) { const copy=make('a','下载本地副本','button small'); copy.href=`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/local`; copy.download=issue.name?.split('/').pop() || 'local-copy'; copy.title='下载此次提交的原始内容；图片资源仍保留在挂载目录中'; actions.append(copy); }
+        if (advice.settings) {const settings=make('button','检查账号与权限','button small');settings.addEventListener('click',()=>view('settings'));actions.append(settings);}
+        if (advice.retry && canRetry && !mount.archived) {const retry=make('button','重试同步','button small');retry.disabled=stale || !state.running;retry.addEventListener('click',async()=>{retry.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{});message('已请求重试，完成后需要云端确认。');await refresh();}catch(error){message(error.message,true);}finally{retry.disabled=stale||!state.running;}});actions.append(retry);}
+        card.append(actions);
+        const details=make('details'),summary=make('summary','诊断信息');details.append(summary,make('p',`错误标识：${issue.code || 'operation_failed'}`,'quiet'));
+        if (issue.name) {
+          details.append(make('p',`文件：${issue.name}`,'mount-path'));
+          if (mount.mountpoint && issue.job_id) {const sep=mount.mountpoint.includes('\\') || /^[A-Za-z]:/.test(mount.mountpoint) ? '\\' : '/';const location=mount.mountpoint.replace(/[\\/]+$/,'')+sep+issue.name.split('/').join(sep);details.append(make('p',`本机位置：${location}`,'mount-path'));}
+        }
+        if (issue.job_id && issue.local_saved && !issue.can_download) details.append(make('p','此文件超过页面直接下载上限，请从上述本机位置复制到挂载盘之外保存副本。','quiet'));
+        if (issue.job_id) details.append(make('p',`任务：${issue.job_id}`,'quiet'));
+        card.append(details);$('sync-issue-list').append(card);
+      }
+    }
+    $('sync-issues').hidden=!count;$('sync-issue-count').textContent=`需要处理（${count}）`;$('sync-attention').hidden=!count;$('sync-attention').textContent=`需要处理（${count}）`;
   }
   const outcomeLabels = {unreviewed:'请先打开复核',draft:'待提交',submitting:'正在提交',queued:'已接受，等待同步',resolved:'已处理，草稿保留',needs_refresh:'需要刷新并复核',failed:'提交失败，可重试',blocked:'无法自动合并，请保存副本'};
   function renderQueue() {
@@ -133,7 +199,7 @@
       try {
         const status = await api('/api/status');
         statusPartial = Boolean(status.partial);
-        renderMounts(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); if (current) recoveryControls();
+        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); if (current) recoveryControls();
         statusDelay = 5000;
         $('connection').textContent = status.partial ? '已连接本机服务，部分状态稍后更新' : '已连接本机服务';
         if (messageOwner === 'status_refresh') message('');
@@ -169,12 +235,15 @@
     catch(error) { message(error.message,true); } finally { $('pull-policy-fields').disabled = !policyMounts.length; }
   });
   async function loadConfig() {
-    const config = await api('/api/config'); $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
+    const config = await api('/api/config'); currentPlatform=config.platform; $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
     for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); showAuthFlow(flow,p.id); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); showAuthFlow(flow,p.id); } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
     const previousPolicyMount = $('pull-policy-mount').value; policyMounts = (config.mounts || []).filter(m => !m.archived);
     options($('pull-policy-mount'),policyMounts,'暂无挂载');
     if (policyMounts.some(m => m.id === previousPolicyMount)) $('pull-policy-mount').value = previousPolicyMount; else $('pull-policy-mount').value = policyMounts[0]?.id || '';
     renderPullPolicy();
+    for(const remote of config.remotes.filter(r=>r.account_root&&r.mount_removed)){
+      const reconnect=make('button','重新挂载账号盘','button small');reconnect.addEventListener('click',async()=>{reconnect.disabled=true;try{await api('/api/config','POST',{action:'account_mount',profile_id:remote.profile_id});await loadConfig();await refresh();message('账号盘已重新挂载。');}catch(e){message(e.message,true);}finally{reconnect.disabled=false;}});$('profiles').append(reconnect);
+    }
     discovery.setProfiles(config.profiles); await discovery.load();
     return config;
   }

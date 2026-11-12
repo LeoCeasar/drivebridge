@@ -1,0 +1,26 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+class Element{constructor(){this.children=[];this.listeners={};this.hidden=true;this.value='';this.textContent='';this.classList={toggle(){}};}append(...x){this.children.push(...x);}replaceChildren(...x){this.children=x;}addEventListener(k,f){this.listeners[k]=f;}setAttribute(){}querySelector(){return {disabled:false};}}
+const html=fs.readFileSync(path.join(__dirname,'../assets/index.html'),'utf8');
+for(const id of ['sync-issues','sync-issue-list','sync-issue-count','sync-attention'])assert.ok(html.includes('id="'+id+'"'),'missing live page element '+id);
+const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+const context={document:{getElementById:el,createElement:()=>new Element(),querySelectorAll:()=>[]},window:{DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeBatch:require('../assets/batch-view.js'),DriveBridgeRecovery:{},DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},URLSearchParams};
+let source=fs.readFileSync(path.join(__dirname,'../assets/app.js'),'utf8');
+source=source.replace('  start();','  globalThis.renderIssues=renderIssues;');
+vm.runInNewContext(source,context);
+const issue={job_id:'job',name:'手册.md',code:'unsupported_content',new_document:true,local_saved:true,can_download:true};
+context.renderIssues([{id:'mount',state:{running:true,issues:[issue]}}],true);
+assert.equal(el('sync-issues').hidden,false,'blocked uploads need a persistent visible panel');
+const texts=e=>[e.textContent,...e.children.flatMap(texts)].join(' ');
+assert.match(texts(el('sync-issue-list')),/手册.md/);assert.match(texts(el('sync-issue-list')),/新文档|关联/);assert.match(texts(el('sync-issue-list')),/本地.*保存/);assert.match(texts(el('sync-issue-list')),/副本/);
+const walk=e=>[e,...e.children.flatMap(walk)];
+assert.ok(walk(el('sync-issue-list')).some(e=>e.href==='/api/mounts/mount/uploads/job/local'),'download must use the captured job, not a filesystem path');
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'),'unsupported content must not present retry as a fix');
+context.renderIssues([{id:'mount',state:{running:true,issues:[{...issue,code:'network_or_protocol'}]}}],true);
+assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'),'transient failures need a retry action');
+context.renderIssues([{id:'mount',status_warning:'pending',state:{running:true,issues:[issue]}}],true);
+assert.match(texts(el('sync-issue-list')),/上次|更新/,'stale issues must be labeled');
+context.renderIssues([{id:'mount',state:{running:true,cloud_state:'blocked',last_error:'unsupported_content'}}],true);
+assert.equal(el('sync-issues').hidden,false,'legacy backend errors cannot disappear when no detail is available');
+context.renderIssues([{id:'mount',state:{running:true,issues:[]}}],true);assert.equal(el('sync-issues').hidden,true);
+console.log('blocked upload visibility, advice, safe copy, retry and stale fallback verified');

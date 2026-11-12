@@ -55,19 +55,21 @@ type Config struct {
 	CacheDir      string    `json:"cache_dir,omitempty"`
 }
 type Profile struct {
-	ID           ProfileID `json:"id"`
-	Name         string    `json:"name"`
-	Brand        string    `json:"brand"`
-	AuthRef      string    `json:"auth_ref,omitempty"`
-	IdentityHash string    `json:"identity_hash,omitempty"`
+	History      *HistoryPolicy `json:"history,omitempty"`
+	ID           ProfileID      `json:"id"`
+	Name         string         `json:"name"`
+	Brand        string         `json:"brand"`
+	AuthRef      string         `json:"auth_ref,omitempty"`
+	IdentityHash string         `json:"identity_hash,omitempty"`
 }
 type Remote struct {
-	ID          RemoteID  `json:"id"`
-	Name        string    `json:"name"`
-	ProfileID   ProfileID `json:"profile_id"`
-	FolderToken string    `json:"folder_token"`
-	NewMDPolicy string    `json:"new_md_policy"`
-	AccountRoot bool      `json:"account_root,omitempty"`
+	MountRemoved bool      `json:"mount_removed,omitempty"`
+	ID           RemoteID  `json:"id"`
+	Name         string    `json:"name"`
+	ProfileID    ProfileID `json:"profile_id"`
+	FolderToken  string    `json:"folder_token"`
+	NewMDPolicy  string    `json:"new_md_policy"`
+	AccountRoot  bool      `json:"account_root,omitempty"`
 }
 type Mount struct {
 	BackgroundPullExcludedExtensions []string `json:"background_pull_excluded_extensions"`
@@ -127,16 +129,18 @@ type Entry struct {
 }
 
 type Snapshot struct {
-	FileData     BlobID        `json:"file_data,omitempty"`
-	FileIdentity *FileIdentity `json:"file_identity,omitempty"`
-	ID           SnapshotID    `json:"id"`
-	Token        string        `json:"token"`
-	Revision     string        `json:"revision"`
-	XML          BlobID        `json:"xml"`
-	Markdown     BlobID        `json:"markdown"`
-	BlockMap     BlobID        `json:"block_map"`
-	Size         int64         `json:"size"`
-	ModTime      time.Time     `json:"mod_time"`
+	// DocMedia binds local image bodies to this document revision, independently of its projection.
+	DocMedia     map[string]BlobID `json:"doc_media,omitempty"`
+	FileData     BlobID            `json:"file_data,omitempty"`
+	FileIdentity *FileIdentity     `json:"file_identity,omitempty"`
+	ID           SnapshotID        `json:"id"`
+	Token        string            `json:"token"`
+	Revision     string            `json:"revision"`
+	XML          BlobID            `json:"xml"`
+	Markdown     BlobID            `json:"markdown"`
+	BlockMap     BlobID            `json:"block_map"`
+	Size         int64             `json:"size"`
+	ModTime      time.Time         `json:"mod_time"`
 }
 
 type Job struct {
@@ -299,7 +303,21 @@ type DirectoryIndexStatus struct {
 	Failed     int `json:"failed"`
 }
 
+// SyncIssue is a durable failed upload, distinct from a version conflict.
+type SyncIssue struct {
+	JobID       JobID   `json:"job_id"`
+	EntryID     EntryID `json:"entry_id"`
+	Name        string  `json:"name"`
+	Code        string  `json:"code"`
+	State       Status  `json:"state"`
+	LocalSaved  bool    `json:"local_saved"`
+	NewDocument bool    `json:"new_document"`
+	CanDownload bool    `json:"can_download"`
+}
+
 type MountStatus struct {
+	History        *HistoryStatus        `json:"history,omitempty"`
+	Issues         []SyncIssue           `json:"issues,omitempty"`
 	DirectoryIndex *DirectoryIndexStatus `json:"directory_index,omitempty"`
 	SchemaVersion  int                   `json:"schema_version"`
 	MountID        MountID               `json:"mount_id"`

@@ -1,0 +1,386 @@
+{
+  "kind": "audit",
+  "work_id": "mount-cleanup-and-editions",
+  "target": {
+    "repo": "/Users/rrong/Documents/perf/projects/drivebridge",
+    "base": "6f17b79b766f65abc04e192d7dd561b8357fd61f",
+    "head": "6f17b79b766f65abc04e192d7dd561b8357fd61f",
+    "branch": "main",
+    "state": "审核 HEAD 上未提交工作区"
+  },
+  "mode": "self",
+  "completed": true,
+  "scope": "针对原审核 MC-01 至 MC-05 的修复验证；不是新增整分支审核。包含相关模块完整测试、专项竞态、签名参数边界回归、本机维护安装及两个测试挂载的实际删除。",
+  "verdict": "inconclusive",
+  "summary": "5 项代码缺陷均已修复并通过相关验证，本机已安装 0.2.7，两个测试盘已删除。Windows/Linux 原生与正式签名证据仍缺，不能据此宣布全平台发布验收。",
+  "requirements": [
+    {
+      "id": "R-01",
+      "status": "implemented",
+      "evidence": "干净正常盘删除和保留历史已有实现，MC-01/03/04/05 使失败路径及安装生命周期未闭环。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    },
+    {
+      "id": "R-02",
+      "status": "implemented",
+      "evidence": "有未同步内容会阻止删除；旧辅助文件队列缺少迁移及处理入口，见 MC-05。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    },
+    {
+      "id": "R-03",
+      "status": "implemented",
+      "evidence": "MountRemoved 阻止后台重建；RecreateAccountMount 提供显式重新挂载；已读实现及模块测试。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    },
+    {
+      "id": "R-04",
+      "status": "implemented",
+      "evidence": "restore_start、驱动帮助及 CSRF 路由已实现，UI和前端相关测试通过。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    },
+    {
+      "id": "R-05",
+      "status": "implemented",
+      "evidence": "Feishu/full 实际 darwin CGO=0 构建和注册检查通过，签名发布被 MC-02 阻塞。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    },
+    {
+      "id": "R-06",
+      "status": "implemented",
+      "evidence": "Markdown 模块测试通过；本轮边界是不累积转义，不承诺全部去转义，已有类型策略未变。 修复证据见本轮固定问题及 mount-cleanup-fixes.md；发布实机缺口单独保留。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "MC-01",
+      "type": "implementation",
+      "title": "删除最后一个挂载后，后续升级被安装审计拒绝",
+      "scenario": "删除最后一个 owner 后仍残留 runtime .lock 和 removals 目录；installationConfigs 对非空无 owner 目录返回 ErrConfig，WithInstallationLease 因而失败。",
+      "location": "internal/bridge/manager/remove.go:280-316；internal/bridge/manager/install_lease.go:305-307",
+      "source": "源码及隔离探针",
+      "severity": "P1",
+      "blocking": true,
+      "verification": "true",
+      "status": "fixed",
+      "evidence": [
+        "Start → DeleteMount → installationConfigs 实测：owner directory has no valid root reference。remove-probe.log，探针退出 0。",
+        "TestDeleteLastMountAllowsInstallationLease 通过，删除最后一盘后安装租约可执行；保留 config.ref 与原锁 inode。manager-green.log / changed-modules-final.log。"
+      ],
+      "action": "已实施并验证；见 docs/coding-plan/global-git-history/mount-cleanup-fixes.md。原建议：协调清理日志、退休所有权与安装发现规则；不要直接删除仍可能被使用的锁文件。增加删除最后一盘后的安装租约测试。"
+    },
+    {
+      "id": "MC-02",
+      "type": "implementation",
+      "title": "macOS 签名发布覆盖 Git 运行时参数",
+      "scenario": "common.sh 追加 --git-runtime 后，build-macos.sh 的签名分支整体覆盖 DB_STAGE_EXTRA_ARGS；package.py 对未收到 Git 参数的非 unsigned 产物必定拒绝。",
+      "location": "packaging/drivebridge/common.sh:31；packaging/drivebridge/build-macos.sh:34；packaging/drivebridge/package.py:354-357",
+      "source": "源码及隔离探针",
+      "severity": "P1",
+      "blocking": true,
+      "verification": "true",
+      "status": "fixed",
+      "evidence": [
+        "editions/macos-git-args.sh 实际退出 0；日志表明覆盖前有 Git 参数，覆盖后无。未进行真实签名。",
+        "MC-02-green.log、MC-02-packaging.log：真实脚本签名分支至 staging 的 feishu/full 两场景保留 Git 参数；49 项打包测试通过。"
+      ],
+      "action": "已实施并验证；见 docs/coding-plan/global-git-history/mount-cleanup-fixes.md。原建议：签名参数使用追加，保留已有 Git 参数；增加签名分支参数传递测试。"
+    },
+    {
+      "id": "MC-03",
+      "type": "implementation",
+      "title": "启动失败的干净挂载无法删除",
+      "scenario": "Start 在 spawn 前写 last-state.json；spawn 失败时没有数据库和待上传内容，但 auditRemoval 调用要求目录全空的 installationUnusedRoot，返回配置错误。",
+      "location": "internal/bridge/manager/remove.go:161-162；internal/bridge/manager/worker.go:389-395",
+      "source": "源码及隔离探针",
+      "severity": "P2",
+      "blocking": true,
+      "verification": "true",
+      "status": "fixed",
+      "evidence": [
+        "remove-probes/failed-spawn.log：隔离探针期望删除成功，实际退出 1；目录仅 last-state.json，错误 configured mount has unaccounted data。",
+        "TestDeleteMountAfterFailedStart 的 spawn/factory 两场景通过，未知初始化内容仍拒绝删除；对应竞态测试通过。"
+      ],
+      "action": "已实施并验证；见 docs/coding-plan/global-git-history/mount-cleanup-fixes.md。原建议：识别并校验无数据库的程序启动状态文件，允许受控清理；未知内容继续阻止，补失败启动回归测试。"
+    },
+    {
+      "id": "MC-04",
+      "type": "implementation",
+      "title": "旧历史快照可永久阻止已归档挂载删除",
+      "scenario": "离线 HistorySync 消费 outbox 不刷新 worker 的 history-state.json，停止盘 Status 读取旧快照；DeleteMount 在检查真实 Store 前因旧 pending>50 拒绝。",
+      "location": "internal/bridge/manager/remove.go:68-69；internal/bridge/manager/status.go:258；internal/bridge/manager/history_maintenance.go:223",
+      "source": "源码及隔离探针",
+      "severity": "P2",
+      "blocking": true,
+      "verification": "true",
+      "status": "fixed",
+      "evidence": [
+        "remove-probe.log：模拟真实 Store pending=0，停止盘快照 pending=51；HistoryStates 返回 0，但 DeleteMount 返回 ErrHistoryPending。探针退出 0。",
+        "TestDeleteMountIgnoresStaleOfflineHistorySnapshot 通过：实际 Store pending=0 时旧 pending=51 快照不再影响当前状态或删除。"
+      ],
+      "action": "已实施并验证；见 docs/coding-plan/global-git-history/mount-cleanup-fixes.md。原建议：停止盘依据 Store 当前事实判定，不以旧显示快照作为永久删除门槛；补离线归档后的删除测试。"
+    },
+    {
+      "id": "MC-05",
+      "type": "implementation",
+      "title": "旧系统辅助文件任务永久排队，两个测试盘无法删除",
+      "scenario": "本机两盘 queued=3/1，涉及 ._cloud-origin.txt 两代任务及两份 .DS_Store。ShouldSync 跳过它们，但旧任务无 local receipt 迁移，仍被统计为待上传，触发删除保护；queued 也不会进入 paused/blocked 问题卡。",
+      "location": "internal/bridge/overlay/fs.go:195-207；internal/bridge/manager/status.go:133-139；internal/bridge/manager/remove.go:65-66",
+      "source": "本机只读诊断及源码核对",
+      "severity": "P2",
+      "blocking": true,
+      "verification": "true",
+      "status": "fixed",
+      "evidence": [
+        "active-test-mounts.json 及本轮 installed CLI 只读状态：三个辅助文件当前无 Token，两盘历史 pending=0、conflicts=0。local_receipt_test.go 的旧无回执用例也保留该队列。",
+        "TestOpeningMount 系列及 TestDeleteMountReconcilesLegacySystemMetadata 的运行/归档分支通过；本机两盘实际删除成功，状态/缓存/配置均已移除；删除后 Git 读取 4096 字节与原捕获 SHA-256 一致。"
+      ],
+      "action": "已实施并验证；见 docs/coding-plan/global-git-history/mount-cleanup-fixes.md。原建议：为明确系统辅助文件提供安全迁移或取消入口：锁内核对无派发/创建/绑定/冲突证据，保留正文和历史后转为仅本地回执。不满足条件者继续阻止并说明原因，不伪造云端已同步。"
+    }
+  ],
+  "tests": [
+    {
+      "command": "go test ./internal/bridge/... ./cmd/feishu",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "bridge-final.log：全部通过"
+    },
+    {
+      "command": "go test -race ./internal/bridge/manager ./internal/bridge/store ./internal/bridge/overlay -run 'TestDelete|TestDeleted|TestInstallationLease|TestOpeningMount|TestLocalReceipt|TestUnsafeHistory' -count=1",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "race.log：全部通过"
+    },
+    {
+      "command": "go test -tags drivebridge_feishu ./backend/all ./cmd/all ./internal/bridge/buildinfo",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "edition-final.log：通过"
+    },
+    {
+      "command": "python3 -m unittest discover -s packaging/drivebridge/tests -v",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "MC-02-packaging.log：49项通过"
+    },
+    {
+      "command": "CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -tags drivebridge_feishu,desktop,cmount -o .superpowers/fix-mount-cleanup-20261112/drivebridge-windows.exe .",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "windows-build.log，交叉编译通过"
+    },
+    {
+      "command": "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags drivebridge_feishu -o .superpowers/fix-mount-cleanup-20261112/drivebridge-linux .",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "linux-build.log，交叉编译通过"
+    },
+    {
+      "command": "upgrade.sh CANDIDATE -- drivebridge-installer --install-worker SOURCE /Applications/DriveBridge.app",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "install-0.2.7.log：使用最终 DMG 内自带入口，本机安装成功；未绕过维护租约"
+    },
+    {
+      "command": "drivebridge feishu mount remove TEST_MOUNT_UUID --json（两个既有测试盘）",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "native-remove-fskit.json / native-remove-final.json / native-result.json：实际配置、状态及缓存删除成功"
+    },
+    {
+      "command": "python3 packaging/drivebridge/package.py verify --root /Applications/DriveBridge.app/Contents/Resources/payload",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "installed-verify.log，安装清单验证通过；安装清单与构建清单逐字节相同"
+    },
+    {
+      "command": "git diff --check",
+      "required": true,
+      "status": "passed",
+      "exit_code": 0,
+      "evidence": "最终实际退出 0"
+    }
+  ],
+  "gaps": [
+    {
+      "description": "正式签名/公证未运行；参数传递修复已在真实脚本到 staging 边界测试，但不代表签名端到端验收。",
+      "critical": true
+    },
+    {
+      "description": "Windows/Linux 交叉编译通过；原生安装、挂载和登录仍未实机验证。",
+      "critical": true
+    },
+    {
+      "description": "本机登录启动项注册及目标路径已核对，本轮未再次注销/登录。",
+      "critical": false
+    },
+    {
+      "description": "主账号盘正常同步，但原有全量历史初始化仍在后台归档，不宣称全部完成。",
+      "critical": false
+    }
+  ],
+  "reviewers": [
+    {
+      "name": "/root",
+      "scope": "本轮修复与验证，未再派整分支复核",
+      "completed": true
+    },
+    {
+      "name": "/root/audit_edition",
+      "scope": "仅实施 MC-02 及签名参数测试；不是本轮独立代码复审",
+      "completed": true
+    }
+  ],
+  "history": {
+    "initial_verdict": "needs-fixes",
+    "initial_findings": [
+      {
+        "id": "MC-01",
+        "type": "implementation",
+        "title": "删除最后一个挂载后，后续升级被安装审计拒绝",
+        "scenario": "删除最后一个 owner 后仍残留 runtime .lock 和 removals 目录；installationConfigs 对非空无 owner 目录返回 ErrConfig，WithInstallationLease 因而失败。",
+        "location": "internal/bridge/manager/remove.go:280-316；internal/bridge/manager/install_lease.go:305-307",
+        "source": "源码及隔离探针",
+        "severity": "P1",
+        "blocking": true,
+        "verification": "true",
+        "status": "open",
+        "evidence": [
+          "Start → DeleteMount → installationConfigs 实测：owner directory has no valid root reference。remove-probe.log，探针退出 0。"
+        ],
+        "action": "协调清理日志、退休所有权与安装发现规则；不要直接删除仍可能被使用的锁文件。增加删除最后一盘后的安装租约测试。"
+      },
+      {
+        "id": "MC-02",
+        "type": "implementation",
+        "title": "macOS 签名发布覆盖 Git 运行时参数",
+        "scenario": "common.sh 追加 --git-runtime 后，build-macos.sh 的签名分支整体覆盖 DB_STAGE_EXTRA_ARGS；package.py 对未收到 Git 参数的非 unsigned 产物必定拒绝。",
+        "location": "packaging/drivebridge/common.sh:31；packaging/drivebridge/build-macos.sh:34；packaging/drivebridge/package.py:354-357",
+        "source": "源码及隔离探针",
+        "severity": "P1",
+        "blocking": true,
+        "verification": "true",
+        "status": "open",
+        "evidence": [
+          "editions/macos-git-args.sh 实际退出 0；日志表明覆盖前有 Git 参数，覆盖后无。未进行真实签名。"
+        ],
+        "action": "签名参数使用追加，保留已有 Git 参数；增加签名分支参数传递测试。"
+      },
+      {
+        "id": "MC-03",
+        "type": "implementation",
+        "title": "启动失败的干净挂载无法删除",
+        "scenario": "Start 在 spawn 前写 last-state.json；spawn 失败时没有数据库和待上传内容，但 auditRemoval 调用要求目录全空的 installationUnusedRoot，返回配置错误。",
+        "location": "internal/bridge/manager/remove.go:161-162；internal/bridge/manager/worker.go:389-395",
+        "source": "源码及隔离探针",
+        "severity": "P2",
+        "blocking": true,
+        "verification": "true",
+        "status": "open",
+        "evidence": [
+          "remove-probes/failed-spawn.log：隔离探针期望删除成功，实际退出 1；目录仅 last-state.json，错误 configured mount has unaccounted data。"
+        ],
+        "action": "识别并校验无数据库的程序启动状态文件，允许受控清理；未知内容继续阻止，补失败启动回归测试。"
+      },
+      {
+        "id": "MC-04",
+        "type": "implementation",
+        "title": "旧历史快照可永久阻止已归档挂载删除",
+        "scenario": "离线 HistorySync 消费 outbox 不刷新 worker 的 history-state.json，停止盘 Status 读取旧快照；DeleteMount 在检查真实 Store 前因旧 pending>50 拒绝。",
+        "location": "internal/bridge/manager/remove.go:68-69；internal/bridge/manager/status.go:258；internal/bridge/manager/history_maintenance.go:223",
+        "source": "源码及隔离探针",
+        "severity": "P2",
+        "blocking": true,
+        "verification": "true",
+        "status": "open",
+        "evidence": [
+          "remove-probe.log：模拟真实 Store pending=0，停止盘快照 pending=51；HistoryStates 返回 0，但 DeleteMount 返回 ErrHistoryPending。探针退出 0。"
+        ],
+        "action": "停止盘依据 Store 当前事实判定，不以旧显示快照作为永久删除门槛；补离线归档后的删除测试。"
+      },
+      {
+        "id": "MC-05",
+        "type": "implementation",
+        "title": "旧系统辅助文件任务永久排队，两个测试盘无法删除",
+        "scenario": "本机两盘 queued=3/1，涉及 ._cloud-origin.txt 两代任务及两份 .DS_Store。ShouldSync 跳过它们，但旧任务无 local receipt 迁移，仍被统计为待上传，触发删除保护；queued 也不会进入 paused/blocked 问题卡。",
+        "location": "internal/bridge/overlay/fs.go:195-207；internal/bridge/manager/status.go:133-139；internal/bridge/manager/remove.go:65-66",
+        "source": "本机只读诊断及源码核对",
+        "severity": "P2",
+        "blocking": true,
+        "verification": "true",
+        "status": "open",
+        "evidence": [
+          "active-test-mounts.json 及本轮 installed CLI 只读状态：三个辅助文件当前无 Token，两盘历史 pending=0、conflicts=0。local_receipt_test.go 的旧无回执用例也保留该队列。"
+        ],
+        "action": "为明确系统辅助文件提供安全迁移或取消入口：锁内核对无派发/创建/绑定/冲突证据，保留正文和历史后转为仅本地回执。不满足条件者继续阻止并说明原因，不伪造云端已同步。"
+      }
+    ],
+    "initial_tests": [
+      {
+        "command": "go test ./internal/bridge/manager ./internal/bridge/ui ./cmd/feishu ./internal/bridge/markdown",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "modules.log，四模块通过。"
+      },
+      {
+        "command": "node --test internal/bridge/ui/testdata/*.test.cjs",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "frontend.log，17 项通过。"
+      },
+      {
+        "command": "python3 -m unittest discover -s packaging/drivebridge/tests",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "packaging.log，48 项通过。"
+      },
+      {
+        "command": "go test -overlay .superpowers/review-20261112/overlay.json ./internal/bridge/manager -run ^TestReviewDelete -count=1 -v",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "remove-probe.log；两个探针断言错误行为存在，不表示产品正确。"
+      },
+      {
+        "command": "go test -overlay .superpowers/review-20261112/remove-probes/overlay.json ./internal/bridge/manager -run TestReviewDeleteAfterFailedSpawn -count=1 -v",
+        "required": true,
+        "status": "failed",
+        "exit_code": 1,
+        "evidence": "remove-probes/failed-spawn.log，期望干净启动失败盘可删除，实际失败。"
+      },
+      {
+        "command": "bash .superpowers/review-20261112/editions/macos-git-args.sh",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "editions/macos-git-args.log：参数覆盖得到复现。"
+      },
+      {
+        "command": "go test -tags drivebridge_feishu ./backend/all ./cmd/all ./internal/bridge/buildinfo",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "独立复审实际运行，editions/verification-summary.json。"
+      },
+      {
+        "command": "git diff --check",
+        "required": true,
+        "status": "passed",
+        "exit_code": 0,
+        "evidence": "本轮实际退出 0。"
+      }
+    ],
+    "note": "原审核报告保持不变。本报告记录修复后状态，保留原失败与初始发现。完整模块检查额外出现的旧未来版本测试样本和失败 worker 退出竞争已修正，最终通过。"
+  },
+  "evidence_root": ".superpowers/fix-mount-cleanup-20261112/",
+  "decisions": [
+    "沿用用户要求：真正未同步内容阻止删除并给入口。",
+    "审核与故障诊断未改动产品代码、索引、分支或本机业务数据。"
+  ]
+}

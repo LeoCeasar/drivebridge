@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,6 +21,10 @@ const scheme3Document = `<title id="doc">Operations</title><p id="intro">intro b
 // The old generic fixture mutates only top-level atoms. This source also models
 // a single nested paragraph replacement, changing its identity on every write.
 type nestedFixtureCloud struct{ *fixtureCloud }
+
+func (f nestedFixtureCloud) OpenDocMedia(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("fixture image bytes")), nil
+}
 
 func (f nestedFixtureCloud) ApplyDoc(ctx context.Context, token, revision string, ops []model.Operation) (cloud.ApplyResult, error) {
 	view, err := markdown.Decode([]byte(f.xml), strconv.Itoa(f.revision))

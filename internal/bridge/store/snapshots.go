@@ -41,9 +41,14 @@ func (s *Store) prepareSnapshot(sn model.Snapshot) (model.Snapshot, error) {
 	if !canonicalUUID(string(sn.ID)) {
 		return sn, errors.New("invalid snapshot ID")
 	}
-	for _, b := range []model.BlobID{sn.XML, sn.Markdown, sn.BlockMap, sn.FileData} {
+	for _, b := range sn.Blobs() {
 		if err := s.checkBlob(b); err != nil {
 			return sn, err
+		}
+	}
+	for name, b := range sn.DocMedia {
+		if name == "" || b == "" || sn.XML == "" {
+			return sn, errors.New("invalid document media reference")
 		}
 	}
 	if sn.FileData != "" || sn.FileIdentity != nil {
@@ -76,7 +81,7 @@ func (s *Store) saveSnapshot(tx *bolt.Tx, sn model.Snapshot) error {
 	// The earlier preparation check runs outside the Store lock. Recheck when
 	// accepting references so a concurrent clean eviction cannot leave dangling
 	// snapshot edges when callers reuse older immutable blobs.
-	for _, b := range []model.BlobID{sn.XML, sn.Markdown, sn.BlockMap, sn.FileData} {
+	for _, b := range sn.Blobs() {
 		if err := s.checkBlob(b); err != nil {
 			return err
 		}

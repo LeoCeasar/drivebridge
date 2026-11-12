@@ -41,20 +41,31 @@ func (s *Store) TouchBodyAccess(ctx context.Context, id model.EntryID, at time.T
 }
 
 type cacheGraph struct {
-	entries      []model.Entry
-	jobs         []jobRecord
-	snapshots    []snapshotRecord
-	namespaces   []namespaceRecord
-	creates      []model.CreateOp
-	conflicts    []model.Conflict
-	recoveries   []recoveryRecord
-	publications []publication
+	historySnapshots []model.SnapshotID
+	entries          []model.Entry
+	jobs             []jobRecord
+	snapshots        []snapshotRecord
+	namespaces       []namespaceRecord
+	creates          []model.CreateOp
+	conflicts        []model.Conflict
+	recoveries       []recoveryRecord
+	publications     []publication
 }
 
 func readCacheGraph(tx *bolt.Tx) (g cacheGraph, err error) {
 	for _, f := range []func() error{
 		func() error {
-			return each[model.Entry](tx, "entries", func(v model.Entry) error { g.entries = append(g.entries, v); return nil })
+			return each[model.Entry](tx, "entries", func(v model.Entry) error {
+				g.entries = append(g.entries, v)
+				var m Metadata
+				if err := get(tx, "metadata", string(v.ID), &m); err != nil {
+					return err
+				}
+				if m.HistorySnapshot != "" && m.HistoryMediaBody == v.Local {
+					g.historySnapshots = append(g.historySnapshots, m.HistorySnapshot)
+				}
+				return nil
+			})
 		},
 		func() error {
 			return each[jobRecord](tx, "jobs", func(v jobRecord) error { g.jobs = append(g.jobs, v); return nil })
@@ -143,6 +154,9 @@ func (g cacheGraph) references(id model.EntryID, p cachePrune, includeSnapshots 
 		b(e.Desired)
 		sn(e.RemoteCheckpoint)
 	}
+	for _, id := range g.historySnapshots {
+		sn(id)
+	}
 	for _, e := range g.entries {
 		if e.ID != id {
 			en(e)
@@ -192,10 +206,9 @@ func (g cacheGraph) references(id model.EntryID, p cachePrune, includeSnapshots 
 	if includeSnapshots {
 		for _, r := range g.snapshots {
 			if !p.snapshots[r.Snapshot.ID] {
-				b(r.Snapshot.XML)
-				b(r.Snapshot.Markdown)
-				b(r.Snapshot.BlockMap)
-				b(r.Snapshot.FileData)
+				for _, blob := range r.Snapshot.Blobs() {
+					b(blob)
+				}
 			}
 		}
 	}
@@ -281,6 +294,19 @@ func (g cacheGraph) evictionPlan(e model.Entry, m Metadata, leases map[model.Blo
 	// Only the target token's history is reconstructible here. References from
 	// another entry, pending work, conflict or recovery retain shared snapshots.
 	_, snrefs := g.references(e.ID, p, false)
+	// A second path can still reference a pre-upgrade baseline whose media was
+	// filled by a sibling snapshot. Evicting one path must retain that bundle.
+	liveRevisions := map[string]bool{}
+	for _, r := range g.snapshots {
+		if snrefs[r.Snapshot.ID] {
+			liveRevisions[r.Snapshot.Token+"\x00"+r.Snapshot.Revision] = true
+		}
+	}
+	for _, r := range g.snapshots {
+		if len(r.Snapshot.DocMedia) > 0 && liveRevisions[r.Snapshot.Token+"\x00"+r.Snapshot.Revision] {
+			snrefs[r.Snapshot.ID] = true
+		}
+	}
 	for _, r := range g.snapshots {
 		if r.Snapshot.Token == e.Token && !snrefs[r.Snapshot.ID] {
 			p.snapshots[r.Snapshot.ID] = true
@@ -423,6 +449,9 @@ func (s *Store) EvictCleanEntry(ctx context.Context, id model.EntryID, expectedG
 			return er
 		}
 		if er = ctx.Err(); er != nil {
+			return er
+		}
+		if er = historyProtectedTx(tx, func(b model.BlobID) { delete(p.blobs, b) }); er != nil {
 			return er
 		}
 		blobs = p.blobs

@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,6 +27,7 @@ type mountRuntime interface {
 	CachePaths() (string, string)
 }
 type workerServices struct {
+	restoreHistory     func(context.Context, model.HistoryRestoreRequest, io.Reader, *store.HistoryRestoreBundle) (model.HistoryRestoreResult, error)
 	directoryStatus    func(context.Context) (model.DirectoryIndexStatus, error)
 	store              *store.Store
 	runtime            mountRuntime
@@ -37,6 +39,7 @@ type workerServices struct {
 	resumeCredentials  func(context.Context) error
 }
 type worker struct {
+	historyState model.HistoryStatus
 	manager      *Manager
 	spec         mountSpec
 	instance     string
@@ -165,6 +168,8 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 	engineCtx, cancel := context.WithCancel(context.Background())
 	w.engineCancel = cancel
 	w.engineDone = make(chan struct{})
+	historyDone := make(chan struct{})
+	go func() { defer close(historyDone); w.runHistory(engineCtx) }()
 	go func() {
 		defer close(w.engineDone)
 		if services.run != nil {
@@ -173,7 +178,7 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 			}
 		}
 	}()
-	defer func() { cancel(); w.closeControls(); <-w.engineDone }()
+	defer func() { cancel(); w.closeControls(); <-w.engineDone; <-historyDone }()
 	w.mu.Lock()
 	w.ready = true
 	w.mu.Unlock()
@@ -205,7 +210,7 @@ func (w *worker) recordError(err error) {
 }
 func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	w.mu.Lock()
-	services, ready, last := w.services, w.ready, w.lastError
+	services, ready, last, historyState := w.services, w.ready, w.lastError, w.historyState
 	w.mu.Unlock()
 	out := model.MountStatus{SchemaVersion: 1, MountID: w.spec.Mount.ID, Running: ready, CloudState: "starting", LastError: last}
 	if services == nil {
@@ -216,6 +221,7 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 		return out, err
 	}
 	out.Running = ready
+	out.History = &historyState
 	if last != "" {
 		out.LastError = last
 	}
@@ -332,6 +338,9 @@ func (m *Manager) startAdmitted(readyCtx context.Context, id model.MountID) (mod
 	args := []string{"feishu", "--bridge-config", m.options.ConfigFile}
 	if cli != "" {
 		args = append(args, "--lark-cli", cli)
+	}
+	if m.options.GitExecutable != "" {
+		args = append(args, "--git-executable", m.options.GitExecutable)
 	}
 	args = append(args, "_worker", "--mount-id", string(id))
 	tick := time.NewTicker(20 * time.Millisecond)

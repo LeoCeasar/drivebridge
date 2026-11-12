@@ -1,0 +1,68 @@
+{
+  "kind": "gate",
+  "work_id": "global-git-history",
+  "stage": "design",
+  "checks": [
+    {
+      "id": "1",
+      "score": 10,
+      "evidence": "用户确认全局 Git 记录修改；比较不产生额外可见文件；此前要求本地保存独立于网络、目录按需加载。"
+    },
+    {
+      "id": "2",
+      "score": 10,
+      "evidence": "已读 Store jobs/snapshots/gc/cache_eviction/conflicts、manager/conflicts、VFS Flush/Sync 与 overlay Update；现有待上传与冲突事务可复用。"
+    },
+    {
+      "id": "3",
+      "score": 10,
+      "evidence": "全局指统一 UI 与每账号全部目录；每账号每设备独立裸仓库；所有目录记元数据，正文仅记录已取得或本地写入版本。"
+    },
+    {
+      "id": "4",
+      "score": 10,
+      "evidence": "覆盖新增/修改/改名/删除、历史对比/恢复；禁止扫描挂载盘建库、比较副本和阻塞保存等待 Git/网络。"
+    },
+    {
+      "id": "5",
+      "score": 10,
+      "evidence": "Store 是本机提交/同步权威；Git 是持久历史层；账号协调器单写；云端与投影转换由现有同步引擎负责。"
+    },
+    {
+      "id": "6",
+      "score": 10,
+      "evidence": "事务 outbox+引用保护、幂等 event_id、CAS 更新引用、恢复时本地 generation 检查；缺正文显式 unavailable。 v1.1 补充持久检查点语义、命名空间恢复竞争、继承去重水位及回执保护；见 self-review F-01/F-04/F-05。"
+    },
+    {
+      "id": "7",
+      "score": 10,
+      "evidence": "官方 Git hash-object/commit-tree/update-ref/cat-file/diff/gc 文档；macOS Git 2.50.1 隔离探针验证无工作副本读写/diff/CAS/GC 可达性。打包与三平台故障测试是实施验收项，未宣称完成。 本轮额外核对官方 fsync 配置并做空正文/缺失正文/JSON OID 可达性隔离验证；不代表断电已测。"
+    },
+    {
+      "id": "8",
+      "score": 10,
+      "evidence": "各账号私有目录；大资源持久引用；历史和干净缓存分开；默认无 Git remote；恢复通过正常作业不直接写云端。 v1.1 明确角色资源绑定、跨源定位和转存、epoch 保护集合、账号重绑；见 self-review F-03/F-07/F-08。"
+    },
+    {
+      "id": "9",
+      "score": 10,
+      "evidence": "增量迁移已有可验证快照；不改已有作业；版本投影隔离；容量保留需重建而非普通 GC；多挂载以绑定保留本地分支。"
+    },
+    {
+      "id": "10",
+      "score": 10,
+      "evidence": "文档逐场景验收含离线/崩溃/写满/并发/图片/冷文件/删除/卸载映射；实测能力与尚未集成能力分开。 v1.1 补充特殊对象、坏事件积压、部分扫描及多文件非原子验收；详见 design §19/20。"
+    }
+  ],
+  "critical_unknowns": [],
+  "note": "分数只表示当前设计信息闭合度，不能解释为穷尽场景、实现正确率或跨平台验证通过；v1.0 的有限自查不能作为完整性证明。",
+  "revision": "v1.1",
+  "review_scope": "单会话设计自审；8 组 P1 和 4 组 P2 设计缺口已补规则，未执行产品实现验收。",
+  "implementation_gates": [
+    "Store/Git 故障回执与资源引用",
+    "恢复目标及代次竞争",
+    "压缩去重水位和 epoch 发布恢复",
+    "三平台持久性/运行时/升级",
+    "性能和安全预览"
+  ]
+}

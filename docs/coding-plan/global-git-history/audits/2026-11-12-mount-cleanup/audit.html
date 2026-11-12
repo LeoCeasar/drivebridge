@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mount-cleanup-and-editions · 代码审核</title>
+<style>
+:root{color-scheme:light;--ink:#182329;--muted:#566870;--line:#dce3e6;--paper:#f4f6f5;--accent:#0c675e}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"PingFang SC",sans-serif}main{max-width:1440px;margin:auto;padding:40px 28px 72px}header{border-top:5px solid var(--accent);padding-top:22px}.eyebrow{letter-spacing:.12em;color:var(--accent);font:12px ui-monospace,monospace}h1{font-size:30px;line-height:1.25;margin:12px 0}h2{font-size:18px;margin:30px 0 12px}.meta{color:var(--muted)}.verdict{display:inline-block;padding:5px 14px;border-radius:4px;font-weight:700}.ready{background:#d9eee6;color:#17573c}.needs-fixes{background:#fae0dc;color:#8e2820}.inconclusive{background:#faedcc;color:#74530b}.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}.tile{border:1px solid var(--line);background:white;padding:16px}.tile b{font:30px ui-monospace,monospace;display:block}.tile span{color:var(--muted)}section{background:white;border:1px solid var(--line);padding:18px 20px;margin-top:16px}section h2:first-child{margin-top:0}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:10px;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}th{font-weight:650;background:#edf2ef}td{min-width:100px}tr[data-severity=P0]{border-left:4px solid #a62922}tr[data-severity=P1]{border-left:4px solid #c8601b}tr[data-severity=P2]{border-left:4px solid #c59b28}tr[data-severity=P3]{border-left:4px solid #6e8391}pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.filters{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}select{font:inherit;padding:4px;border:1px solid var(--line)}ul{padding-left:22px}.legend,footer{color:var(--muted);font-size:12px}summary{cursor:pointer;font-weight:650}@media(max-width:650px){main{padding:24px 12px}.tiles{grid-template-columns:repeat(2,1fr)}section{padding:12px}h1{font-size:25px}}@media print{.filters{display:none}main{padding:0}.scroll{overflow:visible}section{break-inside:avoid}body{background:white}}
+</style>
+<style>
+.filters label{display:flex;align-items:center;gap:6px;max-width:100%;min-width:0}.filters select{min-width:0;max-width:100%;flex:1}
+.cell{max-height:280px;min-width:100px;max-width:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+@media print{.cell{max-height:none;max-width:none;overflow:visible}}
+</style>
+</head>
+<body><main>
+<header><div class="eyebrow">CODING-PLAN / AUDIT</div><h1>mount-cleanup-and-editions 代码审核</h1><span class="verdict needs-fixes">需修复</span><p class="meta">同模型新上下文复审 · 生成于 2026-11-12T14:52:12+00:00</p><p>2 项 P1、3 项 P2 均未修复。常规模块测试通过。未修改产品源码或业务数据。</p></header>
+<div class="tiles"><div class="tile"><b>0</b><span>P0 未关闭</span></div><div class="tile"><b>2</b><span>P1 未关闭</span></div><div class="tile"><b>3</b><span>P2 未关闭</span></div><div class="tile"><b>0</b><span>P3 未关闭</span></div></div>
+<section><h2>目标与实际检查范围</h2><pre>{
+  &quot;repo&quot;: &quot;/Users/rrong/Documents/perf/projects/drivebridge&quot;,
+  &quot;base&quot;: &quot;6f17b79b766f65abc04e192d7dd561b8357fd61f&quot;,
+  &quot;head&quot;: &quot;6f17b79b766f65abc04e192d7dd561b8357fd61f&quot;,
+  &quot;branch&quot;: &quot;main&quot;,
+  &quot;state&quot;: &quot;审核 HEAD 上未提交工作区&quot;
+}</pre><p>最新挂载删除/恢复、账号重建、删除相关历史及安装生命周期、UI入口、Feishu/full构建打包；追加本机两个测试盘只读故障诊断。更早Git历史/文档编解码仅检查依赖，不表示整个未提交工作区已全面审核。</p></section>
+<section><h2>验证缺口与恢复条件</h2><ul><li><strong>一般：</strong>未运行完整签名/公证；参数探针与必填检查不代表签名端到端验收。</li><li><strong>关键：</strong>Windows/Linux 本轮未原生安装/挂载，平台发布仍缺原生证据。</li><li><strong>一般：</strong>真实测试盘仅只读查询，未取消或迁移任务；当前无Token不等于检查过所有历史派发记录，修复必须锁内重验。</li><li><strong>一般：</strong>Git故障注入、保留压缩和断电场景不在本次完整复审范围。Markdown保守转义仍保留。</li></ul></section>
+<section><h2>需求覆盖</h2><div class="scroll"><table><thead><tr><th scope="col">需求</th><th scope="col">覆盖</th><th scope="col">依据</th></tr></thead><tbody><tr><td><div class="cell">R-01</div></td><td><div class="cell">partial</div></td><td><div class="cell">干净正常盘删除和保留历史已有实现，MC-01/03/04/05 使失败路径及安装生命周期未闭环。</div></td></tr><tr><td><div class="cell">R-02</div></td><td><div class="cell">partial</div></td><td><div class="cell">有未同步内容会阻止删除；旧辅助文件队列缺少迁移及处理入口，见 MC-05。</div></td></tr><tr><td><div class="cell">R-03</div></td><td><div class="cell">implemented</div></td><td><div class="cell">MountRemoved 阻止后台重建；RecreateAccountMount 提供显式重新挂载；已读实现及模块测试。</div></td></tr><tr><td><div class="cell">R-04</div></td><td><div class="cell">implemented</div></td><td><div class="cell">restore_start、驱动帮助及 CSRF 路由已实现，UI和前端相关测试通过。</div></td></tr><tr><td><div class="cell">R-05</div></td><td><div class="cell">partial</div></td><td><div class="cell">Feishu/full 实际 darwin CGO=0 构建和注册检查通过，签名发布被 MC-02 阻塞。</div></td></tr><tr><td><div class="cell">R-06</div></td><td><div class="cell">implemented</div></td><td><div class="cell">Markdown 模块测试通过；本轮边界是不累积转义，不承诺全部去转义，已有类型策略未变。</div></td></tr></tbody></table></div></section>
+<section><h2>问题、争议与处置</h2><p class="legend">P0 紧急严重 · P1 高影响 · P2 一般 · P3 低影响；是否阻塞单独判断。true 已验证成立；false 已验证不成立；unverified 未能验证。fixed 保留已修复问题，not-an-issue 保留被推翻意见。</p>
+<div class="filters"><label>严重度 <select id="severity"><option value="">全部</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label><label>处置 <select id="status"><option value="">全部</option><option value="open">未关闭</option><option value="fixed">已修复</option><option value="not-an-issue">非问题</option></select></label><label>来源 <select id="source"><option value="">全部</option><option value="本机只读诊断及源码核对">本机只读诊断及源码核对</option><option value="源码及隔离探针">源码及隔离探针</option></select></label></div>
+<div class="scroll"><table><thead><tr><th>ID</th><th>严重度</th><th>阻塞</th><th>类型</th><th>问题</th><th>场景</th><th>位置</th><th>来源</th><th>核验</th><th>处置</th><th>证据 / 方法</th><th>动作</th></tr></thead><tbody id="findings"><tr data-severity="P1" data-status="open" data-source="源码及隔离探针"><td><div class="cell">MC-01</div></td><td><div class="cell">P1</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">implementation</div></td><td><div class="cell">删除最后一个挂载后，后续升级被安装审计拒绝</div></td><td><div class="cell">删除最后一个 owner 后仍残留 runtime .lock 和 removals 目录；installationConfigs 对非空无 owner 目录返回 ErrConfig，WithInstallationLease 因而失败。</div></td><td><div class="cell">internal/bridge/manager/remove.go:280-316；internal/bridge/manager/install_lease.go:305-307</div></td><td><div class="cell">源码及隔离探针</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;Start → DeleteMount → installationConfigs 实测：owner directory has no valid root reference。remove-probe.log，探针退出 0。&quot;
+]</div></td><td><div class="cell">协调清理日志、退休所有权与安装发现规则；不要直接删除仍可能被使用的锁文件。增加删除最后一盘后的安装租约测试。</div></td></tr><tr data-severity="P1" data-status="open" data-source="源码及隔离探针"><td><div class="cell">MC-02</div></td><td><div class="cell">P1</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">implementation</div></td><td><div class="cell">macOS 签名发布覆盖 Git 运行时参数</div></td><td><div class="cell">common.sh 追加 --git-runtime 后，build-macos.sh 的签名分支整体覆盖 DB_STAGE_EXTRA_ARGS；package.py 对未收到 Git 参数的非 unsigned 产物必定拒绝。</div></td><td><div class="cell">packaging/drivebridge/common.sh:31；packaging/drivebridge/build-macos.sh:34；packaging/drivebridge/package.py:354-357</div></td><td><div class="cell">源码及隔离探针</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;editions/macos-git-args.sh 实际退出 0；日志表明覆盖前有 Git 参数，覆盖后无。未进行真实签名。&quot;
+]</div></td><td><div class="cell">签名参数使用追加，保留已有 Git 参数；增加签名分支参数传递测试。</div></td></tr><tr data-severity="P2" data-status="open" data-source="源码及隔离探针"><td><div class="cell">MC-03</div></td><td><div class="cell">P2</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">implementation</div></td><td><div class="cell">启动失败的干净挂载无法删除</div></td><td><div class="cell">Start 在 spawn 前写 last-state.json；spawn 失败时没有数据库和待上传内容，但 auditRemoval 调用要求目录全空的 installationUnusedRoot，返回配置错误。</div></td><td><div class="cell">internal/bridge/manager/remove.go:161-162；internal/bridge/manager/worker.go:389-395</div></td><td><div class="cell">源码及隔离探针</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;remove-probes/failed-spawn.log：隔离探针期望删除成功，实际退出 1；目录仅 last-state.json，错误 configured mount has unaccounted data。&quot;
+]</div></td><td><div class="cell">识别并校验无数据库的程序启动状态文件，允许受控清理；未知内容继续阻止，补失败启动回归测试。</div></td></tr><tr data-severity="P2" data-status="open" data-source="源码及隔离探针"><td><div class="cell">MC-04</div></td><td><div class="cell">P2</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">implementation</div></td><td><div class="cell">旧历史快照可永久阻止已归档挂载删除</div></td><td><div class="cell">离线 HistorySync 消费 outbox 不刷新 worker 的 history-state.json，停止盘 Status 读取旧快照；DeleteMount 在检查真实 Store 前因旧 pending&gt;50 拒绝。</div></td><td><div class="cell">internal/bridge/manager/remove.go:68-69；internal/bridge/manager/status.go:258；internal/bridge/manager/history_maintenance.go:223</div></td><td><div class="cell">源码及隔离探针</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;remove-probe.log：模拟真实 Store pending=0，停止盘快照 pending=51；HistoryStates 返回 0，但 DeleteMount 返回 ErrHistoryPending。探针退出 0。&quot;
+]</div></td><td><div class="cell">停止盘依据 Store 当前事实判定，不以旧显示快照作为永久删除门槛；补离线归档后的删除测试。</div></td></tr><tr data-severity="P2" data-status="open" data-source="本机只读诊断及源码核对"><td><div class="cell">MC-05</div></td><td><div class="cell">P2</div></td><td><div class="cell">阻塞</div></td><td><div class="cell">implementation</div></td><td><div class="cell">旧系统辅助文件任务永久排队，两个测试盘无法删除</div></td><td><div class="cell">本机两盘 queued=3/1，涉及 ._cloud-origin.txt 两代任务及两份 .DS_Store。ShouldSync 跳过它们，但旧任务无 local receipt 迁移，仍被统计为待上传，触发删除保护；queued 也不会进入 paused/blocked 问题卡。</div></td><td><div class="cell">internal/bridge/overlay/fs.go:195-207；internal/bridge/manager/status.go:133-139；internal/bridge/manager/remove.go:65-66</div></td><td><div class="cell">本机只读诊断及源码核对</div></td><td><div class="cell">true</div></td><td><div class="cell">open</div></td><td><div class="cell">[
+  &quot;active-test-mounts.json 及本轮 installed CLI 只读状态：三个辅助文件当前无 Token，两盘历史 pending=0、conflicts=0。local_receipt_test.go 的旧无回执用例也保留该队列。&quot;
+]</div></td><td><div class="cell">为明确系统辅助文件提供安全迁移或取消入口：锁内核对无派发/创建/绑定/冲突证据，保留正文和历史后转为仅本地回执。不满足条件者继续阻止并说明原因，不伪造云端已同步。</div></td></tr></tbody></table></div></section>
+<section><h2>实际验证结果</h2><div class="scroll"><table><thead><tr><th scope="col">命令</th><th scope="col">必需</th><th scope="col">结果</th><th scope="col">退出码</th><th scope="col">证据 / 未运行原因</th></tr></thead><tbody><tr><td><div class="cell">go test ./internal/bridge/manager ./internal/bridge/ui ./cmd/feishu ./internal/bridge/markdown</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">modules.log，四模块通过。</div></td></tr><tr><td><div class="cell">node --test internal/bridge/ui/testdata/*.test.cjs</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">frontend.log，17 项通过。</div></td></tr><tr><td><div class="cell">python3 -m unittest discover -s packaging/drivebridge/tests</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">packaging.log，48 项通过。</div></td></tr><tr><td><div class="cell">go test -overlay .superpowers/review-20261112/overlay.json ./internal/bridge/manager -run ^TestReviewDelete -count=1 -v</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">remove-probe.log；两个探针断言错误行为存在，不表示产品正确。</div></td></tr><tr><td><div class="cell">go test -overlay .superpowers/review-20261112/remove-probes/overlay.json ./internal/bridge/manager -run TestReviewDeleteAfterFailedSpawn -count=1 -v</div></td><td><div class="cell">True</div></td><td><div class="cell">failed</div></td><td><div class="cell">1</div></td><td><div class="cell">remove-probes/failed-spawn.log，期望干净启动失败盘可删除，实际失败。</div></td></tr><tr><td><div class="cell">bash .superpowers/review-20261112/editions/macos-git-args.sh</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">editions/macos-git-args.log：参数覆盖得到复现。</div></td></tr><tr><td><div class="cell">go test -tags drivebridge_feishu ./backend/all ./cmd/all ./internal/bridge/buildinfo</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">独立复审实际运行，editions/verification-summary.json。</div></td></tr><tr><td><div class="cell">git diff --check</div></td><td><div class="cell">True</div></td><td><div class="cell">passed</div></td><td><div class="cell">0</div></td><td><div class="cell">本轮实际退出 0。</div></td></tr></tbody></table></div></section>
+<section><details><summary>完整记录、历史问题与审查者信息（已脱敏）</summary><pre>{
+  &quot;kind&quot;: &quot;audit&quot;,
+  &quot;work_id&quot;: &quot;mount-cleanup-and-editions&quot;,
+  &quot;target&quot;: {
+    &quot;repo&quot;: &quot;/Users/rrong/Documents/perf/projects/drivebridge&quot;,
+    &quot;base&quot;: &quot;6f17b79b766f65abc04e192d7dd561b8357fd61f&quot;,
+    &quot;head&quot;: &quot;6f17b79b766f65abc04e192d7dd561b8357fd61f&quot;,
+    &quot;branch&quot;: &quot;main&quot;,
+    &quot;state&quot;: &quot;审核 HEAD 上未提交工作区&quot;
+  },
+  &quot;mode&quot;: &quot;same-model&quot;,
+  &quot;completed&quot;: true,
+  &quot;scope&quot;: &quot;最新挂载删除/恢复、账号重建、删除相关历史及安装生命周期、UI入口、Feishu/full构建打包；追加本机两个测试盘只读故障诊断。更早Git历史/文档编解码仅检查依赖，不表示整个未提交工作区已全面审核。&quot;,
+  &quot;verdict&quot;: &quot;needs-fixes&quot;,
+  &quot;summary&quot;: &quot;2 项 P1、3 项 P2 均未修复。常规模块测试通过。未修改产品源码或业务数据。&quot;,
+  &quot;requirements&quot;: [
+    {
+      &quot;id&quot;: &quot;R-01&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;干净正常盘删除和保留历史已有实现，MC-01/03/04/05 使失败路径及安装生命周期未闭环。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;R-02&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;有未同步内容会阻止删除；旧辅助文件队列缺少迁移及处理入口，见 MC-05。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;R-03&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;MountRemoved 阻止后台重建；RecreateAccountMount 提供显式重新挂载；已读实现及模块测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;R-04&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;restore_start、驱动帮助及 CSRF 路由已实现，UI和前端相关测试通过。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;R-05&quot;,
+      &quot;status&quot;: &quot;partial&quot;,
+      &quot;evidence&quot;: &quot;Feishu/full 实际 darwin CGO=0 构建和注册检查通过，签名发布被 MC-02 阻塞。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;R-06&quot;,
+      &quot;status&quot;: &quot;implemented&quot;,
+      &quot;evidence&quot;: &quot;Markdown 模块测试通过；本轮边界是不累积转义，不承诺全部去转义，已有类型策略未变。&quot;
+    }
+  ],
+  &quot;findings&quot;: [
+    {
+      &quot;id&quot;: &quot;MC-01&quot;,
+      &quot;type&quot;: &quot;implementation&quot;,
+      &quot;title&quot;: &quot;删除最后一个挂载后，后续升级被安装审计拒绝&quot;,
+      &quot;scenario&quot;: &quot;删除最后一个 owner 后仍残留 runtime .lock 和 removals 目录；installationConfigs 对非空无 owner 目录返回 ErrConfig，WithInstallationLease 因而失败。&quot;,
+      &quot;location&quot;: &quot;internal/bridge/manager/remove.go:280-316；internal/bridge/manager/install_lease.go:305-307&quot;,
+      &quot;source&quot;: &quot;源码及隔离探针&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;Start → DeleteMount → installationConfigs 实测：owner directory has no valid root reference。remove-probe.log，探针退出 0。&quot;
+      ],
+      &quot;action&quot;: &quot;协调清理日志、退休所有权与安装发现规则；不要直接删除仍可能被使用的锁文件。增加删除最后一盘后的安装租约测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;MC-02&quot;,
+      &quot;type&quot;: &quot;implementation&quot;,
+      &quot;title&quot;: &quot;macOS 签名发布覆盖 Git 运行时参数&quot;,
+      &quot;scenario&quot;: &quot;common.sh 追加 --git-runtime 后，build-macos.sh 的签名分支整体覆盖 DB_STAGE_EXTRA_ARGS；package.py 对未收到 Git 参数的非 unsigned 产物必定拒绝。&quot;,
+      &quot;location&quot;: &quot;packaging/drivebridge/common.sh:31；packaging/drivebridge/build-macos.sh:34；packaging/drivebridge/package.py:354-357&quot;,
+      &quot;source&quot;: &quot;源码及隔离探针&quot;,
+      &quot;severity&quot;: &quot;P1&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;editions/macos-git-args.sh 实际退出 0；日志表明覆盖前有 Git 参数，覆盖后无。未进行真实签名。&quot;
+      ],
+      &quot;action&quot;: &quot;签名参数使用追加，保留已有 Git 参数；增加签名分支参数传递测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;MC-03&quot;,
+      &quot;type&quot;: &quot;implementation&quot;,
+      &quot;title&quot;: &quot;启动失败的干净挂载无法删除&quot;,
+      &quot;scenario&quot;: &quot;Start 在 spawn 前写 last-state.json；spawn 失败时没有数据库和待上传内容，但 auditRemoval 调用要求目录全空的 installationUnusedRoot，返回配置错误。&quot;,
+      &quot;location&quot;: &quot;internal/bridge/manager/remove.go:161-162；internal/bridge/manager/worker.go:389-395&quot;,
+      &quot;source&quot;: &quot;源码及隔离探针&quot;,
+      &quot;severity&quot;: &quot;P2&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;remove-probes/failed-spawn.log：隔离探针期望删除成功，实际退出 1；目录仅 last-state.json，错误 configured mount has unaccounted data。&quot;
+      ],
+      &quot;action&quot;: &quot;识别并校验无数据库的程序启动状态文件，允许受控清理；未知内容继续阻止，补失败启动回归测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;MC-04&quot;,
+      &quot;type&quot;: &quot;implementation&quot;,
+      &quot;title&quot;: &quot;旧历史快照可永久阻止已归档挂载删除&quot;,
+      &quot;scenario&quot;: &quot;离线 HistorySync 消费 outbox 不刷新 worker 的 history-state.json，停止盘 Status 读取旧快照；DeleteMount 在检查真实 Store 前因旧 pending&gt;50 拒绝。&quot;,
+      &quot;location&quot;: &quot;internal/bridge/manager/remove.go:68-69；internal/bridge/manager/status.go:258；internal/bridge/manager/history_maintenance.go:223&quot;,
+      &quot;source&quot;: &quot;源码及隔离探针&quot;,
+      &quot;severity&quot;: &quot;P2&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;remove-probe.log：模拟真实 Store pending=0，停止盘快照 pending=51；HistoryStates 返回 0，但 DeleteMount 返回 ErrHistoryPending。探针退出 0。&quot;
+      ],
+      &quot;action&quot;: &quot;停止盘依据 Store 当前事实判定，不以旧显示快照作为永久删除门槛；补离线归档后的删除测试。&quot;
+    },
+    {
+      &quot;id&quot;: &quot;MC-05&quot;,
+      &quot;type&quot;: &quot;implementation&quot;,
+      &quot;title&quot;: &quot;旧系统辅助文件任务永久排队，两个测试盘无法删除&quot;,
+      &quot;scenario&quot;: &quot;本机两盘 queued=3/1，涉及 ._cloud-origin.txt 两代任务及两份 .DS_Store。ShouldSync 跳过它们，但旧任务无 local receipt 迁移，仍被统计为待上传，触发删除保护；queued 也不会进入 paused/blocked 问题卡。&quot;,
+      &quot;location&quot;: &quot;internal/bridge/overlay/fs.go:195-207；internal/bridge/manager/status.go:133-139；internal/bridge/manager/remove.go:65-66&quot;,
+      &quot;source&quot;: &quot;本机只读诊断及源码核对&quot;,
+      &quot;severity&quot;: &quot;P2&quot;,
+      &quot;blocking&quot;: true,
+      &quot;verification&quot;: &quot;true&quot;,
+      &quot;status&quot;: &quot;open&quot;,
+      &quot;evidence&quot;: [
+        &quot;active-test-mounts.json 及本轮 installed CLI 只读状态：三个辅助文件当前无 Token，两盘历史 pending=0、conflicts=0。local_receipt_test.go 的旧无回执用例也保留该队列。&quot;
+      ],
+      &quot;action&quot;: &quot;为明确系统辅助文件提供安全迁移或取消入口：锁内核对无派发/创建/绑定/冲突证据，保留正文和历史后转为仅本地回执。不满足条件者继续阻止并说明原因，不伪造云端已同步。&quot;
+    }
+  ],
+  &quot;tests&quot;: [
+    {
+      &quot;command&quot;: &quot;go test ./internal/bridge/manager ./internal/bridge/ui ./cmd/feishu ./internal/bridge/markdown&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;modules.log，四模块通过。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;node --test internal/bridge/ui/testdata/*.test.cjs&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;frontend.log，17 项通过。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;python3 -m unittest discover -s packaging/drivebridge/tests&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;packaging.log，48 项通过。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;go test -overlay .superpowers/review-20261112/overlay.json ./internal/bridge/manager -run ^TestReviewDelete -count=1 -v&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;remove-probe.log；两个探针断言错误行为存在，不表示产品正确。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;go test -overlay .superpowers/review-20261112/remove-probes/overlay.json ./internal/bridge/manager -run TestReviewDeleteAfterFailedSpawn -count=1 -v&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;failed&quot;,
+      &quot;exit_code&quot;: 1,
+      &quot;evidence&quot;: &quot;remove-probes/failed-spawn.log，期望干净启动失败盘可删除，实际失败。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;bash .superpowers/review-20261112/editions/macos-git-args.sh&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;editions/macos-git-args.log：参数覆盖得到复现。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;go test -tags drivebridge_feishu ./backend/all ./cmd/all ./internal/bridge/buildinfo&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;独立复审实际运行，editions/verification-summary.json。&quot;
+    },
+    {
+      &quot;command&quot;: &quot;git diff --check&quot;,
+      &quot;required&quot;: true,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;exit_code&quot;: 0,
+      &quot;evidence&quot;: &quot;本轮实际退出 0。&quot;
+    }
+  ],
+  &quot;gaps&quot;: [
+    {
+      &quot;description&quot;: &quot;未运行完整签名/公证；参数探针与必填检查不代表签名端到端验收。&quot;,
+      &quot;critical&quot;: false
+    },
+    {
+      &quot;description&quot;: &quot;Windows/Linux 本轮未原生安装/挂载，平台发布仍缺原生证据。&quot;,
+      &quot;critical&quot;: true
+    },
+    {
+      &quot;description&quot;: &quot;真实测试盘仅只读查询，未取消或迁移任务；当前无Token不等于检查过所有历史派发记录，修复必须锁内重验。&quot;,
+      &quot;critical&quot;: false
+    },
+    {
+      &quot;description&quot;: &quot;Git故障注入、保留压缩和断电场景不在本次完整复审范围。Markdown保守转义仍保留。&quot;,
+      &quot;critical&quot;: false
+    }
+  ],
+  &quot;reviewers&quot;: [
+    {
+      &quot;name&quot;: &quot;/root&quot;,
+      &quot;scope&quot;: &quot;主审、隔离探针及本机只读诊断&quot;,
+      &quot;completed&quot;: true
+    },
+    {
+      &quot;name&quot;: &quot;/root/audit_remove&quot;,
+      &quot;scope&quot;: &quot;同模型独立新上下文，挂载删除与依赖，输出一项实证缺陷&quot;,
+      &quot;completed&quot;: true
+    },
+    {
+      &quot;name&quot;: &quot;/root/audit_edition&quot;,
+      &quot;scope&quot;: &quot;同模型独立新上下文，editions与打包，输出一项参数缺陷&quot;,
+      &quot;completed&quot;: true
+    }
+  ],
+  &quot;history&quot;: &quot;之前 self-review.md 是全局 Git 设计审核，不是本次代码放行；其设计条目未冒称全部修复或重验。&quot;,
+  &quot;evidence_root&quot;: &quot;.superpowers/review-20261112/&quot;,
+  &quot;decisions&quot;: [
+    &quot;沿用用户要求：真正未同步内容阻止删除并给入口。&quot;,
+    &quot;审核与故障诊断未改动产品代码、索引、分支或本机业务数据。&quot;
+  ]
+}</pre></details></section>
+<footer><p>本地离线报告。当前记录和格式校验不替代事实核验。未发现问题不代表未检查的路径没有风险。</p></footer>
+</main><script>
+function filterRows(){const severity=document.getElementById('severity').value;const status=document.getElementById('status').value;const source=document.getElementById('source').value;document.querySelectorAll('#findings tr[data-severity]').forEach(row=>{row.hidden=Boolean((severity&&row.dataset.severity!==severity)||(status&&row.dataset.status!==status)||(source&&row.dataset.source!==source));});}
+['severity','status','source'].forEach(id=>document.getElementById(id).addEventListener('change',filterRows));
+</script></body></html>

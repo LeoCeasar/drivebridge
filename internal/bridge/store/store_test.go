@@ -468,7 +468,7 @@ func TestSchemaAndTraversalRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Update(func(tx *bolt.Tx) error { return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("2")) })
+	db.Update(func(tx *bolt.Tx) error { return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("999")) })
 	db.Close()
 	if s, err := Open(d); err == nil {
 		s.Close()

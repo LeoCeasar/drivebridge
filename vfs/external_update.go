@@ -46,6 +46,12 @@ func (v *VFS) validateManagedOpen(ctx context.Context, remote string, write bool
 	return err
 }
 
+// ManagedReadPreparer completes coupled resources before a file read. It runs
+// after normalization and managed admission, and may perform cache/network I/O.
+type ManagedReadPreparer interface {
+	PrepareManagedRead(context.Context, string) error
+}
+
 // ManagedMaterializer binds an unknown-size object to one complete local snapshot.
 type ManagedMaterializer interface {
 	MaterializeManaged(context.Context, string) (fs.Object, error)

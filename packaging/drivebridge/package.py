@@ -15,9 +15,14 @@ import tarfile
 import zipfile
 import zlib
 import plistlib
+import importlib.util
 import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
+_git_spec = importlib.util.spec_from_file_location('drivebridge_git_runtime', HERE / 'git_runtime.py')
+git_runtime = importlib.util.module_from_spec(_git_spec)
+_git_spec.loader.exec_module(git_runtime)
+
 SESSION_APP = 'libexec/DriveBridge Session.app'
 SESSION_BINARY = SESSION_APP + '/Contents/MacOS/drivebridge-session-host'
 SESSION_PLIST = SESSION_APP + '/Contents/Info.plist'
@@ -91,6 +96,13 @@ def check_commands(binary, target, cli_only):
         run([binary, command, '--help'])
 
 
+def check_edition(binary, edition):
+    if edition is None:
+        return
+    if json.loads(run([binary, 'feishu', 'edition'])).get('edition') != edition:
+        raise ValueError('compiled binary edition does not match package edition')
+
+
 def desktop_files(target):
     if target == 'darwin':
         return {'licenses/desktop.LICENSES', 'DriveBridge.app/Contents/MacOS/drivebridge-desktop',
@@ -120,6 +132,12 @@ def required_files(target, desktop=False):
 def validate_payload(root, target, desktop=False, arch=None):
     root = Path(root)
     required = required_files(target, desktop)
+    git_root = root / 'libexec/git'
+    if git_root.exists():
+        runtime = git_runtime.verify(git_root, target, arch)
+        required |= {'libexec/git/runtime.json'} | {'libexec/git/' + name for name in runtime['files']}
+        check_binary(git_root / ('bin/git.exe' if target == 'windows' else 'bin/git'), target, arch)
+
     found = set()
     for path in sorted(root.rglob('*')):
         rel = path.relative_to(root).as_posix()
@@ -153,7 +171,7 @@ def validate_payload(root, target, desktop=False, arch=None):
                     tail = combined[match.start():]
                     # stage() admits these vendor paths only from checksum-verified archives;
                     # verify_files() additionally binds every byte to the manifest inventory.
-                    vendor = rel in ('libexec/lark/lark-cli', 'libexec/lark/lark-cli.exe', 'libexec/lark/package/bin/lark-cli.exe', 'libexec/node/node.exe')
+                    vendor = rel.startswith('libexec/git/bin/') or rel in ('libexec/lark/lark-cli', 'libexec/lark/lark-cli.exe', 'libexec/lark/package/bin/lark-cli.exe', 'libexec/node/node.exe')
                     example = rel in ('bin/drivebridge', 'bin/drivebridge.exe', 'bin/drivebridge-desktop', 'bin/drivebridge-desktop.exe', 'DriveBridge.app/Contents/MacOS/drivebridge-desktop') and any(
                         tail.startswith(sample) and len(tail) > len(sample) and tail[len(sample):len(sample)+1] in (b' ', b'\n', b'\"', b')')
                         for sample in PRODUCT_HELP_EXAMPLES)
@@ -202,6 +220,8 @@ def check_release(manifest, evidence):
     if manifest.get('upgrade_guard') != 'lifecycle_lease':
         raise ValueError('release blocked: installer lifecycle lease not integrated')
     check_native_evidence(manifest, evidence)
+    if not manifest.get('history', {}).get('git_runtime'):
+        raise ValueError('release blocked: bundled Git history runtime missing')
 
 
 def check_native_evidence(manifest, evidence):
@@ -285,6 +305,7 @@ def stage(args):
     suffix = '.exe' if args.platform == 'windows' else ''
     check_binary(args.binary, args.platform, args.arch)
     check_commands(args.binary, args.platform, args.cli_only)
+    check_edition(args.binary, getattr(args, 'edition', None))
     stage_session_host(root, args.platform, args.arch, args.session_host_binary, args.version,
                        getattr(args, 'session_host_licenses', None))
     native = root / ('libexec/lark/lark-cli' + suffix)
@@ -330,6 +351,10 @@ def stage(args):
         if not args.desktop_binary:
             raise ValueError('desktop mode requires a native desktop binary')
         stage_desktop(root, args.platform, args.arch, args.desktop_binary, args.version)
+    if getattr(args, 'git_runtime', None):
+        git_runtime.stage(args.git_runtime, root / 'libexec/git', args.platform, args.arch)
+    elif not args.unsigned:
+        raise ValueError('release requires --git-runtime; users must not need a separate Git installation')
     validate_payload(root, args.platform, getattr(args, 'desktop', False), args.arch)
 
 
@@ -440,6 +465,7 @@ def stage_desktop(root, target, arch, binary, version):
 
 def manifest(args):
     root = Path(args.root)
+    check_edition(root / ('bin/drivebridge.exe' if args.platform == 'windows' else 'bin/drivebridge'), getattr(args, 'edition', None))
     check_mode(args.cli_only, args.unsigned, getattr(args, 'desktop', False))
     validate_payload(root, args.platform, getattr(args, 'desktop', False), args.arch)
     tools = json.loads(Path(args.tools).read_text())
@@ -447,6 +473,7 @@ def manifest(args):
         raise ValueError('tool versions must be recorded')
     lock = json.loads((HERE / 'runtime-lock.json').read_text())
     manifest = {'schema_version': 1, 'product': 'DriveBridge', 'version': args.version,
+                'edition': getattr(args, 'edition', 'full'),
                 'platform': args.platform, 'architecture': args.arch, 'desktop': getattr(args, 'desktop', False),
                 'go_version': run(['go', 'version']), 'tools': tools,
                 'runtime': lock, 'cli_binding': {'upstream_sha256': cli_asset(lock, args.platform, args.arch)['native_sha256'], 'artifact_sha256': sha(root / ('libexec/lark/lark-cli.exe' if args.platform == 'windows' else 'libexec/lark/lark-cli'))}, 'vendor_metadata': {'embedded_ci_prefixes': [p.decode() for p in VENDOR_CI_PREFIXES], 'policy': 'Only checksum-verified vendor executables may retain upstream CI source paths; bytes are never rewritten.', 'product_help_examples': [p.decode() for p in PRODUCT_HELP_EXAMPLES]}, 'mount': not args.cli_only,
@@ -459,6 +486,9 @@ def manifest(args):
                 'release_blockers': ['native installation, upgrade, driver and mount evidence required', 'native installer lease environment/identity/lifetime propagation not verified'],
                 'licenses': sorted(p.relative_to(root).as_posix() for p in (root / 'licenses').iterdir()),
                 'files': inventory(root)}
+    manifest['history'] = {'git_runtime': (root / 'libexec/git/runtime.json').is_file(), 'verification': 'not_verified'}
+    if manifest['history']['git_runtime']:
+        manifest['history']['git_version'] = git_runtime.verify(root / 'libexec/git', args.platform, args.arch)['version']
     if args.signature == 'unsigned_test':
         manifest['release_blockers'].append('unsigned test artifact')
     if args.cli_only:
@@ -533,8 +563,10 @@ def main():
         p.add_argument('--desktop', action='store_true')
         p.add_argument('--unsigned', action='store_true')
         if name == 'stage':
+            p.add_argument('--edition', choices=['feishu', 'full'], default='full')
             for key in ('root', 'repo', 'binary', 'lark-package', 'lark-native-archive'):
                 p.add_argument('--' + key, required=True)
+            p.add_argument('--git-runtime')
             p.add_argument('--session-host-binary')
             p.add_argument('--session-host-licenses')
             p.add_argument('--desktop-binary')
@@ -544,6 +576,7 @@ def main():
             p.add_argument('--signed-cli')
             p.add_argument('--cli-upstream-sha')
         if name == 'manifest':
+            p.add_argument('--edition', choices=['feishu', 'full'], default='full')
             for key in ('root', 'version', 'tools'):
                 p.add_argument('--' + key, required=True)
             p.add_argument('--signature', choices=['signed', 'unsigned_test'], required=True)

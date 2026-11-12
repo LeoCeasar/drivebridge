@@ -6,8 +6,100 @@ import (
 	"github.com/rclone/rclone/internal/bridge/store"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestOpeningMountReconcilesLegacySystemMetadata(t *testing.T) {
+	for _, name := range []string{".DS_Store", "._cloud-origin.txt", "Thumbs.db"} {
+		t.Run(name, func(t *testing.T) {
+			f, s, source := fixture(t)
+			e, err := s.EnsureEntry(ctx, name, model.KindFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, old, err := s.Stage(ctx, e.ID, nil, strings.NewReader("old metadata"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, latest, err := s.Stage(ctx, e.ID, nil, strings.NewReader("latest metadata"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = New(Dependencies{Store: s, Source: source, ProfileID: f.scope.ProfileID, MountID: f.scope.MountID}); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := s.Pending(ctx)
+			if err != nil || len(pending) != 0 {
+				t.Fatalf("legacy auxiliary jobs still block sync: %+v %v", pending, err)
+			}
+			for _, job := range []model.Job{old, latest} {
+				journal, err := s.Journal(ctx, job.ID)
+				if err != nil || !journal.LocalReceipt || journal.Job.State == model.StatusSynced {
+					t.Fatal("false cloud confirmation", journal, err)
+				}
+				r, err := s.ReadBlob(ctx, job.Local)
+				if err != nil {
+					t.Fatal("payload lost", err)
+				}
+				r.Close()
+			}
+			if err := s.Validate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if e.Token != "" {
+				t.Fatal("unexpected cloud identity")
+			}
+		})
+	}
+}
+
+func TestOpeningMountDoesNotHideUnsafeLegacyMetadata(t *testing.T) {
+	for _, scenario := range []string{"ordinary", "conflict", "unknown", "create", "bound"} {
+		t.Run(scenario, func(t *testing.T) {
+			f, s, source := fixture(t)
+			name := ".DS_Store"
+			if scenario == "ordinary" {
+				name = "important.md"
+			}
+			e, err := s.EnsureEntry(ctx, name, model.KindFile)
+			if scenario == "bound" {
+				e, err = s.ObserveEntry(ctx, store.Observation{Remote: name, Kind: model.KindFile, Token: "cloud-token"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, job, err := s.Stage(ctx, e.ID, nil, strings.NewReader("preserve"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "conflict":
+				err = s.SaveConflict(ctx, model.Conflict{EntryID: e.ID, Generation: e.Generation, Local: e.Local, Reason: "protected"})
+			case "unknown", "create":
+				_, _, err = s.Prepare(ctx, job.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "unknown" {
+					err = s.MarkUnknown(ctx, job.ID)
+				} else {
+					_, err = s.PrepareCreate(ctx, job.ID, "root", name)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = New(Dependencies{Store: s, Source: source, ProfileID: f.scope.ProfileID, MountID: f.scope.MountID}); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := s.Pending(ctx)
+			if err != nil || len(pending) != 1 || pending[0].ID != job.ID {
+				t.Fatal("protected work hidden", pending, err)
+			}
+		})
+	}
+}
 
 func TestPersistentDSStoreHasDurableReceiptWithoutCloudPending(t *testing.T) {
 	f, s, _ := fixture(t)

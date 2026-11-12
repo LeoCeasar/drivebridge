@@ -35,7 +35,7 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		v.Profiles = append(v.Profiles, ProfileView{ID: p.ID, Name: p.Name, Brand: p.Brand, Authorized: p.AuthRef != "" && p.IdentityHash != ""})
 	}
 	for _, r := range c.Remotes {
-		v.Remotes = append(v.Remotes, RemoteView{ID: r.ID, Name: r.Name, ProfileID: r.ProfileID, FolderToken: r.FolderToken})
+		v.Remotes = append(v.Remotes, RemoteView{ID: r.ID, Name: r.Name, ProfileID: r.ProfileID, FolderToken: r.FolderToken, AccountRoot: r.AccountRoot, MountRemoved: r.MountRemoved})
 	}
 	for _, m := range c.Mounts {
 		age := m.CacheMaxAge
@@ -76,6 +76,8 @@ func (b *ManagerBackend) Configure(ctx context.Context, r ConfigRequest) (Config
 		if err == nil {
 			_, err = b.manager.AddMount(ctx, mount)
 		}
+	case "account_mount":
+		err = b.manager.RecreateAccountMount(ctx, r.ProfileID)
 	default:
 		return ConfigView{}, errors.New("unknown configuration action")
 	}
@@ -120,6 +122,14 @@ func (b *ManagerBackend) Resolve(ctx context.Context, r model.ResolveRequest) er
 }
 func (b *ManagerBackend) Mount(ctx context.Context, id model.MountID, action string) error {
 	switch action {
+	case "delete":
+		return b.manager.DeleteMount(ctx, id)
+	case "restore_start":
+		if err := b.manager.RestoreMount(ctx, id); err != nil {
+			return err
+		}
+		_, err := b.manager.Start(ctx, id, true)
+		return err
 	case "archive":
 		return b.manager.ArchiveMount(ctx, id)
 	case "restore":
@@ -140,3 +150,7 @@ func (b *ManagerBackend) ClaimConflictNotification(ctx context.Context, id model
 var _ Backend = (*ManagerBackend)(nil)
 var _ SyncRetrier = (*ManagerBackend)(nil)
 var _ ConflictExporter = (*ManagerBackend)(nil)
+
+func (b *ManagerBackend) UploadLocalCopy(ctx context.Context, mount model.MountID, job model.JobID) (manager.UploadCopy, error) {
+	return b.manager.UploadLocalCopy(ctx, mount, job)
+}

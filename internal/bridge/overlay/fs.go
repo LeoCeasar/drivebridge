@@ -86,6 +86,7 @@ type Fs struct {
 	activityMu        sync.Mutex
 	active            map[model.EntryID]time.Time
 	listed            map[model.EntryID]bool
+	docMediaMu        sync.Mutex
 	materialMu        sync.Mutex
 	materializing     map[model.EntryID]*materialization
 }
@@ -95,7 +96,7 @@ type materialization struct {
 	err    error
 }
 
-var defaultTemps = []string{".DS_Store", "Thumbs.db", "*.swp", "*.swo", ".~*", "._*"}
+var defaultTemps = []string{".DS_Store", "Thumbs.db", "*.swp", "*.swo", "*~", "*~.*", ".~*", "._*"}
 
 // NSDocument safe-save containers have a precise name; arbitrary .tmp or .sb
 // user documents remain syncable. Only directory entries and their descendants
@@ -142,6 +143,11 @@ func New(d Dependencies) (fs.Fs, error) {
 	f := &Fs{store: d.Store, source: source, scope: sc, patterns: patterns, refreshing: make(map[model.EntryID]*directoryRefresh), directoryFailures: make(map[model.EntryID]bool), warmSeen: make(map[model.EntryID]bool), warmQueued: make(map[model.EntryID]bool), materializing: make(map[model.EntryID]*materialization), active: make(map[model.EntryID]time.Time), listed: make(map[model.EntryID]bool)}
 	f.deletionCommit = d.DeletionCommit
 	f.features = &fs.Features{CanHaveEmptyDirectories: true, Move: f.Move}
+	if d.TempPatterns == nil {
+		if _, err := d.Store.ReconcileSystemMetadata(context.Background()); err != nil {
+			return nil, err
+		}
+	}
 	if _, err = d.Store.ObserveEntry(context.Background(), store.Observation{Remote: "", Kind: model.KindFolder, Token: sc.FolderToken}); err != nil {
 		return nil, err
 	}
@@ -433,6 +439,18 @@ func (f *Fs) find(ctx context.Context, remote string) (model.Entry, error) {
 	e, err := f.store.EntryByRemote(ctx, remote)
 	if !errors.Is(err, store.ErrNotFound) {
 		return e, err
+	}
+	// A warm directory already owns its complete filename index. A negative
+	// lookup during editor creation must not rebuild every sibling object and
+	// image reference just to confirm a name is absent.
+	if parent, readErr := f.store.EntryByRemote(ctx, parentPath(remote)); readErr == nil && parent.Kind == model.KindFolder {
+		metadata, readErr := f.store.Metadata(ctx, parent.ID)
+		if readErr != nil {
+			return model.Entry{}, readErr
+		}
+		if !metadata.DirectoryCachedAt.IsZero() {
+			return model.Entry{}, store.ErrNotFound
+		}
 	}
 	if _, err = f.List(ctx, parentPath(remote)); err != nil {
 		return model.Entry{}, err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +11,60 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 	bolt "go.etcd.io/bbolt"
 )
+
+// ReconcileSystemMetadata upgrades legacy, never-dispatched OS metadata jobs to
+// local receipts. It does not delete a file or claim that cloud accepted it.
+// The journal/identity check and every receipt are one Store transaction.
+func (s *Store) ReconcileSystemMetadata(ctx context.Context) (settled int, err error) {
+	err = s.update(ctx, func(tx *bolt.Tx) error {
+		candidates := map[model.EntryID]bool{}
+		if err := each[jobRecord](tx, "jobs", func(r jobRecord) error {
+			if !r.Superseded && !r.LocalReceipt && r.Job.State != model.StatusSynced {
+				candidates[r.Job.EntryID] = true
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for id := range candidates {
+			e, err := entryTx(tx, id)
+			if err != nil {
+				return err
+			}
+			name := path.Base(e.Remote)
+			if e.Kind != model.KindFile || !(name == ".DS_Store" || name == "Thumbs.db" || strings.HasPrefix(name, "._")) {
+				continue
+			}
+			safe, err := eligibleLocalReceipt(tx, e, "")
+			if err != nil {
+				return err
+			}
+			if !safe {
+				continue
+			}
+			var jobs []model.JobID
+			if err := each[jobRecord](tx, "jobs", func(r jobRecord) error {
+				if r.Job.EntryID == id && !r.LocalReceipt {
+					jobs = append(jobs, r.Job.ID)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			for _, job := range jobs {
+				if err := recordLocalReceipt(tx, job); err != nil {
+					return err
+				}
+				settled++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		settled = 0
+	}
+	return
+}
 
 // Receipt eligibility is conservative across all history, including superseded
 // jobs. Ambiguous cloud work and conflicts must remain in the visible outbox.

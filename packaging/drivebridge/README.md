@@ -10,6 +10,14 @@ These scripts create native packages; native installation and writable mount sup
 
 Build each architecture on its own native runner. Cross-compilation does not pass the architecture gate. Full macOS builds require macFUSE headers; set `DRIVEBRIDGE_FUSE_INCLUDE` only if needed. A missing driver/tool is an error. `--cli-only --unsigned` (Windows `-CliOnly -Unsigned`) explicitly creates test artifacts with `mount:false` and blocks release; the complete installer toolchain is still required. Default builds require signing settings, and full builds verify the compiled `feishu` and platform mount command before staging. No fallback switches to NFS.
 
+## Product editions
+
+Native builders default to the Feishu edition. Unix builders accept `--edition feishu` or `--edition full`; Windows accepts `-Edition feishu` or `-Edition full`. The edition is recorded in the payload manifest and checked against the compiled binary through the offline `feishu edition --json` command. Feishu artifact names include `-feishu`.
+
+The Feishu edition uses the `drivebridge_feishu` Go build tag. It registers only the Feishu/local backends and product, configuration, version and platform mount commands. Authentication, Markdown conversion, synchronization, conflict handling and Git history remain included. The full edition retains the original Rclone commands, backends and plugin registration. A plain `go build` remains a full build; the product tag is opt-in outside the packaging scripts. Edition selection is independent of the writable-mount versus `--cli-only` packaging gate.
+
+Local Apple Silicon version 0.2.6 verification produced a 43.33 MiB Feishu desktop DMG, compared with the previous 88.37 MiB full desktop DMG. The installed application passed mount-removal and cache-cleanup checks; this does not establish Windows/Linux native installation or signing evidence. See [the scoped implementation results](../../docs/coding-plan/global-git-history/mount-cleanup-results.md).
+
 ## Optional desktop packages
 
 Add `--desktop` to the native Unix build, or `-Desktop` to the Windows build, to keep the CLI and add a separate desktop entry. The builder requires a read-only `desktop capabilities` response confirming native tray support for the target OS/architecture before staging. The output name gains `-desktop`; manifest `desktop:true` identifies both executables in the exact file inventory. `--desktop --cli-only` / `-Desktop -CliOnly` is rejected: a tray-only test must never masquerade as a full writable client. Default builds package the CLI without a desktop entry; macOS also includes the application-owned login helper.

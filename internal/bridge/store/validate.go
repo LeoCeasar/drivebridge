@@ -10,6 +10,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -28,6 +29,10 @@ func (s *Store) Validate(ctx context.Context) error {
 	return nil
 }
 func (s *Store) validate(ctx context.Context) error {
+	return s.validateSupported(ctx, false)
+}
+
+func (s *Store) validateSupported(ctx context.Context, allowLegacy bool) error {
 	refs := make(map[model.BlobID]bool)
 	snapRefs := make(map[model.SnapshotID]bool)
 	entries := make(map[model.EntryID]model.Entry)
@@ -50,13 +55,27 @@ func (s *Store) validate(ctx context.Context) error {
 		}
 	}
 	err := s.view(ctx, func(tx *bolt.Tx) error {
+		meta := tx.Bucket([]byte("meta"))
+		if meta == nil {
+			return errors.New("missing bucket meta")
+		}
+		version := string(meta.Get([]byte("schema_version")))
+		legacy := allowLegacy && version == "1"
+		if version != "2" && !legacy {
+			return errors.New("unknown store schema")
+		}
 		for _, b := range buckets {
+			if legacy && strings.HasPrefix(b, "history_") {
+				continue
+			}
 			if tx.Bucket([]byte(b)) == nil {
 				return fmt.Errorf("missing bucket %s", b)
 			}
 		}
-		if string(tx.Bucket([]byte("meta")).Get([]byte("schema_version"))) != "1" {
-			return errors.New("unknown store schema")
+		if !legacy {
+			if err := historyProtectedTx(tx, mark); err != nil {
+				return err
+			}
 		}
 		var bound Scope
 		if er := get(tx, "meta", "scope", &bound); er != nil {
@@ -73,6 +92,9 @@ func (s *Store) validate(ctx context.Context) error {
 				return er
 			}
 			metadata[e.ID] = m
+			if m.HistorySnapshot != "" && m.HistoryMediaBody == e.Local {
+				snapRefs[m.HistorySnapshot] = true
+			}
 			if !canonicalUUID(string(e.ID)) || e.MountID != bound.MountID || e.ProfileID != bound.ProfileID || !validKind(e.Kind) || m.FirstObserved.IsZero() || m.ModTime.IsZero() {
 				return errors.New("invalid entry identity or metadata")
 			}
@@ -103,10 +125,9 @@ func (s *Store) validate(ctx context.Context) error {
 				return errors.New("invalid immutable snapshot")
 			}
 			snapshots[sn.ID] = sn
-			mark(sn.XML)
-			mark(sn.Markdown)
-			mark(sn.BlockMap)
-			mark(sn.FileData)
+			for _, blob := range sn.Blobs() {
+				mark(blob)
+			}
 			return nil
 		}); er != nil {
 			return er
@@ -305,5 +326,10 @@ func ValidateDirectory(ctx context.Context, dir string, expected Scope) error {
 	}
 	defer db.Close()
 	s := &Store{db: db, dir: dir, bound: true, scope: expected, leases: make(map[model.BlobID]int)}
-	return s.Validate(ctx)
+	// An installer must be able to audit a supported old store before its first
+	// writer performs migration. Never migrate data during this read-only gate.
+	if err := s.validateSupported(ctx, true); err != nil {
+		return errors.Join(ErrIntegrity, err)
+	}
+	return nil
 }

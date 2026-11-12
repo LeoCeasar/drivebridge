@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"time"
 
@@ -16,6 +17,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	// loop so one slow download cannot delay another entry's durable job.
 	refreshCtx, cancelRefresh := context.WithCancel(ctx)
 	refreshDone := make(chan struct{})
+	cacheDone := make(chan struct{})
+	go func() { defer close(cacheDone); e.backfillDocImages(refreshCtx) }()
 	go func() {
 		defer close(refreshDone)
 		e.refreshActive(refreshCtx)
@@ -23,6 +26,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	defer func() {
 		cancelRefresh()
 		<-refreshDone
+		<-cacheDone
 	}()
 	jobs := time.NewTicker(time.Second)
 	defer jobs.Stop()
@@ -182,7 +186,7 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 		if err != nil {
 			return err
 		}
-		if en.Kind == model.KindDocx && sn.Revision == prior.Revision && sn.Markdown == prior.Markdown && sn.BlockMap == prior.BlockMap {
+		if en.Kind == model.KindDocx && sn.Revision == prior.Revision && sn.Markdown == prior.Markdown && sn.BlockMap == prior.BlockMap && maps.Equal(sn.DocMedia, prior.DocMedia) {
 			return nil
 		}
 		if en.Kind == model.KindFile && sn.FileData == prior.FileData {

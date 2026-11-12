@@ -876,6 +876,13 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 				fd = &managedHandle{Handle: fd, token: a}
 			}
 		}()
+		if rdwrMode == os.O_RDONLY {
+			if preparer, ok := managedVFS.f.(ManagedReadPreparer); ok {
+				if e = preparer.PrepareManagedRead(f.ctx, f.Path()); e != nil {
+					return nil, e
+				}
+			}
+		}
 		if e = f.materializeManaged(f.ctx); e != nil {
 			return nil, e
 		}

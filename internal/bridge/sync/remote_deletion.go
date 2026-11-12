@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/rclone/rclone/internal/bridge/doccache"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/lib/larkcli"
 )
@@ -66,6 +67,9 @@ func (e *Engine) acceptDeletionDecision(ctx context.Context, entry model.Entry, 
 }
 
 func (e *Engine) deletionAfterReadFailure(ctx context.Context, entry model.Entry, readErr error) error {
+	if errors.Is(readErr, doccache.ErrIncomplete) {
+		return readErr
+	}
 	_, missing, err := e.remoteMissing(ctx, entry)
 	if err != nil {
 		return errors.Join(readErr, err)

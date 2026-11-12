@@ -45,7 +45,9 @@ func nodeXML(n ast.Node, src []byte) (string, error) {
 		if v.HardLineBreak() {
 			b.WriteString("<br/>")
 		} else if v.SoftLineBreak() {
-			b.WriteString("\n")
+			// Feishu discards literal XML text newlines; CommonMark soft
+			// breaks render as whitespace, so preserve the word boundary.
+			b.WriteByte(' ')
 		}
 		return b.String(), nil
 	case *ast.String:

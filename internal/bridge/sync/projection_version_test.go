@@ -2,18 +2,36 @@ package syncer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/rclone/rclone/internal/bridge/cloud"
+	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 )
 
+type imageFixtureCloud struct {
+	*fixtureCloud
+	imageErr   error
+	imageReads int
+}
+
+func (s *imageFixtureCloud) OpenDocMedia(context.Context, string) (io.ReadCloser, error) {
+	s.imageReads++
+	if s.imageErr != nil {
+		return nil, s.imageErr
+	}
+	return io.NopCloser(strings.NewReader("image data")), nil
+}
+
 func TestScheme3SnapshotPersistsProjectionAndAssets(t *testing.T) {
-	s, e, _, _ := setup(t, model.KindDocx)
+	s, e, source, _ := setup(t, model.KindDocx)
+	e.source = &imageFixtureCloud{fixtureCloud: source}
 	sn, view, err := e.saveDoc(bg, cloud.Document{Token: "image-doc", Revision: "1", XML: []byte(`<title id="doc">Image</title><img id="image" src="image-token" mime="image/png" name="test.png"/>`)})
 	if err != nil {
 		t.Fatal(err)
@@ -184,5 +202,125 @@ func TestScheme3RejectsUnknownProjectionAndCorruptBaseline(t *testing.T) {
 				t.Fatalf("unusable baseline accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestRefreshCachesImagesEvenWhenRevisionAndMarkdownUnchanged(t *testing.T) {
+	s, e, source, en := setup(t, model.KindDocx)
+	xml := []byte(`<p id="p">hello</p><img id="i" src="image"/>`)
+	source.xml = string(xml)
+	imageSource := &imageFixtureCloud{fixtureCloud: source}
+	e.source = imageSource
+	// Simulate an existing v2 snapshot written before bundled image caching.
+	sn, _, err := e.saveDoc(bg, cloud.Document{Token: en.Token, Revision: "1", XML: xml})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sn.ID = ""
+	sn.DocMedia = nil
+	sn, err = s.SaveSnapshot(bg, sn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := s.OfferRemote(bg, en.ID, en.Generation, sn, sn.Markdown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	en, err = s.CommitPublication(bg, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.RefreshEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Entry(bg, en.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, err := s.Snapshot(bg, got.RemoteCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cached.DocMedia) != 1 {
+		t.Fatal("unchanged document did not acquire durable images")
+	}
+	reads := imageSource.imageReads
+	if err = e.RefreshEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	if imageSource.imageReads != reads {
+		t.Fatal("same revision re-downloaded images")
+	}
+}
+
+func TestImageNotFoundDoesNotDeleteDocument(t *testing.T) {
+	s, e, source, en := setup(t, model.KindDocx)
+	source.xml = `<p id="p">hello</p><img id="i" src="image"/>`
+	source.items = nil // An image error must not initiate document-deletion discovery.
+	e.source = &imageFixtureCloud{fixtureCloud: source, imageErr: store.ErrNotFound}
+	if err := e.RefreshEntry(bg, en.ID); err == nil {
+		t.Fatal("missing image was ignored")
+	}
+	m, err := s.Metadata(bg, en.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Tombstone {
+		t.Fatal("image failure deleted the document")
+	}
+}
+
+func TestBackgroundBackfillCachesExistingImagesWithoutChangingEntry(t *testing.T) {
+	s, e, source, en := setup(t, model.KindDocx)
+	xml := []byte(`<p id="p">hello</p><img id="i" src="image"/>`)
+	imageSource := &imageFixtureCloud{fixtureCloud: source}
+	e.source = imageSource
+	view, err := markdown.Decode(xml, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := func(b []byte) model.BlobID {
+		id, err := s.PutBlob(bg, bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	side, err := json.Marshal(model.DocSidecar{ProjectionVersion: view.ProjectionVersion, Assets: view.Assets, Blocks: view.Blocks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sn, err := s.SaveSnapshot(bg, model.Snapshot{Token: en.Token, Revision: "1", XML: blob(xml), Markdown: blob(view.Markdown), BlockMap: blob(side), Size: int64(len(view.Markdown))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := s.OfferRemote(bg, en.ID, en.Generation, sn, sn.Markdown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	en, err = s.CommitPublication(bg, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	en = stageContent(t, s, en, "unsent local change")
+	if _, err = s.ObserveEntry(bg, store.Observation{Remote: "cold.md", Token: "cold", Kind: model.KindDocx}); err != nil {
+		t.Fatal(err)
+	}
+	source.readErr = errors.New("no document network request allowed")
+	e.backfillCachedDocImages(bg)
+	after, err := s.Entry(bg, en.ID)
+	if err != nil || after != en {
+		t.Fatal("backfill changed pending draft", err)
+	}
+	cached, err := s.CachedDocMedia(bg, en.Token, "1")
+	if err != nil || len(cached) != 1 {
+		t.Fatal("background did not cache image", err)
+	}
+	if imageSource.imageReads != 1 {
+		t.Fatal("expected exactly one image download", imageSource.imageReads)
+	}
+	e.backfillCachedDocImages(bg)
+	if imageSource.imageReads != 1 {
+		t.Fatal("second pass re-downloaded image")
 	}
 }

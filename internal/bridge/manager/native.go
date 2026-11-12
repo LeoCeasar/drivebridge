@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"io"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -340,7 +341,27 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return err
 	}, 5*time.Minute)
 	success = true
-	return &workerServices{store: s, runtime: native, run: backgroundRun, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
+	return &workerServices{restoreHistory: func(ctx context.Context, req model.HistoryRestoreRequest, body io.Reader, bundle *store.HistoryRestoreBundle) (out model.HistoryRestoreResult, err error) {
+		allowed, e := overlayFS.SyncPathAllowed(ctx, req.ExpectedPath)
+		if e != nil {
+			return out, e
+		}
+		if !allowed {
+			return out, model.ErrUnsupportedContent
+		}
+		err = v.TryExternalUpdate(ctx, req.ExpectedPath, func() (fs.Object, error) {
+			var e error
+			out, e = s.RestoreHistory(ctx, req, body, bundle)
+			if e != nil {
+				return nil, e
+			}
+			return overlayFS.NewObject(context.WithoutCancel(ctx), out.Entry.Remote)
+		})
+		if errors.Is(err, vfs.ErrExternalUpdateBusy) {
+			return out, ErrPending
+		}
+		return
+	}, store: s, runtime: native, run: backgroundRun, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
 		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
