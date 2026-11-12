@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,9 @@ func TestMediaCLIProcess(t *testing.T) {
 func mediaExecutable(t *testing.T, scenario string) string {
 	t.Helper()
 	bin, err := os.Executable()
+	if runtime.GOOS == "windows" {
+		return windowsFakeCLI(t, bin, "DB_MEDIA_SCENARIO", "TestMediaCLIProcess", scenario)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
