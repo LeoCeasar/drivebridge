@@ -118,6 +118,14 @@ func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) er
 		}
 	}
 	pending := &directoryRefresh{remote: dir, done: make(chan struct{})}
+	// Capture before the network scan. A file created/bound while that scan is
+	// in flight is not absent from an observation which predates its creation.
+	before, readErr := f.store.Entries(ctx, dir)
+	if readErr != nil {
+		f.refreshMu.Unlock()
+		f.listMu.Unlock()
+		return readErr
+	}
 	f.refreshing[parent.ID] = pending
 	f.refreshMu.Unlock()
 	f.listMu.Unlock()
@@ -148,6 +156,12 @@ func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) er
 			readErr = f.store.MarkDirectoryCached(ctx, parent)
 		}
 		f.listMu.Unlock()
+		// VFS reconciliation takes native directory/cache locks. Never enter it
+		// while holding listMu: a concurrent ReadDir can hold those locks and
+		// be waiting for this same metadata lock.
+		if readErr == nil {
+			readErr = f.reconcileMissing(ctx, parent, before, items)
+		}
 		err = errors.Join(catalogErr, readErr)
 		return err
 	}

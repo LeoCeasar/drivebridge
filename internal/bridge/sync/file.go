@@ -20,7 +20,11 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	}
 	actual, err := e.observeFile(ctx, en.Token)
 	if err != nil {
-		return e.pause(ctx, j, err)
+		checked := e.deletionAfterReadFailure(ctx, en, err)
+		if errors.Is(checked, model.ErrVersionChanged) {
+			return checked
+		}
+		return e.pause(ctx, j, checked)
 	}
 	if err = e.store.ProtectBackup(ctx, j.ID, actual.ID); err != nil {
 		return e.pause(ctx, j, err)

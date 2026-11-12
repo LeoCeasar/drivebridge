@@ -182,6 +182,15 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 		return model.ErrUnknownResult
 	}
 	if !work.Completed[step] {
+		if step == "delete" && work.Op.Kind == "delete" && en.Kind != model.KindFolder {
+			_, missing, err := e.remoteMissing(ctx, en)
+			if err != nil {
+				return err
+			}
+			if missing {
+				return e.store.AcknowledgeMissingDelete(ctx, work.Op.ID)
+			}
+		}
 		if en.Kind == model.KindFolder {
 			children, err := e.source.List(ctx, en.Token)
 			if err != nil {

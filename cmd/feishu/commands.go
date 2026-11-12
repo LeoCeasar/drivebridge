@@ -322,26 +322,34 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	conflict.AddCommand(openConflict)
 	resolve := &cobra.Command{Use: "resolve ID", Args: exactArgs(1)}
 	resolve.Flags().String("file", "", "Merged file to submit")
+	resolve.Flags().String("action", "", "Deletion decision: restore_local or accept_delete")
 	resolve.Flags().Uint64("expected-generation", 0, "Captured local generation")
-	resolve.Flags().String("expected-remote-revision", "", "Captured cloud revision or observation identity")
+	resolve.Flags().String("expected-remote-revision", "", "Captured conflict revision or deletion marker")
 	resolve.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
-		file, err := os.Open(flagString(resolve, "file"))
-		if err != nil {
+		action, filename := flagString(resolve, "action"), flagString(resolve, "file")
+		if (action != "" && action != model.ResolveRestoreLocal && action != model.ResolveAcceptDelete) || (action == "" && filename == "") || (action == model.ResolveAcceptDelete && filename != "") {
 			return nil, manager.ErrConfig
 		}
-		defer file.Close()
-		body, err := io.ReadAll(io.LimitReader(file, (80<<20)+1))
-		if err != nil {
-			return nil, err
-		}
-		if len(body) > 80<<20 {
-			return nil, model.ErrUnsupportedContent
+		var body []byte
+		if filename != "" {
+			file, err := os.Open(filename)
+			if err != nil {
+				return nil, manager.ErrConfig
+			}
+			defer file.Close()
+			body, err = io.ReadAll(io.LimitReader(file, (80<<20)+1))
+			if err != nil {
+				return nil, err
+			}
+			if len(body) > 80<<20 {
+				return nil, model.ErrUnsupportedContent
+			}
 		}
 		generation, err := resolve.Flags().GetUint64("expected-generation")
 		if err != nil {
 			return nil, manager.ErrConfig
 		}
-		return map[string]bool{"accepted": true}, m.ResolveConflict(ctx, model.ResolveRequest{ConflictID: model.ConflictID(args[0]), ExpectedGeneration: generation, ExpectedRemoteRevision: flagString(resolve, "expected-remote-revision"), Content: body})
+		return map[string]bool{"accepted": true}, m.ResolveConflict(ctx, model.ResolveRequest{Action: action, ConflictID: model.ConflictID(args[0]), ExpectedGeneration: generation, ExpectedRemoteRevision: flagString(resolve, "expected-remote-revision"), Content: body})
 	})
 	conflict.AddCommand(resolve)
 	conflict.AddCommand(&cobra.Command{Use: "export ID", Short: "Export immutable local conflict copies without overwriting edited copies", Args: exactArgs(1), RunE: commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {

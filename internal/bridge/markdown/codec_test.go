@@ -13,7 +13,7 @@ import (
 
 func mustDecode(t *testing.T, s string) model.DocView {
 	t.Helper()
-	d, e := Decode([]byte(s), "7")
+	d, e := DecodeWithOptions([]byte(s), "7", Options{ProjectionVersion: 1})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -129,7 +129,7 @@ func TestTableBothChangedConflict(t *testing.T) {
 }
 func TestOpaqueChangedBlocksUpload(t *testing.T) {
 	raw := `<callout id="opaque" background-color="rgb(1,2,3)"><p id="child">hello &amp; world</p></callout>`
-	d, e := DecodeWithOptions([]byte(`<p id="p">before</p>`+raw), "1", Options{SourceURL: "https://example.com/doc", ReferenceMap: json.RawMessage(`{"x":1}`)})
+	d, e := DecodeWithOptions([]byte(`<p id="p">before</p>`+raw), "1", Options{ProjectionVersion: 1, SourceURL: "https://example.com/doc", ReferenceMap: json.RawMessage(`{"x":1}`)})
 	if e != nil {
 		t.Fatal(e)
 	}

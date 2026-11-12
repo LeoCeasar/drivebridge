@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src 'self' data:; base-uri 'none'">
+<title>DriveBridge 方案三：在线文档与本地 Markdown 双向同步设计</title>
+<style>
+:root{--ink:#20344c;--muted:#5d6f84;--blue:#205cba;--line:#cfdaea;--bg:#f3f6fa;--paper:#fff;--soft:#edf3fc;--green:#246547;--amber:#805313;--red:#9a392e}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}a{color:var(--blue);text-underline-offset:3px}header{background:white;border-bottom:1px solid var(--line);padding:30px max(28px,calc((100vw - 1260px)/2))}header .meta{font-size:13px;color:var(--muted);margin:0 0 8px}header h1{font-size:30px;line-height:1.45;max-width:940px;margin:0 0 14px;font-weight:650}header p{max-width:1020px;margin:8px 0}.summary{border-left:4px solid var(--blue);padding:10px 17px;background:var(--soft);margin:18px 0 0}.shell{max-width:1320px;margin:auto;display:grid;grid-template-columns:225px minmax(0,1fr)}aside{padding:26px 20px;border-right:1px solid var(--line)}aside nav{position:sticky;top:20px}aside a{display:block;text-decoration:none;color:var(--muted);padding:6px 0;font-size:13px}aside a:hover{color:var(--blue)}aside strong{display:block;font-size:14px;margin-bottom:9px}main{padding:18px 36px 70px;min-width:0}section{padding:25px 0 32px;border-bottom:1px solid var(--line);scroll-margin-top:18px}h2{font-size:24px;line-height:1.45;margin:0 0 16px}h3{font-size:17px;margin:24px 0 9px}p{margin:10px 0}ul,ol{padding-left:22px}li{margin:5px 0}.muted,.caption{color:var(--muted);font-size:13px}.note{background:#fff8e9;border-left:3px solid #b78945;padding:12px 17px;margin:16px 0;font-size:14px}.oknote{background:#edf7f1;border-left:3px solid var(--green);padding:12px 17px;margin:16px 0}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;background:white;font-size:13px;line-height:1.75}th,td{border:1px solid var(--line);text-align:left;vertical-align:top;padding:11px 13px}th{background:#eaf0f8;font-weight:600}code{font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}pre{padding:18px 20px;border:1px solid var(--line);background:white;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.8 ui-monospace,SFMono-Regular,Menlo,monospace}.good{color:var(--green);font-weight:600}.pending{color:var(--amber);font-weight:600}.danger{color:var(--red);font-weight:600}.flow{background:white;border:1px solid var(--line);padding:25px;margin:18px 0}.flow h3{margin:0 0 20px}.rail{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}.node{border:1px solid #b8c9de;background:#f8fafd;padding:14px 16px;border-radius:5px;min-height:100px}.node strong{display:block;font-size:15px;margin-bottom:5px}.node p{font-size:13px;line-height:1.7;margin:0;color:var(--muted)}.node.primary{background:#eaf2ff;border-color:#91b2e2}.node.result{background:#edf7f1;border-color:#9fc5af}.node.caution{background:#fff8eb;border-color:#d6bc8b}.direction{text-align:center;color:var(--blue);padding:9px 0;font-size:13px;font-weight:600}.stack{max-width:700px;margin:0 auto}.stack .node{min-height:0}.branch{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:10px 0}.branch .node{min-height:110px}.lane-title{color:var(--blue);font-weight:600;font-size:13px;margin-bottom:8px}.userflow{display:flex;align-items:stretch;gap:9px;flex-wrap:wrap}.userflow span{border:1px solid var(--line);background:#fff;padding:9px 12px;font-size:13px}.userflow b{align-self:center;color:var(--blue)}.pill{display:inline-block;padding:1px 7px;font-size:12px;background:#edf7f1;color:var(--green);border:1px solid #c2d8cc;border-radius:4px}.pill.wait{background:#fff8e9;color:var(--amber);border-color:#dfcca6}.choices{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}button{border:1px solid #afc0d6;background:#fff;color:var(--ink);padding:9px 13px;border-radius:4px;cursor:pointer;font:13px/1.5 inherit}button[aria-pressed=true]{background:var(--blue);border-color:var(--blue);color:white}button:focus-visible,a:focus-visible{outline:3px solid #8ab7fa;outline-offset:2px}.scenario{background:white;border:1px solid var(--line);padding:20px}.scenario h3{margin-top:0}.scenario-path{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.scenario-path>div{background:var(--bg);padding:13px;border-top:3px solid #a8bbd4}.scenario-path strong{display:block}.scenario-path p{font-size:13px;margin:7px 0;white-space:pre-wrap;overflow-wrap:anywhere}#scenarioDecision{padding:13px 16px;margin:16px 0 0;background:#edf7f1;border-left:3px solid var(--green)}#scenarioDecision.block{background:#fff8e9;border-color:#b78945}.files{font-size:13px}.step-label{font-size:12px;color:var(--blue);margin-bottom:5px}.print{margin-top:15px}.sources li{font-size:13px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:18px}.pair>div{background:white;border:1px solid var(--line);padding:17px}.pair h3{margin-top:0}.statusline{padding:8px 12px;background:#eaf0f8;font-size:13px;margin-top:12px}.tests{color:var(--muted);font-size:12px}details{margin:14px 0}summary{cursor:pointer;color:var(--blue)}@media(max-width:1050px){.shell{grid-template-columns:185px minmax(0,1fr)}main{padding:15px 22px}.rail{grid-template-columns:1fr}.scenario-path{grid-template-columns:1fr}header h1{font-size:26px}}@media(max-width:720px){.shell{display:block}aside{display:none}main{padding:10px 16px 45px}header{padding:24px 18px}h2{font-size:21px}.flow{padding:16px}.branch,.pair{grid-template-columns:1fr}th,td{padding:9px;min-width:100px}.userflow{gap:6px}}@media print{body{background:white;color:#111;font-size:11px}header{padding:15px 0}.shell{display:block;max-width:none}aside,.print,.choices{display:none}main{padding:0}section{padding:16px 0}h2{font-size:19px}h3{font-size:14px}.flow{padding:14px;break-inside:avoid}table{font-size:10px}tr{break-inside:avoid}a{color:#222}header h1{font-size:24px}.node{padding:10px}.rail{grid-template-columns:repeat(3,1fr)}.caption{font-size:10px}}
+</style></head>
+<body>
+<header>
+<p class="meta">DriveBridge · 方案三详细设计 v0.1 · 2026-11-12 · 设计与验证边界说明</p>
+<h1>飞书在线文档与本地 Markdown<br>保留原始结构，按块双向同步</h1>
+<p><strong>准确结论：带明确内容范围的双向同步可以实现；这次原型证明了样本的读取、资源获取和局部定位，尚未证明整篇 Markdown 或所有复杂内容都能无损双向转换。</strong></p>
+<div class="summary">核心设计：用户编辑可读的 <code>.md</code>；后台同时保留原始文档、资源身份和块映射；写回时把本地变化翻译成最小块操作，未修改的结构继续留在飞书。格式转换、云端写入、并发正确性分别验收。</div>
+<p class="muted">本文是实现目标及流程设计。方案三尚未接入正式应用；真实写回、全篇反向解析和多人并发仍需后续验收。既有应用其他功能的历史验收不等于本方案已验收。</p>
+<button class="print" id="print">打印 / 保存 PDF</button>
+</header>
+<div class="shell"><aside><nav aria-label="方案目录"><strong>方案目录</strong>
+<a href="#evidence">1. 已验证与未验证</a><a href="#architecture">2. 总体架构</a><a href="#read">3. 在线 → 本地</a><a href="#write">4. 本地 → 在线</a><a href="#types">5. 内容支持范围</a><a href="#mapping">6. 原始结构与块映射</a><a href="#merge">7. 合并与冲突演示</a><a href="#assets">8. 图片与资源</a><a href="#experience">9. 用户使用流程</a><a href="#safety">10. 状态与恢复</a><a href="#implementation">11. 实现分块与边界</a><a href="#acceptance">12. 验收与发布条件</a><a href="#references">13. 来源与关联文档</a>
+</nav></aside><main>
+<section id="evidence"><h2>1. 验证成功具体意味着什么</h2>
+<p>样本为《主备更新操作手册》，云端版本 73。原型直接读取此前导出的原始 XML，并通过当前账号的托管 CLI 下载图片。没有向飞书发送修改请求。</p>
+<div class="tablewrap"><table><thead><tr><th>对象</th><th>本次结果</th><th>可以据此得出的结论</th><th>不能据此得出的结论</th></tr></thead><tbody>
+<tr><td>正文</td><td><span class="good">61 段保留，41 段非空</span></td><td>本样本的嵌套文字可读取并投影</td><td>任意富文本修改都可以保留样式</td></tr>
+<tr><td>表格</td><td><span class="good">6 个真实表格可读</span></td><td>单列单元格内多段文字、命令不必变成占位符；其中一段可准确定位</td><td>合并单元格、跨列、嵌套表格的增删改都已验证</td></tr>
+<tr><td>图片</td><td><span class="good">4 张下载并离线显示</span></td><td>资源 Token 可用于鉴权获取图片，再用本地路径引用</td><td>本地更换图片、上传并绑定原文档已经验证</td></tr>
+<tr><td>标准代码块</td><td><span class="pill wait">补充构造样例通过</span></td><td>代码围栏可以保留缩进、换行与特殊字符</td><td>此真实文档含标准代码块；真实代码块写回已通过</td></tr>
+<tr><td>局部修改</td><td><span class="good">35 段纯文本可在原型模拟编辑</span></td><td>单段修改可生成精确 XML；其他字节保持不变</td><td>任意编辑器修改整篇 Markdown 后都可正确映射</td></tr>
+<tr><td>并发</td><td><span class="pill wait">离线情况验证</span></td><td>能设计并测试同段变化拦截、保留其他段落变化</td><td>已通过双账号实机测试；服务端具有原子拒绝能力</td></tr>
+</tbody></table></div>
+<p class="caption">验证记录：12 项离线检查、7 项浏览器检查通过。它们验证了原型自身，不代表现有 Go 同步引擎已获得这些新增能力。</p>
+<div class="note"><strong>必须分开判断四件事：</strong>内容能读取、阅读效果可接受、修改能准确映射、云端同步能确认成功。这四项不会因为一个预览页成功就同时成立。</div>
+</section>
+
+<section id="architecture"><h2>2. 总体架构：一个本地文档，后台保留三份上下文</h2>
+<div class="flow" role="img" aria-label="总体架构：云端文档进入原始快照和投影，本地编辑产生差异，由块计划器通过官方接口写回并回读确认。">
+<div class="rail">
+<div><div class="lane-title">飞书</div><div class="node primary"><strong>在线文档与资源</strong><p>文档身份、版本、块树、文字样式、表格、图片 Token。</p></div><div class="direction">↓ 官方 CLI / OpenAPI</div><div class="node"><strong>获取原始快照</strong><p>完整范围、身份核验、结构校验、必要时分页。保留原文与资源引用。</p></div></div>
+<div><div class="lane-title">本机后台</div><div class="node"><strong>原始快照 + 投影映射</strong><p>保存云端结构、投影版本、资源映射，以及分别属于本地和云端的同步基线。</p></div><div class="direction">↓ 生成可读内容</div><div class="node result"><strong>本地 Markdown</strong><p>文字、代码、简单表格；复杂表格保留 HTML，图片使用相对资源路径。</p></div></div>
+<div><div class="lane-title">修改返回</div><div class="node primary"><strong>编辑器 / AI 保存</strong><p>VFS 接收 → 本机持久化 → 整篇解析 → 块差异与三方比较。</p></div><div class="direction">↓ 只对支持的操作生成补丁</div><div class="node"><strong>写入一个操作，回读核验</strong><p>保留非目标结构；获取新版本和块身份后，再规划下一步。</p></div></div>
+</div><div class="direction">云端回读结果 → 更新投影与确认基线 → 本地看到最终合并内容</div>
+</div>
+<div class="pair"><div><h3>用户管理的内容</h3><p><code>主备更新操作手册.md</code></p><p>继续使用本地编辑器、AI 和终端，不要求维护块 ID，不要求调用 CLI。</p></div><div><h3>应用管理的状态</h3><p>原始 XML / 块树、映射、快照、上传账本、冲突草稿、资源缓存。</p><p>沿用每用户状态与缓存目录，不将账号信息写进文档。</p></div></div>
+<p>飞书云盘中的普通 <code>.md</code> 文件仍按普通文件同步；在线文档的 <code>.md</code> 是本地投影。通过资源绑定判断类型，不按扩展名猜测。已有新建 Markdown 策略保持不变：需要创建在线文档时走已配置的创建流程。</p>
+</section>
+
+<section id="read"><h2>3. 在线 → 本地：结构保留，正文不因格式限制消失</h2>
+<div class="flow"><h3>读取与刷新流程</h3><div class="stack">
+<div class="node primary"><strong>目录先显示文件名和基本元数据</strong><p>目录发现和正文下载分离，保持现有按需读取体验。</p></div><div class="direction">↓ 打开、grep 读取，或已有同步策略触发复核</div>
+<div class="node"><strong>检查正文缓存、账号绑定和版本</strong><p>缓存可用时复用；正文已清理或需要刷新时，读取云端内容。失败返回明确错误，不返回伪造的空文件。</p></div><div class="direction">↓</div>
+<div class="node"><strong>读取同一版本的原始结构</strong><p>以完整 XML / 块树为依据。官方 Markdown 可作为辅助结果，只有版本和结构核对通过才采用；不能把不同版本的数据拼接。</p></div><div class="direction">↓</div>
+<div class="node"><strong>逐类型投影，同时建立块映射</strong><p>可编辑内容生成 Markdown；复杂表格保留结构；未知类型至少提取可解释正文、标题或资源说明，完整原件仍保留。</p></div><div class="direction">↓</div>
+<div class="branch"><div class="node result"><strong>本地没有待上传内容</strong><p>持久保存快照与映射，协调 VFS 发布正文。版本变化后更新文件大小和缓存；打开中的句柄按既有保护处理。</p></div><div class="node caution"><strong>本地有未上传修改</strong><p>不覆盖当前本地正文。保存远端观察，进入三方合并或冲突处理。</p></div></div>
+<div class="direction">↓ 预览器实际读取图片路径时</div><div class="node"><strong>按需获取图片资源</strong><p>使用账号鉴权下载到应用缓存。资源不可用时保留引用并显示原因，不把失败解释成图片被删除。</p></div>
+</div></div>
+<p><strong>搜索边界：</strong><code>grep</code> 读取投影正文时能找到其中的文字和命令；Markdown / HTML 转义可能改变源码字面表示。需要按原始文本精确搜索时，提供独立纯文本索引；该索引不是写回输入。图片中的文字需要额外 OCR，不能由图片下载成功推导出可检索。</p>
+</section>
+
+<section id="write"><h2>4. 本地 → 在线：差异写回，不把整篇文档重新导入</h2>
+<div class="flow"><h3>正常保存与上传流程</h3><div class="stack">
+<div class="node primary"><strong>编辑器 / AI 保存 Markdown</strong><p>沿用现有 VFS 稳定写入、关闭句柄及 write-back 策略。原子保存和临时文件改名按现有安全保存机制处理。</p></div><div class="direction">↓</div>
+<div class="node"><strong>先持久保存本地输入和代次</strong><p>生成不可变快照，记录本次代次 G、对应的本地基线与远端基线。上传前不能将它标记为已同步。</p></div><div class="direction">↓</div>
+<div class="node"><strong>解析整篇本地文件，重建变化范围</strong><p>通过旧投影、块上下文、父子结构和内容差异定位；不能只靠行号，也不能只按相同文字匹配。</p></div><div class="direction">↓</div>
+<div class="branch"><div class="node result"><strong>所有变化可解释且可写</strong><p>继续计划最小操作。未改变的复杂块继续保持在服务端。</p></div><div class="node caution"><strong>未知语法、结构变化或定位歧义</strong><p>保存完整草稿并暂停本篇写回，显示具体问题位置。首版不先写入半篇支持内容。</p></div></div>
+<div class="direction">↓ 可继续时</div><div class="node"><strong>获取最新云端 R，进行三方比较</strong><p>比较上次同步上下文 B、本次本地输入 L、最新云端 R。只有本地变化则规划补丁；云端也变化时执行合并规则。</p></div><div class="direction">↓ 计划无冲突且操作能力已验证</div>
+<div class="node"><strong>写前复核，持久记录操作意图</strong><p>校验目标块、原内容指纹和最新身份；持久记录 before / desired、操作目标和发送状态。检测变化则重规划。</p></div><div class="direction">↓</div>
+<div class="node"><strong>执行一个块操作</strong><p>复用现有官方 CLI 传输层。现有适配包含块替换、插入和删除；需要更细粒度文字更新时单独增加并验明契约。</p></div><div class="direction">↓ 重新获取远端结构</div>
+<div class="branch"><div class="node result"><strong>读回能确认预期效果</strong><p>核验目标与需要保留的上下文，记录结果。若还有操作，用本次回读的新版本和新块 ID 重规划。</p></div><div class="node caution"><strong>超时 / 结果未知 / 读回不符</strong><p>保留本地输入、基线与账本；进入复核或人工处理。不能直接重放已发出的变更。</p></div></div>
+<div class="direction">↓ 全部操作确认</div><div class="node result"><strong>提交远端确认与本地投影</strong><p>持久记录实际远端结果，协调本地发布。只有本地代次仍与候选结果一致时更新正文；后来新输入保留并进入下一轮。</p></div>
+</div></div>
+<div class="note"><strong>并发限制已在既有项目设计中确认：</strong>当前接口的版本参数不能当作服务端 If-Match / CAS。写前复核与写后读回只能缩小窗口、发现部分异常，不能保证阻止所有网页端覆盖，也不能保证恢复从未观察到的中间版本。方案沿用“尽力检测、合并和恢复”，不承诺强一致协同。</div>
+</section>
+
+<section id="types"><h2>5. 表格、图片和代码块能做到什么程度</h2>
+<p>下表区分“本次事实”和“正式实现目标”。第一阶段优先满足当前操作手册；没有完成真实写回验收的类型，保持能力关闭。</p>
+<div class="tablewrap"><table><thead><tr><th>内容</th><th>在线 → 本地设计</th><th>本地 → 在线设计</th><th>当前证明程度 / 发布边界</th></tr></thead><tbody>
+<tr><td>普通段落、标题、列表</td><td>正常 Markdown，保留文本及层级</td><td>准确映射时更新、插入或删除对应块；插入顺序和父子关系明确</td><td>样本正文可读，纯文本段落可离线模拟；整篇反向解析和真实写入待验收</td></tr>
+<tr><td>标准代码块</td><td>代码围栏 + 语言；保留空格、Tab、换行和字面符号；不对代码正文通用反转义</td><td>修改代码正文或受支持语言字段；保留原块其他信息，回读逐项核验</td><td>构造样例读取通过；需要真实多语言代码文档验证双向流程</td></tr>
+<tr><td>当前手册中的表格</td><td>保留 HTML 表格与单元格内多段文字；不擅自判定为代码块</td><td>优先只修改单元格内目标段落，保持表格结构</td><td>6 表格读取通过；单段本地 XML 修改通过；云端嵌套段落操作待验证</td></tr>
+<tr><td>简单矩形表格</td><td>满足条件时用 GFM 表格，否则用 HTML</td><td>先支持已有单元格文字；新建简单表格需单独验收</td><td>不能因普通表格已支持，就默认支持所有表格转换</td></tr>
+<tr><td>合并单元格、多行列、嵌套布局</td><td>保留可解释结构和完整文字；必要时提供专用预览</td><td>第一阶段禁止结构增删、合并拆分和跨单元格移动；准确定位的内部文字能力分批打开</td><td>本次样本未覆盖；需要独立真实样本</td></tr>
+<tr><td>图片</td><td>相对路径引用 + 鉴权按需下载 + 本地缓存</td><td>未修改图片保留；新增、替换、删除通过独立资源操作，并确认文档绑定</td><td>4 张真实图片读取通过；资源写入第一阶段关闭，后续再开放</td></tr>
+<tr><td>粗体、颜色、下划线等</td><td>正文始终可读；Markdown 支持的样式投影，其他样式留在原始结构</td><td>先只做能明确保留样式的文本修改；跨多个样式边界的变更不能猜测继承规则</td><td>6 个样本富文本段落当前只读；原型不支持其模拟修改</td></tr>
+<tr><td>公式、Mermaid、画板、附件</td><td>可获取源码时展示源码，其他内容保留说明、资源与原文入口</td><td>每种类型使用专门适配；没有验证时禁止反向重建</td><td>“能看到”与“能完整编辑”分开，不由普通代码块能力推导</td></tr>
+<tr><td>内嵌 Sheet / Base / 动态组件</td><td>明确资源类型、可用摘要和在线入口，原件保留</td><td>不把它们转成普通 Markdown 后覆盖原对象</td><td>不纳入第一阶段双向编辑</td></tr>
+</tbody></table></div>
+<p class="caption">HTML 表格并非所有 Markdown 编辑器都能一致渲染；应用预览页负责提供可控的阅读效果。本地仍可直接编辑源码和检索正文。</p>
+</section>
+
+<section id="mapping"><h2>6. 双向转换依赖什么数据</h2>
+<p><strong>不能只保存一份 Markdown 再试图还原全部飞书结构。</strong>映射和原件必须在首次投影时一起持久保存，编辑器改写后才有可靠的比较依据。</p>
+<div class="tablewrap"><table><thead><tr><th>状态</th><th>必须保存的信息</th><th>用途</th></tr></thead><tbody>
+<tr><td>文档绑定</td><td>profile / entry / 远端资源身份 / 账号绑定</td><td>相同文件名不代表同一文档，禁止跨账号复用映射</td></tr>
+<tr><td>原始快照</td><td>完整 XML / 原始块数据、revision、不可变 blob 引用</td><td>保留未投影的信息及恢复上下文</td></tr>
+<tr><td>投影映射</td><td>投影版本、本地块 ID、当前远端 ID、父块、子结构、多个 UTF-8 字节范围、原内容指纹、可读 / 可写能力</td><td>支持一个表格对应多个单元格和多个 Markdown 范围</td></tr>
+<tr><td>资源映射</td><td>稳定本地资源 ID、原文资源 Token、来源版本、本地相对路径、缓存状态、已知 hash / 大小</td><td>图片路径不承担远端身份，也不保存登录凭据</td></tr>
+<tr><td>两端基线</td><td>LocalCheckpoint、RemoteCheckpoint 及其投影关联</td><td>本地输入和云端回读可能因合并而不同，不能合并成一份含糊的基线</td></tr>
+<tr><td>本地代次与账本</td><td>generation、操作前快照、目标变更、发送状态、读回结果、冲突草稿</td><td>处理上传期间继续编辑、进程重启和请求结果未知</td></tr>
+</tbody></table></div>
+<h3>精确定位规则</h3><ol>
+<li>先比较基线和当前本地解析树，确定哪些内容被修改；格式化造成的行号变化不直接等于云端结构变化。</li>
+<li>使用父子结构、邻接块、内容指纹和已有本地身份共同定位。重复文字、复制粘贴或大范围移动导致歧义时停止自动写回。</li>
+<li>远端块 ID 只属于取得它的最新上下文；替换后可能改变。每次写入回读后更新映射，不将它当作永远稳定的本地 ID。</li>
+<li>未改动的未知块不重发、不重新导入。原始 <code>reference_map</code> 用于解释原件，不能整份盲目重放。</li>
+<li>空段落是实际结构；标题、换行和表格内段落边界不能因为显示上“不重要”而自动删除。</li>
+</ol>
+<details><summary>建议的数据契约（新增字段仍需实现，不是当前已存在接口）</summary><pre>ProjectionSnapshot {
+  codecVersion, documentIdentity, remoteSnapshotID,
+  localCheckpointID, remoteCheckpointID, markdownBlobID,
+  nodes: [{
+    localNodeID, remoteID, parentID, kind,
+    sourceFingerprint, markdownRangesUTF8[], childNodes[],
+    readable, editableOperations[], preserveSourceBlobID
+  }],
+  assets: [{localAssetID, sourceToken, relativePath, cacheState}]
+}
+
+BuildDelta(baseProjection, editedMarkdown)
+  → operations | blockedRanges(reason, preservedDraft)
+
+Rebase(delta, baseRemote, freshRemote)
+  → currentTargets | conflicts
+
+VerifyReadback(before, intendedOperation, after)
+  → confirmed | needsReconcile</pre></details>
+<p>Go 中现有范围使用 UTF-8 字节偏移；网页编辑器通常使用 UTF-16 索引。两者必须显式转换，不能直接混用。格式化、编码和转义变化要经过解析，不做全局字符串替换。</p>
+</section>
+
+<section id="merge"><h2>7. 合并与冲突：按实际变化决定，不因保存就要求人工确认</h2>
+<p>下面是<strong>设计规则演示</strong>，不是新增的服务端测试。点击不同场景查看处理路径。</p>
+<div class="choices" id="choices" aria-label="选择同步场景"></div>
+<div class="scenario"><h3 id="scenarioTitle"></h3><div class="scenario-path"><div><strong>上次基线 B</strong><p id="base"></p></div><div><strong>本地 L</strong><p id="local"></p></div><div><strong>云端 R</strong><p id="remote"></p></div></div><div id="scenarioDecision" role="status"></div><p id="scenarioPath" class="small muted"></p></div>
+<div class="tablewrap" style="margin-top:20px"><table><thead><tr><th>变化</th><th>处理</th></tr></thead><tbody>
+<tr><td>只有本地变化</td><td>在能力与映射明确的前提下直接计划写回，不要求人工确认</td></tr>
+<tr><td>只有云端变化，本地干净</td><td>更新本地投影；不能覆盖打开中的脏缓存</td></tr>
+<tr><td>双方修改不同、可独立定位的块</td><td>保留双方改动，局部合并后读回确认</td></tr>
+<tr><td>双方产生同一语义修改</td><td>去重；仍确认远端实际结果</td></tr>
+<tr><td>同段不相容修改、同位置不同插入、删除对修改</td><td>保留基线、本地、云端与草稿，进入三方 diff</td></tr>
+<tr><td>同段不重叠文本变化</td><td>只有类型适配器支持且能证明边界独立时自动合并；不能把“行号不同”当作安全依据</td></tr>
+<tr><td>映射歧义或不支持结构</td><td>显示“需要处理 / 暂不支持”，与版本冲突区分；人工确认也不能绕过无法解释的结构</td></tr>
+</tbody></table></div>
+<p>继承已确认的删除规则：本地显式删除同步至远端；云端删除且本地干净时同步删除；有本地未上传修改或冲突时，选择保留本地并重新上传 / 跟随云端删除。重建是新资源身份，不能声称恢复原 Token。</p>
+</section>
+
+<section id="assets"><h2>8. 图片不是一个永久 URL：资源身份与缓存单独管理</h2>
+<div class="flow"><h3>图片读取与后续替换</h3><div class="rail"><div class="node"><strong>原文资源引用</strong><p>文档版本 + 图片 Token → 稳定本地资源 ID。原始 alt 说明保留，不等同于 OCR。</p></div><div class="node primary"><strong>本地相对路径</strong><p>Markdown 引用虚拟资源路径；应用内部映射至缓存与鉴权请求，凭据不进入文档。</p></div><div class="node result"><strong>实际读取时下载</strong><p>先写临时文件，检查成功状态、格式及可得大小信息，再原子发布。失败保留旧安全缓存和错误状态。</p></div></div><div class="direction">后续图片替换：本地新资源 → 上传并确认资源 → 绑定目标块 → 文档回读确认 → 提交映射</div></div>
+<ul>
+<li>建议使用每个目录下的隐藏虚拟资源路径，例如 <code>.drivebridge-assets/&lt;本地文档ID&gt;/image1.png</code>。这是设计选择，尚未实现；远端 Token 不直接作为可见目录名。</li>
+<li>资源实体保存在应用缓存；虚拟路径保证编辑器可以读取。隐藏资源由专门路由处理，不作为用户新文件再次上传，也不进入普通排除规则的误删逻辑。</li>
+<li>图片新增 / 替换第一阶段关闭。开放后必须验证上传结果、目标绑定和回读；上传超时不得盲目再建资源。</li>
+<li>沿用用户确认的清理策略：7 天未使用或超过容量时优先清理最久未使用的已同步正文；待上传资源、冲突引用和正在使用的资源不清理。</li>
+<li>临时下载 URL 过期后重新获取，不写成文档的永久资源地址。编辑 Markdown 中的外部图片 URL 不自动等于已获准下载并上传该资源。</li>
+</ul>
+</section>
+
+<section id="experience"><h2>9. 用户使用流程</h2>
+<div class="userflow" role="img" aria-label="登录后自动挂载，查看文件名，打开并按需读取，编辑保存，后台同步，异常时托盘提示"><span>沿用应用登录</span><b>→</b><span>自动挂载账号盘</span><b>→</b><span>看到个人 / 共享目录</span><b>→</b><span>打开文档或 AI 读取</span><b>→</b><span>本地编辑并保存</span><b>→</b><span>后台同步 / 必要时提示</span></div>
+<p>本方案不增加账号登录步骤，不要求用户选择转换命令。账号盘、目录发现和平台后台运行沿用既有实现；不会因新增文档适配而重新实现挂载驱动。</p>
+<div class="tablewrap"><table><thead><tr><th>日常操作</th><th>用户感知</th><th>后台行为</th></tr></thead><tbody>
+<tr><td>查看目录</td><td>始终能看到已发现的文件名</td><td>刷新目录元数据，不先下载整个云盘</td></tr>
+<tr><td>打开文档 / grep 读取</td><td>获得实际正文，必要时等待加载</td><td>提供可用缓存或获取最新需要的正文；失败给出错误</td></tr>
+<tr><td>预览图片</td><td>图片按需出现</td><td>独立鉴权下载并缓存；不让正文因为图片失败整体消失</td></tr>
+<tr><td>保存支持的修改</td><td>正常保存；托盘显示待上传 / 已确认状态</td><td>先本地持久化，再执行差异与云端核验</td></tr>
+<tr><td>修改不支持的内容</td><td>草稿保留，明确指出具体限制</td><td>暂停本篇写回，保留远端原件</td></tr>
+<tr><td>发生可检测冲突</td><td>托盘计数增加，打开三方 diff</td><td>保存多方快照，处理后基于最新云端重新规划</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="safety"><h2>10. 状态、失败恢复与升级</h2>
+<div class="flow"><div class="userflow"><span>本机已保存</span><b>→</b><span>等待同步</span><b>→</b><span>读取与合并</span><b>→</b><span>发送操作</span><b>→</b><span>等待回读</span><b>→</b><span>云端已确认</span></div><p class="caption">旁路状态：需要合并、内容暂不支持、网络 / 权限阻塞、操作结果未知、本地发布待完成。它们不能被统一显示成“已同步”。</p></div>
+<ul>
+<li><strong>网络与权限失败：</strong>保留原文、缓存和本地草稿；失败不构成远端删除证据。未发送的请求可按分类重试，已发出的不确定变更进入复核。</li>
+<li><strong>连续多次本地保存：</strong>确认旧作业时不清理新代次；只有与投影候选一致的代次才能发布，防止“上传成功”覆盖刚写入的更新。</li>
+<li><strong>多操作中断：</strong>每步持久记录回读结果，重启后先核实未确认操作。不能把剩余计划建立在旧块 ID 上。</li>
+<li><strong>投影升级：</strong>增加 codecVersion 和侧车格式版本。干净文档可重新投影；脏文档保留旧基线和旧解释规则，不能静默用新投影替换它的比较基线。</li>
+<li><strong>清理缓存：</strong>只有确认无待上传、无冲突引用且不在使用中的正文可淘汰；升级不清空同步账本。</li>
+<li><strong>预览与脚本：</strong>复杂内容走受控渲染，保留可读信息；不直接执行远端嵌入脚本，不因预览加载任意外部资源。</li>
+</ul>
+</section>
+
+<section id="implementation"><h2>11. 与现有代码如何衔接</h2>
+<div class="tablewrap"><table><thead><tr><th>责任模块</th><th>复用 / 新增责任</th><th>不承担的责任</th></tr></thead><tbody>
+<tr><td><code>lib/larkcli</code><br><code>internal/bridge/cloud</code></td><td>复用托管身份、CLI 调用和结构化错误；增加素材读取适配及必要的细粒度更新契约</td><td>不决定自动合并，不把 CLI 成功当成整次同步确认</td></tr>
+<tr><td><code>internal/bridge/markdown</code></td><td>拆开可读投影与可写能力；增加嵌套节点、范围映射、反向差异与验证</td><td>不直接访问云端或提交作业；不悄悄丢弃未知结构</td></tr>
+<tr><td><code>internal/bridge/model</code><br><code>internal/bridge/store</code></td><td>扩展版本化映射、资源记录、基线关联和恢复状态；沿用不可变 blob 与操作账本</td><td>不执行网络请求，不用文件名代替账号与资源身份</td></tr>
+<tr><td><code>internal/bridge/sync</code></td><td>三方比较、能力检查、逐步写入、未知结果复核、读回确认</td><td>不整篇重导入，不自动绕过不支持类型</td></tr>
+<tr><td><code>internal/bridge/overlay</code><br><code>vfs</code></td><td>按需读取、资源虚拟路径、脏缓存和打开句柄保护、确认结果发布</td><td>不在 VFS Update 内悄悄完成另一套云端合并</td></tr>
+<tr><td><code>internal/bridge/manager</code><br><code>internal/bridge/ui</code></td><td>串联资源策略、状态、预览、能力说明与冲突处理</td><td>不让“确认合并”成为未知结构的强制覆盖入口</td></tr>
+</tbody></table></div>
+<h3>建议按四块实施</h3>
+<ol>
+<li><strong>读取补齐：</strong>正文、真实代码块、当前手册表格、图片按需读取；先消除不必要的整块占位。保留旧写回限制，不提前放开未适配写入。</li>
+<li><strong>整篇反向差异：</strong>编辑器实际改写 Markdown 后，正确识别多个独立变化、格式化、重复段落、表格嵌套及不支持区域；先只生成本地计划。</li>
+<li><strong>支持类型真实写回：</strong>在独立测试文档中验证普通文字、标准代码、表格内文字的逐步操作、回读及两端显示；每类单独开放能力。</li>
+<li><strong>协作、资源写入与恢复：</strong>双账号并发、超时结果未知、上传期间继续编辑、投影升级及缓存恢复；图片新增替换另列一批验收。</li>
+</ol>
+<p>验证遵循当前用户偏好：每个分块做有意义的小范围检查，模块完成后运行受影响模块的完整检查；不重复运行已验收且未受影响的安装、登录或其他平台流程。</p>
+</section>
+
+<section id="acceptance"><h2>12. 如何判定双向方案真的完成</h2>
+<div class="tablewrap"><table><thead><tr><th>验收项</th><th>通过条件</th><th>目前状态</th></tr></thead><tbody>
+<tr><td>A1 样本文字完整</td><td>全部正文与表格内命令可读取；空段落、原件保留；不生成无谓占位</td><td><span class="good">原型通过</span>；产品接入待完成</td></tr>
+<tr><td>A2 图片</td><td>4 张图片可鉴权获取、本地显示；失败、清理和再次打开行为明确</td><td><span class="good">下载与展示通过</span>；按需 VFS 生命周期待验证</td></tr>
+<tr><td>A3 真实代码块</td><td>真实 bash / Python 等样本的空格、Tab、空行、反引号、&lt; &gt; &amp;、CRLF / LF 与语言字段双向一致</td><td><span class="pending">补充样例通过；真实往返待验证</span></td></tr>
+<tr><td>A4 整篇反向定位</td><td>使用普通编辑器修改文档、保存后仅生成正确的目标操作；歧义时保留草稿并拒绝自动写</td><td><span class="pending">未验证</span></td></tr>
+<tr><td>A5 表格内文字写回</td><td>独立测试文档单元格文字变更成功；未目标表格、行列、资源与身份符合预期</td><td><span class="pending">本地补丁通过；真实接口待验证</span></td></tr>
+<tr><td>A6 三方合并</td><td>不同块变更保留双方；相同变更去重；矛盾、歧义和删除对修改进入人工处理</td><td><span class="pending">离线部分情况通过；双账号待验证</span></td></tr>
+<tr><td>A7 操作中断</td><td>发送后断网、应用退出或回读失败，重启不盲目重放；保留本地接受的修改</td><td><span class="pending">方案三真实链路待验证</span></td></tr>
+<tr><td>A8 升级与缓存</td><td>新旧投影、代次和 VFS 发布一致；待上传不被覆盖，清理后可重新读取</td><td><span class="pending">方案三待验证</span></td></tr>
+<tr><td>A9 图片写入</td><td>新增 / 替换资源绑定可确认，重复发送与失败不会产生静默错误</td><td><span class="pending">后续阶段，首版关闭</span></td></tr>
+</tbody></table></div>
+<div class="oknote"><strong>可以给出的承诺：</strong>按上述边界实现支持类型的双向同步；正文可读和原始信息保留分别成立；不支持的修改有明确状态和保留草稿。<br><strong>当前不能给出的承诺：</strong>所有在线文档无损往返、所有 Markdown 编辑器排版一致、图片 / 动态组件任意修改可回写、无服务端原子条件写时绝不发生并发覆盖。</div>
+</section>
+
+<section id="references"><h2>13. 来源与后续交接</h2>
+<ul class="sources">
+<li>本地真实样本：此前导出的《主备更新操作手册》原始 XML，版本 73，SHA-256 <code>59973668895469ae29a97be0c679ede2a8582d1aa2737cb8d976038d883b896a</code>。</li>
+<li>离线原型及证据：Downloads / DriveBridge-方案三最小验证 / 打开验证.html、验证结果.json、原始文档.xml、模拟修改.diff。样本原件与云端原文未修改。</li>
+<li>既有项目设计 <code>design.md</code> R-02、R-03、R-04、R-10，以及 <code>development.md</code>：普通文件身份、两端基线、尽力并发与能力门禁继续有效。</li>
+<li>现有实现：<code>internal/bridge/markdown/decode.go</code>、<code>merge.go</code>；<code>internal/bridge/sync/docx.go</code>；<code>lib/larkcli/docx.go</code>。现有流程已经逐操作回读；本方案扩展内容模型与投影，不另造上传引擎。</li>
+<li><a href="https://github.com/larksuite/cli/blob/main/skills/lark-doc/references/lark-doc-md.md?plain=1">官方 CLI Markdown 格式与转义说明</a>。官方支持 Markdown 输入输出不等于任意结构无损往返。</li>
+<li><a href="https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/document-block/batch_update">飞书块更新接口</a>；<a href="https://open.feishu.cn/document/server-docs/docs/drive-v1/media/download">素材下载接口</a>。最终能力以安装版本和真实账号验证为准。</li>
+<li>参考项目 <code>third_party/feishu-sync-desktop</code>（57b6734）：在线文档只读导出及原文跳转可作补充；不作为本地 Markdown 双向写回的证明。</li>
+</ul>
+<p>下一步应先实施“读取补齐”和“整篇反向差异”，再使用独立测试文档验证真实写回。正式能力矩阵必须随实际验收更新；本详细设计不改变当前安装应用行为。</p>
+<p class="tests" id="diagramCheck">正在检查流程图与演示</p>
+</section>
+</main></div>
+<script>
+'use strict';
+const scenarios=[
+{name:'只有本地修改',base:'命令：openresty -t',local:'命令：openresty -t && openresty -s reload',remote:'命令：openresty -t',decision:'自动同步支持的修改。无需人工合并；仍需写前检查和写后读回。',path:'本地持久保存 → 块定位 → 最新云端比较 → 最小补丁 → 读回确认',blocked:false},
+{name:'只有云端修改',base:'说明：等待 3 分钟',local:'说明：等待 3 分钟',remote:'说明：等待 5 分钟',decision:'本地无未上传修改，更新本地投影；保留打开句柄和缓存保护。',path:'远端刷新 → 本地干净检查 → 发布候选 → 更新显示',blocked:false},
+{name:'双方修改不同块',base:'块 A：等待 3 分钟\n块 B：检查服务',local:'块 A：等待 5 分钟\n块 B：检查服务',remote:'块 A：等待 3 分钟\n块 B：检查服务及日志',decision:'保留双方改动。仅把本地对块 A 的变化写入最新云端，保留云端块 B。',path:'B / L / R → 独立定位 → 合并计划 → 每步回读 → 更新投影',blocked:false},
+{name:'双方作相同修改',base:'等待 3 分钟',local:'等待 5 分钟',remote:'等待 5 分钟',decision:'去重，不重复写入；确认最新远端结果后推进两端基线。',path:'语义比较一致 → 远端确认 → 本地发布 / 检查代次',blocked:false},
+{name:'同段不相容修改',base:'等待 3 分钟',local:'等待 5 分钟',remote:'等待 10 分钟',decision:'保存三方内容和本地草稿，进入人工 diff。不能自动选择一方覆盖。',path:'冲突记录持久化 → 托盘提示 → 人工编辑 → 重新获取最新云端',blocked:true},
+{name:'不支持的结构修改',base:'表格结构：两行一列',local:'将单元格合并并移入图片',remote:'表格结构：两行一列',decision:'当前能力不支持该结构操作。草稿保留，暂停本篇写回；不能仅上传其中可理解的半篇。',path:'结构差异 → 能力检查不通过 → 明确位置与限制 → 保留草稿',blocked:true},
+{name:'云端删除且本地修改',base:'已有文档',local:'有未上传修改',remote:'文档已删除 / 移出同步范围',decision:'需要选择：保留本地版本并重新上传，或跟随云端删除。重新上传会创建新资源身份。',path:'证明远端缺失 → 检查本地变更 → 保存冲突 → 用户选择',blocked:true},
+{name:'请求发送后超时',base:'写前快照已保存',local:'期望修改已入账本',remote:'请求可能成功，也可能未生效',decision:'结果未知，先读回核实；不能仅因为超时就再次发送操作。',path:'发送记录 → UNKNOWN → 读取远端 → 确认 / 保留待处理',blocked:true}
+];
+const $=id=>document.getElementById(id);function show(i){const s=scenarios[i];for(const [id,key]of [['scenarioTitle','name'],['base','base'],['local','local'],['remote','remote'],['scenarioDecision','decision'],['scenarioPath','path']])$(id).textContent=s[key];$('scenarioDecision').className=s.blocked?'block':'';for(const b of $('choices').children)b.setAttribute('aria-pressed',String(Number(b.dataset.index)===i));}
+scenarios.forEach((s,i)=>{const b=document.createElement('button');b.textContent=s.name;b.dataset.index=i;b.setAttribute('aria-pressed','false');b.onclick=()=>show(i);$('choices').appendChild(b);});show(0);$('print').onclick=()=>window.print();
+const checks=[];const check=(name,fn)=>{try{checks.push({name,passed:!!fn()});}catch(e){checks.push({name,passed:false});}};
+check('全部目录锚点可达',()=>[...document.querySelectorAll('aside a')].every(a=>document.querySelector(a.getAttribute('href'))));
+check('八种场景可点击切换',()=>{for(let i=0;i<scenarios.length;i++){$('choices').children[i].click();if($('scenarioTitle').textContent!==scenarios[i].name)return false;}return true;});
+check('冲突场景显示阻塞',()=>{show(4);return $('scenarioDecision').classList.contains('block')&&$('scenarioDecision').textContent.includes('人工');});
+check('本地单方修改无需人工合并',()=>{show(0);return !$('scenarioDecision').classList.contains('block')&&$('scenarioDecision').textContent.includes('无需人工');});
+show(0);document.body.dataset.checksPassed=String(checks.every(c=>c.passed));$('diagramCheck').textContent='页面自检：'+checks.filter(c=>c.passed).length+'/'+checks.length+' 通过。交互场景仅解释设计规则，不执行文档修改。';
+</script>
+</body></html>

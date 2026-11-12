@@ -451,7 +451,17 @@ func (h *harness) open() {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	h.engine, err = syncer.New(syncer.Dependencies{Store: h.store, Source: engineSource{h.cloud}, Publisher: syncer.PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
+	deletionCommit := func(ctx context.Context, entry model.Entry, commit func() (bool, error)) error {
+		return h.vfs.TryExternalReconcile(ctx, entry.Remote, func() (fs.Object, error) {
+			removed, err := commit()
+			if err != nil || removed {
+				return nil, err
+			}
+			return h.overlay.NewObject(ctx, entry.Remote)
+		})
+	}
+	h.overlay.SetDeletionCommit(deletionCommit)
+	h.engine, err = syncer.New(syncer.Dependencies{DeletionCommit: deletionCommit, Store: h.store, Source: engineSource{h.cloud}, Publisher: syncer.PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
 		entry, err := h.store.Entry(ctx, c.EntryID)
 		if err != nil {
 			return err

@@ -47,8 +47,9 @@ func (s *Store) ConfigureNamespaceKind(ctx context.Context, id string, kind mode
 	})
 }
 
-// EntryByToken includes tombstones so a stale cloud listing cannot resurrect a
-// deleted resource or allocate a second local identity after a local rename.
+// EntryByToken includes explicit local-delete tombstones so a stale listing
+// cannot resurrect a deleted resource or allocate a second local identity after
+// a rename. Remote-absence tombstones release their token binding instead.
 func (s *Store) EntryByToken(ctx context.Context, token string) (out model.Entry, err error) {
 	if token == "" {
 		return out, ErrNotFound

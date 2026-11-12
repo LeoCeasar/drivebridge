@@ -28,7 +28,7 @@ func TestSafeSaveBackupCannotDispatchBeforeDurableReplacement(t *testing.T) {
 	if err = e.cycle(bg); !errors.Is(err, store.ErrSafeSavePending) {
 		t.Fatal("backup rename was not visibly pending", err)
 	}
-	if cloud.writes != 0 || len(cloud.items) != 0 {
+	if cloud.writes != 0 || len(cloud.items) != 1 || cloud.items[0].Token != entry.Token {
 		t.Fatal("pending backup changed cloud", cloud.writes, cloud.items)
 	}
 	restored, resumed, err := s.ResumeSafeSave(bg, entry.Remote, model.KindFile)
@@ -43,7 +43,7 @@ func TestSafeSaveBackupCannotDispatchBeforeDurableReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := s.Entry(bg, entry.ID)
-	if err != nil || current.ID != entry.ID || current.Token != entry.Token || current.Status != model.StatusSynced || cloud.writes != 1 || len(cloud.items) != 0 {
+	if err != nil || current.ID != entry.ID || current.Token != entry.Token || current.Status != model.StatusSynced || cloud.writes != 1 || len(cloud.items) != 1 || cloud.items[0].Token != entry.Token {
 		t.Fatalf("replacement did not overwrite same token: %+v writes=%d creates=%+v err=%v", current, cloud.writes, cloud.items, err)
 	}
 	if cloud.uploadedName != "note.md" || string(cloud.file) != "new complete bytes" {

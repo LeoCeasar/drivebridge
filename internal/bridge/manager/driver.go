@@ -113,7 +113,7 @@ func trustedGrants(path string) ([]cloud.CapabilityGrant, string, error) {
 	}
 	out := []cloud.CapabilityGrant{}
 	for _, kind := range []string{model.OperationBlockReplace, model.OperationBlockInsertAfter, model.OperationBlockDelete} {
-		out = append(out, cloud.CapabilityGrant{Descriptor: model.OperationCapability{ID: "feishu-cli-1.0.99-" + kind, Kind: kind, Route: cloud.ShortcutXMLRoute}, CLISourceRevision: cloud.CLIRevision, Evidence: "protocol-live:darwin-arm64/2026-11-10-xml-subset-prepend0;official-release:1.0.99;binary-vcs:" + officialCLIBinaryVCS + ";inspected-source:" + cloud.InspectedSourceRevision + ";upstream-sha256:" + officialCLIHashes[platform] + ";artifact-sha256:" + sum + ";native-platform-not-verified", Verified: true})
+		out = append(out, cloud.CapabilityGrant{Descriptor: model.OperationCapability{ID: "feishu-cli-1.0.99-" + kind, Kind: kind, Route: cloud.ShortcutXMLRoute}, CLISourceRevision: cloud.CLIRevision, Evidence: "protocol-live:darwin-arm64/2026-11-10-xml-subset-prepend0;protocol-live:darwin-arm64/2026-11-12-scheme3-nested-paragraph-and-code;official-release:1.0.99;binary-vcs:" + officialCLIBinaryVCS + ";inspected-source:" + cloud.InspectedSourceRevision + ";upstream-sha256:" + officialCLIHashes[platform] + ";artifact-sha256:" + sum + ";native-platform-not-verified", Verified: true})
 	}
 	return out, sum, nil
 }

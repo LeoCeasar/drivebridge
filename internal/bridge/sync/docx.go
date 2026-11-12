@@ -51,7 +51,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		if err != nil {
 			return err
 		}
-		after, v, err := e.fetchDoc(ctx, en.Token)
+		after, v, err := e.fetchDocProjection(ctx, en.Token, before.ProjectionVersion)
 		if err != nil {
 			_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 			return err
@@ -78,6 +78,13 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		if err != nil {
 			return err
 		}
+		var baseRemote model.DocView
+		if j.BaseRemote != "" {
+			_, baseRemote, err = e.loadDoc(ctx, j.BaseRemote)
+			if err != nil {
+				return e.pause(ctx, j, err)
+			}
+		}
 		// After a verified partial patch, rebase the remaining desired content on its
 		// readback rather than trying to apply the original local edit twice.
 		if len(journal.Operations) > 0 {
@@ -90,18 +97,23 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 				return err
 			}
 			base = prior.Markdown
+			baseRemote = prior
 			local, err = e.read(ctx, journal.Desired)
 			if err != nil {
 				return err
 			}
 		}
-		sn, current, err := e.fetchDoc(ctx, en.Token)
+		sn, current, err := e.fetchDocProjection(ctx, en.Token, baseRemote.ProjectionVersion)
 		if err != nil {
-			return e.pause(ctx, j, err)
+			checked := e.deletionAfterReadFailure(ctx, en, err)
+			if errors.Is(checked, model.ErrVersionChanged) {
+				return checked
+			}
+			return e.pause(ctx, j, checked)
 		}
-		merge, err := markdown.PlanStep(base, local, current)
+		merge, err := markdown.PlanStepWithBase(base, local, baseRemote, current)
 		if journal.HumanResolution {
-			merge, err = markdown.PlanResolvedStep(base, local, current)
+			merge, err = markdown.PlanResolvedStepWithBase(base, local, baseRemote, current)
 		}
 		if err != nil {
 			return e.pause(ctx, j, err)
@@ -110,7 +122,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			return e.conflict(ctx, j, sn, merge.ConflictReason)
 		}
 		// A fresh recheck still is not CAS. It narrows the last check/write window.
-		check, checked, err := e.fetchDoc(ctx, en.Token)
+		check, checked, err := e.fetchDocProjection(ctx, en.Token, current.ProjectionVersion)
 		if err != nil {
 			return e.pause(ctx, j, err)
 		}
@@ -168,7 +180,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		if applyErr != nil {
 			_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 		}
-		actual, view, err := e.fetchDoc(ctx, en.Token)
+		actual, view, err := e.fetchDocProjection(ctx, en.Token, current.ProjectionVersion)
 		if err != nil {
 			_ = e.store.MarkUnknown(context.WithoutCancel(ctx), j.ID)
 			return errors.Join(applyErr, err)

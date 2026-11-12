@@ -862,6 +862,9 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 	managedVFS := f.d.vfs
 	f.mu.RUnlock()
 	if m := managedVFS.managed.Load(); m != nil {
+		if e := managedVFS.validateManagedOpen(f.ctx, f.Path(), rdwrMode != os.O_RDONLY || flags&(os.O_TRUNC|os.O_CREATE) != 0); e != nil {
+			return nil, e
+		}
 		a, e := m.admit(f.Path(), rdwrMode != os.O_RDONLY || flags&(os.O_TRUNC|os.O_CREATE) != 0, false)
 		if e != nil {
 			return nil, e

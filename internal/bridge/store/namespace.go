@@ -420,6 +420,9 @@ func (s *Store) CommitNamespace(ctx context.Context, id string) (out model.Entry
 				if er = supersedeQueued(tx, e.ID); er != nil {
 					return er
 				}
+				if er = resolveEntryConflicts(tx, e.ID); er != nil {
+					return er
+				}
 				if er = tombstone(tx, e); er != nil {
 					return er
 				}

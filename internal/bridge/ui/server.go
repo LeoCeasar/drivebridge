@@ -54,6 +54,7 @@ func respondError(w http.ResponseWriter, status int, code string) {
 	messages["mount_not_running"] = "挂载尚未运行，请先启动挂载。"
 	messages["folder_unavailable"] = "无法找到挂载目录，请确认挂载正在运行。"
 	messages["no_desktop"] = "当前环境无法打开文件管理器，请手动打开挂载位置。"
+	messages["unsupported_content"] = "此内容暂不支持安全提交，草稿已保留。请检查文件格式或文档结构。"
 	messages["mount_archived"] = "此挂载已移除，请先恢复挂载配置，再启动同步。"
 	messages["mount_in_use"] = "暂时不能移除：请先关闭正在使用该挂载的文件，等待本机写入完成后重试；已有数据会保留。"
 	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"
@@ -380,6 +381,9 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			return
 		}
 		v := ConflictView{Hunks: []DiffHunk{}, Stale: in.Stale, RefreshWarning: safeCode(in.RefreshWarning), HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
+		v.Reason = in.Conflict.Reason
+		v.RemoteDeleted = in.Conflict.Reason == model.ConflictRemoteDeleted
+		v.LocalDeletePending = in.Conflict.Reason == model.ConflictLocalDeletePending
 		_, v.CanExportCopies = h.backend.(ConflictExporter)
 		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
 			v.Base = string(in.Base)
@@ -453,11 +457,8 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			return
 		}
 		timing := newServerTiming()
-		if err := h.backend.SaveDraft(r.Context(), cid, in.Content); err != nil {
-			apiError(w, err)
-			return
-		}
-		timing.mark("draft")
+		// Version checks read the stored conflict only; the single cloud recheck
+		// happens inside Resolve, so a batch does not pay for extra cloud reads.
 		readVersions := h.backend.Conflict
 		if reader, ok := h.backend.(ResolveVersionReader); ok {
 			readVersions = reader.ConflictForResolve
@@ -466,6 +467,35 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		if err != nil {
 			apiError(w, err)
 			return
+		}
+		reason := current.Conflict.Reason
+		deleted := reason == model.ConflictRemoteDeleted || reason == model.ConflictLocalDeletePending
+		if (deleted && in.Action != model.ResolveRestoreLocal && in.Action != model.ResolveAcceptDelete) || (!deleted && in.Action != "") {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		// A deletion decision may retain a binary blob without supplying content.
+		// Following deletion must never replace a meaningful saved draft with nil.
+		save := !deleted || (in.Action == model.ResolveRestoreLocal && in.Content != nil)
+		if deleted && save && (!current.Text || !utf8.Valid(in.Content)) {
+			respondError(w, 422, "unsupported_content")
+			return
+		}
+		if save {
+			if err := h.backend.SaveDraft(r.Context(), cid, in.Content); err != nil {
+				apiError(w, err)
+				return
+			}
+			timing.mark("draft")
+			current, err = readVersions(r.Context(), cid)
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			if current.Conflict.Reason != reason {
+				respondError(w, 409, "version_changed")
+				return
+			}
 		}
 		timing.mark("check")
 		if current.Conflict.EntryID != current.Entry.ID || current.Conflict.Generation != in.ExpectedGeneration || current.Entry.Generation != in.ExpectedGeneration || current.Conflict.RemoteRevision != in.ExpectedRemoteRevision {
@@ -476,7 +506,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 503, "refresh_required")
 			return
 		}
-		if !current.Text || !utf8.Valid(in.Content) {
+		if (!deleted || save) && (!current.Text || !utf8.Valid(in.Content)) {
 			respondError(w, 422, "unsupported_content")
 			return
 		}

@@ -82,18 +82,40 @@ if ! $DB_UNSIGNED; then
   xcrun stapler staple "$DB_ARTIFACTS/$DB_NAME.pkg"
   xcrun stapler validate "$DB_ARTIFACTS/$DB_NAME.pkg"
 fi
-mkdir "$DB_WORK/dmg"
-ln "$DB_ARTIFACTS/$DB_NAME.pkg" "$DB_WORK/dmg/"
+if $DB_DESKTOP; then
+  # The graphical entry owns the installation lease through the complete copy.
+  # Do not expose a raw pkg as the default double-click path: its preinstall
+  # verifier deliberately rejects detached, uncoordinated replacement.
+  DB_SWIFT_ARCH="$DB_ARCH"
+  if [ "$DB_SWIFT_ARCH" = amd64 ]; then DB_SWIFT_ARCH=x86_64; fi
+  xcrun swiftc -swift-version 6 -O -target "$DB_SWIFT_ARCH-apple-macos14.0" \
+    "$DB_REPO/native/macos-installer/InstallerCore.swift" "$DB_REPO/native/macos-installer/Launcher.swift" -o "$DB_WORK/drivebridge-launcher"
+  xcrun swiftc -swift-version 6 -O -target "$DB_SWIFT_ARCH-apple-macos14.0" \
+    "$DB_REPO/native/macos-installer/InstallerCore.swift" "$DB_REPO/native/macos-installer/Installer.swift" -o "$DB_WORK/drivebridge-installer"
+  python3 "$DB_HERE/macos_app.py" assemble --payload "$DB_PAYLOAD" --launcher "$DB_WORK/drivebridge-launcher" \
+    --installer "$DB_WORK/drivebridge-installer" --version "$DB_VERSION" --output "$DB_WORK/dmg"
+  if ! $DB_UNSIGNED; then
+    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_WORK/dmg/安装 DriveBridge.app/Contents/Resources/DriveBridge.app"
+    codesign --verify --deep --strict "$DB_WORK/dmg/安装 DriveBridge.app/Contents/Resources/DriveBridge.app"
+    python3 "$DB_HERE/macos_app.py" inventory --app "$DB_WORK/dmg/安装 DriveBridge.app/Contents/Resources/DriveBridge.app" \
+      --output "$DB_WORK/dmg/安装 DriveBridge.app/Contents/Resources/application-files.json"
+    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_WORK/dmg/安装 DriveBridge.app"
+    codesign --verify --deep --strict "$DB_WORK/dmg/安装 DriveBridge.app"
+  fi
+else
+  mkdir "$DB_WORK/dmg"
+  ln "$DB_ARTIFACTS/$DB_NAME.pkg" "$DB_WORK/dmg/"
+fi
 # hdiutil's automatic estimate can create an image too small for the package
 # (the copy fails with ENOSPC inside /Volumes/DriveBridge despite host space).
 # Reserve logical package size plus filesystem metadata and do not hide errors.
-DB_DMG_MIB="$(python3 - "$DB_ARTIFACTS/$DB_NAME.pkg" <<'PYDMG'
+DB_DMG_MIB="$(python3 - "$DB_WORK/dmg" <<'PYDMG'
 from pathlib import Path
 import sys
-print((Path(sys.argv[1]).stat().st_size + 1048575) // 1048576 + 64)
+print((sum(p.stat().st_size for p in Path(sys.argv[1]).rglob('*') if p.is_file()) + 1048575) // 1048576 + 64)
 PYDMG
 )"
-hdiutil create -size "${DB_DMG_MIB}m" -fs HFS+ -volname DriveBridge -srcfolder "$DB_WORK/dmg" -format UDZO "$DB_ARTIFACTS/$DB_NAME.dmg"
+hdiutil create -size "${DB_DMG_MIB}m" -fs HFS+ -volname "DriveBridge $DB_VERSION" -srcfolder "$DB_WORK/dmg" -format UDZO "$DB_ARTIFACTS/$DB_NAME.dmg"
 if ! $DB_UNSIGNED; then
   codesign --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_ARTIFACTS/$DB_NAME.dmg"
   xcrun notarytool submit "$DB_ARTIFACTS/$DB_NAME.dmg" --keychain-profile "$DRIVEBRIDGE_NOTARY_PROFILE" --wait

@@ -1054,6 +1054,9 @@ func (d *Dir) Open(flags int) (fd Handle, err error) {
 
 // Create makes a new file node
 func (d *Dir) Create(name string, flags int) (*File, error) {
+	if err := d.vfs.validateManagedOpen(d.vfs.ctx, path.Join(d.Path(), name), true); err != nil {
+		return nil, err
+	}
 	if m := d.vfs.managed.Load(); m != nil {
 		r, e := m.reserve([]string{path.Join(d.Path(), name)}, true)
 		if e != nil {

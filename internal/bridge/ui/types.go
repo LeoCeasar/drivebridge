@@ -103,6 +103,9 @@ type DiffHunk struct {
 }
 
 type ConflictView struct {
+	Reason                     string           `json:"reason"`
+	RemoteDeleted              bool             `json:"remote_deleted"`
+	LocalDeletePending         bool             `json:"local_delete_pending"`
 	Stale                      bool             `json:"stale"`
 	RefreshWarning             string           `json:"refresh_warning,omitempty"`
 	CanExportCopies            bool             `json:"can_export_copies"`

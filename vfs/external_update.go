@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -21,6 +22,28 @@ var ErrManagedSyncDisabled = errors.New("managed sync disabled")
 // cache. Attribute queries do not count as body use.
 type ManagedAccessTracker interface {
 	TouchManagedAccess(context.Context, string) error
+}
+
+// ManagedOpenValidator rejects per-path write intent before materialization,
+// cache mutation or creation. It is optional and used only in managed mode.
+// Implementations must perform local validation without network or cache I/O.
+type ManagedOpenValidator interface {
+	ValidateManagedOpen(context.Context, string, bool) error
+}
+
+func (v *VFS) validateManagedOpen(ctx context.Context, remote string, write bool) error {
+	if v.managed.Load() == nil {
+		return nil
+	}
+	validator, ok := v.f.(ManagedOpenValidator)
+	if !ok {
+		return nil
+	}
+	err := validator.ValidateManagedOpen(ctx, remote, write)
+	if errors.Is(err, fs.ErrorPermissionDenied) || errors.Is(err, os.ErrPermission) {
+		return EPERM
+	}
+	return err
 }
 
 // ManagedMaterializer binds an unknown-size object to one complete local snapshot.
@@ -176,6 +199,17 @@ func (v *VFS) ManagedSyncEnabled() bool { return v.managed.Load() != nil }
 // TryExternalUpdate reserves the path before checking its cache. commit must only
 // publish already prepared local metadata: no network, VFS recursion or blob copy.
 func (v *VFS) TryExternalUpdate(ctx context.Context, remote string, commit func() (fs.Object, error)) error {
+	return v.tryExternalUpdate(ctx, remote, commit, false)
+}
+
+// TryExternalReconcile uses the same open/dirty-file admission barrier as
+// publication, but a nil object represents a committed remote deletion.
+// commit must be local-only and must retain local edits on a failed CAS.
+func (v *VFS) TryExternalReconcile(ctx context.Context, remote string, commit func() (fs.Object, error)) error {
+	return v.tryExternalUpdate(ctx, remote, commit, true)
+}
+
+func (v *VFS) tryExternalUpdate(ctx context.Context, remote string, commit func() (fs.Object, error), allowRemoval bool) error {
 	m := v.managed.Load()
 	if m == nil {
 		return ErrManagedSyncDisabled
@@ -205,6 +239,13 @@ func (v *VFS) TryExternalUpdate(ctx context.Context, remote string, commit func(
 		return e
 	}
 	if o == nil {
+		if allowRemoval {
+			parent, leaf := path.Split(name)
+			if d := v.root.cachedDir(strings.TrimSuffix(parent, "/")); d != nil {
+				d.delObject(leaf)
+			}
+			return nil
+		}
 		return fmt.Errorf("managed publication returned nil object")
 	}
 	// A successful local commit must reach the live inode even after cancellation.

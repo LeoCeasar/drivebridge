@@ -24,10 +24,14 @@ func (e *Engine) read(ctx context.Context, id model.BlobID) ([]byte, error) {
 	return io.ReadAll(r)
 }
 func (e *Engine) saveDoc(ctx context.Context, d cloud.Document) (model.Snapshot, model.DocView, error) {
+	return e.saveDocProjection(ctx, d, 0)
+}
+
+func (e *Engine) saveDocProjection(ctx context.Context, d cloud.Document, version int) (model.Snapshot, model.DocView, error) {
 	if d.Token == "" || d.Revision == "" || len(d.Warnings) > 0 {
 		return model.Snapshot{}, model.DocView{}, model.ErrUnsupportedContent
 	}
-	v, err := markdown.DecodeWithOptions(d.XML, d.Revision, markdown.Options{SourceURL: d.SourceURL, ReferenceMap: d.ReferenceMap})
+	v, err := markdown.DecodeWithOptions(d.XML, d.Revision, markdown.Options{ProjectionVersion: version, SourceURL: d.SourceURL, ReferenceMap: d.ReferenceMap})
 	if err != nil {
 		return model.Snapshot{}, v, err
 	}
@@ -39,7 +43,7 @@ func (e *Engine) saveDoc(ctx context.Context, d cloud.Document) (model.Snapshot,
 	if err != nil {
 		return model.Snapshot{}, v, err
 	}
-	side, err := json.Marshal(model.DocSidecar{Blocks: v.Blocks, SourceURL: v.SourceURL, ReferenceMap: v.ReferenceMap})
+	side, err := json.Marshal(model.DocSidecar{ProjectionVersion: v.ProjectionVersion, Assets: v.Assets, Blocks: v.Blocks, SourceURL: v.SourceURL, ReferenceMap: v.ReferenceMap})
 	if err != nil {
 		return model.Snapshot{}, v, err
 	}
@@ -67,15 +71,52 @@ func (e *Engine) loadDoc(ctx context.Context, id model.SnapshotID) (model.Snapsh
 	if json.Unmarshal(side, &b) != nil {
 		return sn, model.DocView{}, model.ErrUnsupportedContent
 	}
-	v, err := markdown.DecodeWithOptions(x, sn.Revision, markdown.Options{SourceURL: b.SourceURL, ReferenceMap: b.ReferenceMap})
+	// Missing version denotes the original projection. A pending job must keep
+	// its original interpretation rather than silently acquiring new syntax.
+	version := b.ProjectionVersion
+	if version == 0 {
+		version = 1
+	}
+	if version != 1 && version != 2 {
+		return sn, model.DocView{}, model.ErrUnsupportedContent
+	}
+	v, err := markdown.DecodeWithOptions(x, sn.Revision, markdown.Options{ProjectionVersion: version, SourceURL: b.SourceURL, ReferenceMap: b.ReferenceMap})
+	if err != nil {
+		return sn, v, err
+	}
+	stored, err := e.read(ctx, sn.Markdown)
+	if err != nil {
+		return sn, v, err
+	}
+	if !bytes.Equal(stored, v.Markdown) {
+		return sn, v, model.ErrUnsupportedContent
+	}
 	return sn, v, err
 }
 func (e *Engine) fetchDoc(ctx context.Context, token string) (model.Snapshot, model.DocView, error) {
+	return e.fetchDocProjection(ctx, token, 0)
+}
+
+func (e *Engine) fetchDocProjection(ctx context.Context, token string, version int) (model.Snapshot, model.DocView, error) {
 	d, err := e.source.FetchDoc(ctx, token, "")
 	if err != nil {
 		return model.Snapshot{}, model.DocView{}, err
 	}
-	return e.saveDoc(ctx, d)
+	return e.saveDocProjection(ctx, d, version)
+}
+
+// Conflict review and resolution use the pending entry's interpretation. A
+// clean refresh may migrate projection versions, but never the draft's baseline.
+func (e *Engine) fetchEntryDoc(ctx context.Context, entry model.Entry) (model.Snapshot, model.DocView, error) {
+	version := 0
+	if entry.RemoteCheckpoint != "" {
+		_, prior, err := e.loadDoc(ctx, entry.RemoteCheckpoint)
+		if err != nil {
+			return model.Snapshot{}, model.DocView{}, err
+		}
+		version = prior.ProjectionVersion
+	}
+	return e.fetchDocProjection(ctx, entry.Token, version)
 }
 func (e *Engine) observeFile(ctx context.Context, token string) (model.Snapshot, error) {
 	o, err := e.source.ObserveFile(ctx, token)

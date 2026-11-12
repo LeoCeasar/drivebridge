@@ -23,6 +23,20 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 		if er != nil {
 			return er
 		}
+		// Local admission may recreate a deleted name immediately, but its
+		// cloud creation must wait for the predecessor delete's durable
+		// acknowledgment. Finished local namespace work can still be UNKNOWN.
+		if er = each[namespaceRecord](tx, "namespace", func(r namespaceRecord) error {
+			if r.Op.Kind == "delete" && (r.ActionPending || r.Dispatched) && r.Op.Src != "" && overlaps(r.Op.Src, e.Remote) {
+				if r.Dispatched {
+					return model.ErrUnknownResult
+				}
+				return ErrBusy
+			}
+			return nil
+		}); er != nil {
+			return er
+		}
 		found := false
 		if er := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
 			if op.JobID == jobID && op.State != "not_dispatched" {

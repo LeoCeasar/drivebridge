@@ -171,12 +171,12 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 		var fetchErr error
 		sn, _, fetchErr = e.fetchDoc(ctx, en.Token)
 		if fetchErr != nil {
-			return fetchErr
+			return e.deletionAfterReadFailure(ctx, en, fetchErr)
 		}
 	} else if en.Kind == model.KindFile {
 		sn, err = e.observeFile(ctx, en.Token)
 		if err != nil {
-			return err
+			return e.deletionAfterReadFailure(ctx, en, err)
 		}
 	} else {
 		return nil
@@ -186,7 +186,7 @@ func (e *Engine) RefreshEntry(ctx context.Context, id model.EntryID) error {
 		if err != nil {
 			return err
 		}
-		if en.Kind == model.KindDocx && sn.Revision == prior.Revision {
+		if en.Kind == model.KindDocx && sn.Revision == prior.Revision && sn.Markdown == prior.Markdown && sn.BlockMap == prior.BlockMap {
 			return nil
 		}
 		if en.Kind == model.KindFile && sn.FileData == prior.FileData {

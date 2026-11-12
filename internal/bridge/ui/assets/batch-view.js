@@ -6,17 +6,19 @@
   // single lock, so a busy account can make it much slower. slowMs only flags the wait; stallMs stops
   // blocking the rest of the batch and the controls, while the request keeps running and its late answer
   // is still applied. No file may stay in "submitting" forever.
+  const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
   const defaults = {slowMs:10000,stallMs:90000};
   function createQueue(options = {}) {
     const {slowMs,stallMs} = {...defaults,...options};
     const records = new Map(); let running = false, chain = Promise.resolve();
     // A request that gave up waiting (detach) must not hold back later saves and submissions.
     const serial = (task, detach) => { const result = chain.catch(() => {}).then(task); chain = (detach ? Promise.race([result,detach]) : result).catch(() => {}); return result; };
-    function sync(summaries = []) {
-      for (const r of records.values()) r.present = false;
+    function sync(summaries = [], partial = false) {
+      if (!partial) for (const r of records.values()) r.present = false;
       for (const summary of summaries) {
         let r = records.get(summary.id);
         if (!r) { r = {id:summary.id,name:summary.name,selected:false,status:'unreviewed',present:true}; records.set(r.id,r); }
+        if (r.status === 'resolved') { r.status = r.input ? 'needs_refresh' : 'unreviewed'; r.reviewRequired = Boolean(r.input); }
         r.name = summary.name; r.present = true;
         // The list showed it again, so the earlier inferred acceptance was wrong.
         if (r.inferred && r.status === 'queued') { r.status = 'failed'; r.inferred = false; r.selected = false; r.error = '云端列表中仍有此文件，上次提交没有被确认，草稿已保留，可重试。'; }
@@ -24,7 +26,11 @@
       // A request that outlived its wait and whose conflict has left the server list was accepted.
       for (const r of records.values()) if (!r.present && r.outcomeUnknown) { r.status = 'queued'; r.inferred = true; r.outcomeUnknown = false; r.slow = false; r.selected = false; r.error = ''; r.newerDraft = r.seq !== r.attemptSeq; }
       // Preserve edited files and submission outcomes even after they leave the server list.
-      for (const [id,r] of records) if (!r.present && !r.input && r.status === 'unreviewed') records.delete(id);
+      for (const [id,r] of records) if (!r.present) {
+        r.selected = false;
+        if (!r.input && r.status === 'unreviewed') records.delete(id);
+        else if (!['queued','submitting'].includes(r.status)) r.status = 'resolved';
+      }
     }
     function load(input, cached) {
       let r = records.get(input.id);
@@ -37,24 +43,27 @@
         }
         records.set(r.id,r);
       } else {
-        const changed = !sameVersion(r.intent,version(input)) || ['Base','Local','Remote'].some(side => r.input[side] !== input[side]);
+        const changed = !sameVersion(r.intent,version(input)) || r.input.remote_deleted !== input.remote_deleted || r.input.local_delete_pending !== input.local_delete_pending || ['Base','Local','Remote'].some(side => r.input[side] !== input[side]);
         r.reviewRequired = r.reviewRequired || changed || input.stale || input.blocked || r.status === 'needs_refresh';
         r.input = input; r.name = input.name;
         if (changed) { r.manual = true; r.choices = new Map(); }
       }
       if (r.reviewRequired) r.status = 'needs_refresh';
-      if (!input.text || input.blocked) r.status = 'blocked';
+      if ((!input.text && !deletionDecision(input)) || input.blocked) r.status = 'blocked';
+      if (deletionDecision(input)) r.selected = false;
       return r;
     }
-    function canSubmit(r) { return Boolean(r?.input?.text && !r.input.stale && !r.input.blocked && !r.reviewRequired && r.status !== 'queued' && r.status !== 'submitting'); }
+    function actionable(r) { return Boolean(r?.present && r.input && !r.input.stale && !r.input.blocked && !r.reviewRequired && !['queued','submitting','resolved'].includes(r.status)); }
+    function canSubmit(r) { return Boolean(actionable(r) && r.input.text && !deletionDecision(r.input)); }
+    function canDecide(r) { return Boolean(actionable(r) && deletionDecision(r.input)); }
     function select(id, selected) { const r = records.get(id); if (!r || running || (selected && !canSubmit(r))) return false; r.selected = selected; return true; }
-    function edit(id,text) { const r = records.get(id); if (!r?.input?.text) return; r.text = text; r.seq++; if (!['queued','submitting','needs_refresh'].includes(r.status)) r.status = 'draft'; }
-    function review(id) { const r = records.get(id); if (!r?.input?.text || r.input.stale || r.input.blocked || running || r.status === 'queued') return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
+    function edit(id,text) { const r = records.get(id); if (!r?.input?.text || r.status === 'resolved') return; r.text = text; r.seq++; if (!['queued','submitting','needs_refresh'].includes(r.status)) r.status = 'draft'; }
+    function review(id) { const r = records.get(id); if (!r?.present || (!r.input?.text && !deletionDecision(r.input)) || r.input.stale || r.input.blocked || running || ['queued','resolved'].includes(r.status)) return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
     function snapshot(r) { return {id:r.id,text:r.text,seq:r.seq,intent:{...r.intent}}; }
     function saved(r,s) { if (r.seq === s.seq) r.savedSeq = s.seq; }
     async function save(id,io) {
       // An abandoned request may still be about to save this file's draft; a second writer could be overwritten by it.
-      const r = records.get(id); if (!r?.input?.text || r.status === 'queued' || r.pending > 0) return false;
+      const r = records.get(id); if (!r?.present || !r.input?.text || ['queued','resolved'].includes(r.status) || r.pending > 0) return false;
       const s = snapshot(r);
       await serial(async () => { await io.save(s); saved(r,s); });
       return true;
@@ -98,7 +107,24 @@
       finally { running = false; onChange(); }
       return true;
     }
-    return {records,sync,load,canSubmit,select,edit,review,save,submit,get running() { return running; }};
+    async function decide(id,action,io,onChange = () => {}) {
+      const r = records.get(id);
+      if (running || !canDecide(r) || !['restore_local','accept_delete'].includes(action)) return false;
+      const s = {...snapshot(r),action,text:action === 'restore_local' && r.input.text ? r.text : undefined};
+      running = true; r.status = 'submitting'; r.error = ''; onChange(r);
+      try {
+        await serial(async () => { if (s.text !== undefined) { await io.save(s); saved(r,s); } await io.resolve(s); });
+        if (action === 'accept_delete') saved(r,s);
+        r.decision = action;
+        r.status = 'queued'; r.selected = false; r.newerDraft = r.seq !== s.seq;
+      } catch (e) {
+        const refresh = e.status === 409 || e.code === 'refresh_required';
+        r.status = refresh ? 'needs_refresh' : 'failed'; r.error = e.message;
+        if (refresh) { r.reviewRequired = true; r.input.stale = true; r.input.refresh_warning = e.status === 409 ? 'version_changed' : 'worker_unavailable'; }
+      } finally { running = false; onChange(r); }
+      return true;
+    }
+    return {records,sync,load,canSubmit,canDecide,select,edit,review,save,submit,decide,get running() { return running; }};
   }
   const api = {createQueue};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

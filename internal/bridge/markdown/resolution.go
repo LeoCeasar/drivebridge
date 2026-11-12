@@ -33,7 +33,7 @@ func PlanResolvedStep(base, local []byte, remote model.DocView) (model.MergeResu
 	if !bytes.Equal(base, remote.Markdown) {
 		return result, nil
 	}
-	fresh, err := DecodeWithOptions(remote.XML, remote.Revision, Options{SourceURL: remote.SourceURL, ReferenceMap: remote.ReferenceMap})
+	fresh, err := DecodeWithOptions(remote.XML, remote.Revision, Options{ProjectionVersion: remote.ProjectionVersion, SourceURL: remote.SourceURL, ReferenceMap: remote.ReferenceMap})
 	if err != nil {
 		return fail()
 	}
