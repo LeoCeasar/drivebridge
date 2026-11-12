@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/rclone/rclone/cmd/mountlib"
@@ -22,6 +24,8 @@ type metadataTestFS struct {
 	mu       sync.Mutex
 	hydrated map[string]int
 	opened   map[string]int
+	// failMaterialize, when set, makes MaterializeManaged fail.
+	failMaterialize error
 }
 type metadataTestObject struct {
 	fs.Object
@@ -64,6 +68,12 @@ func (f *metadataTestFS) NewObject(ctx context.Context, name string) (fs.Object,
 	return f.object(object), nil
 }
 func (f *metadataTestFS) MaterializeManaged(ctx context.Context, name string) (fs.Object, error) {
+	f.mu.Lock()
+	failure := f.failMaterialize
+	f.mu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
 	object, err := f.Fs.NewObject(ctx, name)
 	if err != nil {
 		return nil, err
@@ -78,6 +88,14 @@ func (f *metadataTestFS) counts(name string) (int, int) {
 	defer f.mu.Unlock()
 	return f.hydrated[name], f.opened[name]
 }
+// setMaterializeOnGetattr overrides the platform default for one test.
+func setMaterializeOnGetattr(t *testing.T, value bool) {
+	t.Helper()
+	old := materializeOnGetattr
+	materializeOnGetattr = value
+	t.Cleanup(func() { materializeOnGetattr = old })
+}
+
 func metadataFixture(t *testing.T) (*FS, *metadataTestFS, map[string]string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -110,6 +128,7 @@ type metadataOnlyHandle struct {
 func (h *metadataOnlyHandle) Node() vfs.Node { return h.node }
 
 func TestManagedMetadataReaddirAndGetattrDoNotReadBodies(t *testing.T) {
+	setMaterializeOnGetattr(t, false) // macOS/Linux policy
 	adapter, backend, bodies := metadataFixture(t)
 	listed := map[string]bool{}
 	if code := adapter.Readdir("/", func(name string, stat *fuse.Stat_t, _ int64) bool { listed[name] = true; return true }, 0, fhUnset); code != 0 {
@@ -146,6 +165,7 @@ func TestManagedMetadataReaddirAndGetattrDoNotReadBodies(t *testing.T) {
 }
 
 func TestManagedColdOpenHasExactSizeAndCompleteRead(t *testing.T) {
+	setMaterializeOnGetattr(t, false) // macOS/Linux policy
 	for _, name := range []string{"cold.md", "sibling.pdf"} {
 		t.Run(name, func(t *testing.T) {
 			adapter, backend, bodies := metadataFixture(t)
@@ -232,5 +252,116 @@ func TestOrdinaryOpenDoesNotRequestManagedKernelPurges(t *testing.T) {
 	defer adapter.Release("/ordinary", fi.Fh)
 	if fi.PurgeAttr || fi.PurgeUBC {
 		t.Fatalf("ordinary mount acquired managed-only purge policy: %+v", fi)
+	}
+}
+
+func TestMaterializeOnGetattrDefaultsToWindowsOnly(t *testing.T) {
+	if want := runtime.GOOS == "windows"; materializeOnGetattr != want {
+		t.Fatalf("materializeOnGetattr=%v on %s", materializeOnGetattr, runtime.GOOS)
+	}
+}
+
+// Windows policy: the path-based getattr that WinFsp issues before open must
+// already carry the real size, while listing must stay download-free.
+func TestManagedWindowsReaddirUsesPlaceholderStatWithoutHydration(t *testing.T) {
+	setMaterializeOnGetattr(t, true)
+	adapter, backend, bodies := metadataFixture(t)
+	stats := map[string]*fuse.Stat_t{}
+	if code := adapter.Readdir("/", func(name string, stat *fuse.Stat_t, _ int64) bool { stats[name] = stat; return true }, 0, fhUnset); code != 0 {
+		t.Fatal(code)
+	}
+	for name := range bodies {
+		stat, ok := stats[name]
+		if !ok {
+			t.Fatal("missing entry", name)
+		}
+		// A nil stat would make WinFsp call Getattr per entry.
+		if stat == nil {
+			t.Fatal("unknown-size entry listed without a stat; WinFsp would getattr (download) each one:", name)
+		}
+		if stat.Size != 0 || stat.Mode&fuse.S_IFMT != fuse.S_IFREG {
+			t.Fatalf("%s placeholder stat: size=%d mode=%o", name, stat.Size, stat.Mode)
+		}
+		if hydration, reads := backend.counts(name); hydration != 0 || reads != 0 {
+			t.Fatalf("readdir fetched %s: hydration=%d reads=%d", name, hydration, reads)
+		}
+	}
+}
+
+func TestManagedWindowsPathGetattrReportsRealSizeBeforeOpen(t *testing.T) {
+	setMaterializeOnGetattr(t, true)
+	adapter, backend, bodies := metadataFixture(t)
+	const name = "cold.md"
+	var before fuse.Stat_t
+	if code := adapter.Getattr("/"+name, &before, fhUnset); code != 0 {
+		t.Fatal(code)
+	}
+	if before.Size != int64(len(bodies[name])) {
+		t.Fatalf("path getattr size=%d want=%d", before.Size, len(bodies[name]))
+	}
+	// Open must not download again and must keep reporting the same size.
+	fi := fuse.FileInfo_t{Flags: os.O_RDONLY}
+	if code := adapter.OpenEx("/"+name, &fi); code != 0 {
+		t.Fatal(code)
+	}
+	defer adapter.Release("/"+name, fi.Fh)
+	var viaHandle, again fuse.Stat_t
+	if code := adapter.Getattr("/"+name, &viaHandle, fi.Fh); code != 0 || viaHandle.Size != before.Size {
+		t.Fatal(code, viaHandle.Size)
+	}
+	if code := adapter.Getattr("/"+name, &again, fhUnset); code != 0 || again.Size != before.Size {
+		t.Fatal(code, again.Size)
+	}
+	buffer := make([]byte, len(bodies[name])+10)
+	if count := adapter.Read("/"+name, buffer, 0, fi.Fh); count != len(bodies[name]) || string(buffer[:count]) != bodies[name] {
+		t.Fatalf("read count=%d", count)
+	}
+	for other := range bodies {
+		hydration, _ := backend.counts(other)
+		if other == name && hydration != 1 {
+			t.Fatal("selected body hydrated", hydration, "times")
+		} else if other != name && hydration != 0 {
+			t.Fatal("sibling hydrated", other, hydration)
+		}
+	}
+}
+
+func TestManagedWindowsPathGetattrPropagatesMaterializationFailure(t *testing.T) {
+	setMaterializeOnGetattr(t, true)
+	adapter, backend, _ := metadataFixture(t)
+	backend.mu.Lock()
+	backend.failMaterialize = syscall.EIO
+	backend.mu.Unlock()
+	var stat fuse.Stat_t
+	if code := adapter.Getattr("/cold.md", &stat, fhUnset); code != -fuse.EIO {
+		t.Fatalf("materialization failure must surface as an error, got code=%d size=%d", code, stat.Size)
+	}
+	// Directory attributes and handle-based queries stay metadata-only.
+	if code := adapter.Getattr("/", &stat, fhUnset); code != 0 {
+		t.Fatal("directory getattr", code)
+	}
+	// Once the backend recovers the same path reports the real size.
+	backend.mu.Lock()
+	backend.failMaterialize = nil
+	backend.mu.Unlock()
+	if code := adapter.Getattr("/cold.md", &stat, fhUnset); code != 0 || stat.Size == 0 {
+		t.Fatal(code, stat.Size)
+	}
+}
+
+func TestManagedWindowsHandleGetattrStaysMetadataOnly(t *testing.T) {
+	setMaterializeOnGetattr(t, true)
+	adapter, backend, _ := metadataFixture(t)
+	node, err := adapter.VFS.StatMetadata("cold.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := adapter.openHandle(&metadataOnlyHandle{node: node})
+	defer adapter.closeHandle(fh)
+	if code := adapter.Getattr("/cold.md", new(fuse.Stat_t), fh); code != 0 {
+		t.Fatal(code)
+	}
+	if hydration, reads := backend.counts("cold.md"); hydration != 0 || reads != 0 {
+		t.Fatal("fh getattr materialized body", hydration, reads)
 	}
 }

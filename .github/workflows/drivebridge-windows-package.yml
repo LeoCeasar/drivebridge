@@ -1,0 +1,86 @@
+name: DriveBridge Windows test installers
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version X.Y.Z (unsigned test build)
+        required: true
+        default: '0.2.8'
+        type: string
+permissions:
+  contents: read
+jobs:
+  windows-package:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DB_VERSION: ${{ inputs.version }}
+      CGO_ENABLED: '0'
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install pinned native packaging tools
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fetch-Pinned($Url, $Digest, $Destination) {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination
+            if ((Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Digest) { throw "Checksum mismatch: $Url" }
+          }
+          $inno = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Fetch-Pinned 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c' $inno
+          $compiler = Join-Path $env:RUNNER_TEMP 'InnoSetup6'
+          $p = Start-Process -FilePath $inno -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$compiler") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Inno installation failed: $($p.ExitCode)" }
+          $compiler | Out-File -FilePath $env:GITHUB_PATH -Append
+          dotnet tool install --global wix --version 4.0.6
+          if ($LASTEXITCODE) { throw 'WiX installation failed' }
+          $driver = Join-Path $env:RUNNER_TEMP 'winfsp.msi'
+          Fetch-Pinned 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' '073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a' $driver
+          $p = Start-Process msiexec.exe -ArgumentList @('/i',$driver,'/qn','/norestart') -Wait -PassThru
+          if ($p.ExitCode -notin @(0,3010)) { throw "WinFsp installation failed: $($p.ExitCode)" }
+      - name: Prepare checksum-verified public runtimes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Join-Path $env:RUNNER_TEMP 'drivebridge-runtime'
+          New-Item -ItemType Directory $runtime | Out-Null
+          $pin = Get-Content packaging/drivebridge/runtime-lock.json -Raw | ConvertFrom-Json
+          Invoke-WebRequest $pin.cli.source -OutFile "$runtime/cli-package.tgz"
+          $package = "$runtime/lark-package"
+          New-Item -ItemType Directory $package | Out-Null
+          tar -xzf "$runtime/cli-package.tgz" -C $package --strip-components=1
+          if ($LASTEXITCODE) { throw 'Official CLI package extraction failed' }
+          $asset = $pin.cli.assets.'lark-cli-1.0.99-windows-amd64.zip'
+          Invoke-WebRequest $asset.source -OutFile "$runtime/lark-native.zip"
+          if ((Get-FileHash "$runtime/lark-native.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) { throw 'Official CLI archive mismatch' }
+          Invoke-WebRequest $pin.node.source -OutFile "$runtime/node.zip"
+          if ((Get-FileHash "$runtime/node.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.node.sha256) { throw 'Node archive mismatch' }
+          python packaging/drivebridge/git_runtime.py --platform windows --architecture amd64 --output "$runtime/git"
+          if ($LASTEXITCODE) { throw 'Private Git runtime preparation failed' }
+          & "$runtime/git/bin/git.exe" --version
+          if ($LASTEXITCODE) { throw 'Bundled Git cannot execute on Windows' }
+      - name: Build Windows Feishu desktop installers
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP 'drivebridge-runtime'
+          & packaging/drivebridge/build-windows.ps1 -Arch amd64 -Version $env:DB_VERSION -Edition feishu -Desktop -Unsigned `
+            -LarkPackage "$runtime/lark-package" -LarkNativeArchive "$runtime/lark-native.zip" -NodeArchive "$runtime/node.zip" `
+            -GitRuntime "$runtime/git" -OutputDir "$env:GITHUB_WORKSPACE/dist/windows-test-package"
+          if ($LASTEXITCODE) { throw 'Windows package build failed' }
+      - name: Retain Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivebridge-${{ inputs.version }}-windows-amd64-feishu
+          path: dist/windows-test-package/*
+          if-no-files-found: error
+          retention-days: 14

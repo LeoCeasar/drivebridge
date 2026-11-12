@@ -4,7 +4,8 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DriveBridgeAuth = api;
 })(typeof window === 'undefined' ? globalThis : window,() => {
-  function create({api,onProgress = () => {},onError = () => {},storage,clock = {setTimeout,clearTimeout}}) {
+  function create({api,onProgress = () => {},onError = () => {},storage,clock = {setTimeout:(fn,ms) => setTimeout(fn,ms),clearTimeout:id => clearTimeout(id)}}) {
+    // Wrapped: calling the native timers as methods of another object throws "Illegal invocation" in Chromium.
     const key = 'drivebridge:pending-auth';
     let active = null, generation = 0, flight = null, timer = null, delay = 1500;
     const persist = () => { try { if (active) storage?.setItem(key,JSON.stringify(active)); else storage?.removeItem(key); } catch (_) {} };

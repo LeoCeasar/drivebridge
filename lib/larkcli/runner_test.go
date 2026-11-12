@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -97,6 +98,9 @@ func TestCLIProcess(t *testing.T) {
 func testExecutable(t *testing.T, scenario string) string {
 	t.Helper()
 	bin, _ := os.Executable()
+	if runtime.GOOS == "windows" {
+		return windowsTestExecutable(t, bin, scenario)
+	}
 	p := filepath.Join(t.TempDir(), "cli")
 	script := "#!/bin/sh\nDB_TEST_SCENARIO='" + scenario + "' exec '" + strings.ReplaceAll(bin, "'", "'\\''") + "' -test.run=TestCLIProcess -- \"$@\"\n"
 	if err := os.WriteFile(p, []byte(script), 0700); err != nil {

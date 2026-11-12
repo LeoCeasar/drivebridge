@@ -5,10 +5,14 @@
   const recovery = window.DriveBridgeRecovery;
   const queue = window.DriveBridgeBatch.createQueue();
   let activeHunk = null, openSeq = 0, activeView = 'workspace';
-  let csrf = '', current = null, choices = new Map(), manual = false;
-  let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '';
-  let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false;
-  let currentPlatform='';
+  let csrf = '', current = null, choices = new Map(), manual = false, mergeOpen = false;
+  let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '', authRetry = null;
+  let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false, sessionLost = false, networkFailures = 0;
+  // The page never guesses the platform: the backend names its own file manager.
+  let openLabel = '在文件管理器中打开', canOpen = false;
+  const fileManagerLabels = {windows:'在资源管理器中打开',darwin:'在 Finder 中打开'};
+  const titles = {workspace:'文件与同步',conflicts:'冲突与合并',settings:'账号与目录',history:'修改历史'};
+  let currentPlatform = '';
   const record = () => current && queue.records.get(current.id);
   const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
   const deletedLabel = r => r?.input?.local_delete_pending ? '已确认本地删除，上传已取消' : '已跟随云端删除';
@@ -26,41 +30,76 @@
     }
     $('message').append(actions);
   }
-  function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; if ($('history')) $('history').hidden = true; $('connection').textContent = '本机会话已失效'; }
+  function showSessionError(text) {
+    sessionLost = true; $('app-shell').hidden = true; $('session-error').hidden = false;
+    if (text) $('session-error-text').textContent = text;
+    $('connection').textContent = '本机会话已失效';
+  }
   async function api(route, method = 'GET', body) {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && csrf) headers['X-CSRF-Token'] = csrf;
-    const response = await fetch(route, {method, headers, credentials: 'same-origin', cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body)});
+    let response;
+    try { response = await fetch(route, {method, headers, credentials: 'same-origin', cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body)}); }
+    catch (_) { const error = new Error('无法连接本机 DriveBridge，请确认它仍在运行。'); error.code = 'network'; throw error; }
     let data = {}; try { data = await response.json(); } catch (_) { /* Stable fallback below. */ }
-    if (!response.ok) { if (response.status === 403 && data.code !== 'history_identity_changed') showSessionError(); const error = new Error(data.message || '本机服务暂时不可用，请稍后重试。'); error.status = response.status; error.code = data.code; throw error; }
+    if (!response.ok) { if (response.status === 403 && data.code !== 'history_identity_changed') showSessionError(); const error = new Error(data.message || '本机服务暂时不可用，请稍后重试。'); error.status = response.status; error.code = data.code; error.retryable = data.retryable === true; throw error; }
     return data;
   }
+  // Copying is a convenience; when the browser refuses, the path stays selectable on screen.
+  async function copyText(text, button) {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; }
+    catch (_) { try { const area = make('textarea'); area.value = text; area.className = 'visually-hidden'; document.body.append(area); area.select(); ok = document.execCommand('copy'); area.remove(); } catch (__) { /* Reported below. */ } }
+    if (!ok) { message('浏览器未允许复制，请手动选择路径后复制。', true, 'copy'); return; }
+    if (button) { button.classList.toggle('done', true); button.title = '已复制'; setTimeout(() => { button.classList.toggle('done', false); button.title = '复制路径'; }, 1600); }
+  }
   const historyView = window.DriveBridgeHistory?.create({document,api,onMessage:message,confirm:text=>window.confirm(text)});
-  const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh()});
+  const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh(),copy:copyText,openLabel:() => openLabel,canOpen:() => canOpen});
   const authMonitor = window.DriveBridgeAuth.create({api,storage:window.localStorage,onProgress:renderAuthProgress,onError:(error,terminal) => {
     $('auth-flow').hidden = false;
     $('auth-state').textContent = terminal ? '上次授权进度会话已结束；已保存账号和挂载状态以当前页面为准。' : '进度连接暂未更新；后台会继续等待授权，稍后自动重试。';
     $('auth-complete').hidden = terminal;
   }});
+  const authErrors = {
+    auth_identity_changed:'这次登录使用的飞书账号与已保存的账号不是同一个，未做任何更改。请用原账号重新授权，或把新账号添加为另一个账号。',
+    auth_reconcile_failed:'核验已保存的授权失败，应用配置与待上传数据已保留，请重试或重启 DriveBridge。',
+    local_busy:'本机正在处理其他操作，请稍后重试。'
+  };
   function showAuthFlow(flow,profileID) {
-    authFlow = flow.id; authProfile = profileID; authAutomatic = flow.auto_complete === true; authConfigFlow = '';
-    $('auth-flow').hidden = false; $('auth-link').hidden = false; $('auth-link').href = flow.url;
+    authFlow = flow.id; authProfile = profileID; authAutomatic = flow.auto_complete === true; authConfigFlow = ''; authRetry = null;
+    // A reconciled flow means the earlier authorization had already finished: there is no page to open.
+    const linkless = flow.kind === 'reconciled' || !flow.url;
+    $('auth-flow').hidden = false; $('auth-link').hidden = linkless; if (!linkless) $('auth-link').href = flow.url;
+    $('auth-retry').hidden = true; $('auth-state').classList.toggle('error',false);
     $('auth-complete').hidden = authAutomatic;
-    $('auth-state').textContent = authAutomatic ? '请在飞书页面完成授权，后台将自动继续，无需返回确认。' : '请在飞书页面授权后检查结果。';
+    $('auth-state').textContent = linkless ? '已确认之前的授权，正在继续登录…' : authAutomatic ? '请在飞书页面完成授权，后台将自动继续，无需返回确认。' : '请在飞书页面授权后检查结果。';
     if (authAutomatic) authMonitor.track(flow,profileID);
   }
+  function authFailed(text,retry) {
+    $('auth-flow').hidden = false; $('auth-link').hidden = true; $('auth-complete').hidden = true;
+    $('auth-state').textContent = text; $('auth-state').classList.toggle('error',true);
+    authRetry = retry; $('auth-retry').hidden = !retry;
+    message(text,true);
+  }
+  async function startAuth(profileID, recoveryStart) {
+    try { showAuthFlow(await api('/api/auth/start','POST',recoveryStart ? {profile_id:profileID,recovery:true} : {profile_id:profileID}),profileID); }
+    catch (e) { authFailed(authErrors[e.code] || e.message,e.retryable || e.code === 'auth_reconcile_failed' ? () => startAuth(profileID,recoveryStart) : null); }
+  }
+  $('auth-retry').addEventListener('click',async () => { const retry = authRetry; if (retry) { $('auth-retry').hidden = true; await retry(); } });
   async function renderAuthProgress(progress) {
     authFlow = progress.flow_id; authProfile = progress.profile_id; authAutomatic = true;
-    $('auth-flow').hidden = progress.state === 'ready'; $('auth-complete').hidden = true;
-    $('auth-link').hidden = progress.state !== 'waiting_authorization';
+    $('auth-flow').hidden = progress.state === 'ready'; $('auth-complete').hidden = true; $('auth-retry').hidden = true; $('auth-state').classList.toggle('error',false);
+    $('auth-link').hidden = progress.state !== 'waiting_authorization' || (!progress.flow?.url && !$('auth-link').href);
     if (progress.flow?.url) $('auth-link').href = progress.flow.url;
     const labels = {waiting_authorization:'请在飞书页面完成授权，后台会自动继续。',opening_login:'授权已验证，正在自动打开应用登录窗口…',waiting_login:'请在应用窗口登录飞书；登录后自动挂载，无需选择目录。',ready:'账号盘已自动挂载。'};
     $('auth-state').textContent = labels[progress.state] || '正在接续登录…';
     if (progress.state === 'failed') {
-      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime，再从账号盘区域重新打开登录窗口。',unsupported:'应用内登录组件不可用，请检查系统版本和完整安装包。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:'授权身份与已有账号不一致，请核对账号。',driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
+      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime，再从账号盘区域重新打开登录窗口。',unsupported:'应用内登录组件不可用，请检查系统版本和完整安装包。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:authErrors.auth_identity_changed,auth_identity_changed:authErrors.auth_identity_changed,auth_reconcile_failed:authErrors.auth_reconcile_failed,driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
       const reason = errors[progress.error] || '自动登录或挂载尚未完成，请查看账号盘状态后重试。';
       $('auth-state').textContent = reason + ' 已保存的授权和同步数据会保留。';
+      $('auth-state').classList.toggle('error',true);
+      if (progress.error === 'auth_reconcile_failed' && progress.profile_id) { const id = progress.profile_id; authRetry = () => startAuth(id,false); $('auth-retry').hidden = false; }
       message($('auth-state').textContent,true);
     }
     if (progress.state !== 'waiting_authorization' && (authConfigFlow !== progress.flow_id || ['ready','failed'].includes(progress.state))) {
@@ -71,44 +110,120 @@
   function bytes(text) { const data = new TextEncoder().encode(text); let result = ''; for (let i = 0; i < data.length; i += 8192) result += String.fromCharCode(...data.subarray(i, i + 8192)); return btoa(result); }
   function view(name) {
     activeView = name;
-    for (const key of ['workspace', 'settings', 'history']) $(key).hidden = key !== (name === 'conflicts' ? 'workspace' : name);
-    document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
     const conflicts = name === 'conflicts';
+    for (const key of ['workspace','settings','history']) $(key).hidden = key !== (conflicts ? 'workspace' : name);
     if (name === 'history') historyView?.load();
-    $('page-label').textContent = name === 'history' ? '修改历史' : name === 'settings' ? '账号与目录' : conflicts ? '冲突与合并' : '文件与同步';
-    $('workspace-title').textContent = conflicts ? '冲突与合并' : '文件与同步';
+    document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
+    $('page-label').textContent = titles[name]; document.title = `${titles[name]} · DriveBridge`;
     $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '查看本机保存和云端确认，处理需要你决定的差异。';
-    $('mount-panel').hidden = conflicts; $('setup-shortcut').hidden = conflicts;
+    $('mount-panel').hidden = conflicts; $('conflict-summary').hidden = conflicts; $('setup-shortcut').hidden = conflicts; $('conflict-area').hidden = !conflicts;
   }
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
   for (const id of ['setup-shortcut', 'start-setup']) $(id).addEventListener('click', () => view('settings'));
   $('sync-attention').addEventListener('click',()=>{view('workspace');$('sync-issues').scrollIntoView?.({block:'start',behavior:'smooth'});});
-  function cloudLabel(state) { const value = state.cloud_state; const labels = {synced:'已确认',queued:'等待同步',uploading:'正在上传',merging:'正在合并',awaiting_verification:'等待回读核验',conflict:'需要合并',blocked:'已阻塞',paused:'已暂停',offline:'离线'}; return labels[value] || (state.running ? '等待确认' : '挂载未启动'); }
+  $('conflict-summary-go').addEventListener('click', () => view('conflicts'));
+  $('session-reload').addEventListener('click', () => location.reload());
+  // Menus close on outside click and Escape without a framework.
+  function closeMenus(except) { document.querySelectorAll('.more-menu[open]').forEach(menu => { if (menu !== except) menu.open = false; }); }
+  document.addEventListener?.('click', event => closeMenus(event.target.closest?.('.more-menu')));
+  document.addEventListener?.('keydown', event => { if (event.key === 'Escape') closeMenus(); });
+  function cloudLabel(state) { return recovery.cloudChip(state,state.running)[0]; }
+  function chip(text, tone) { return make('span',text,`chip ${tone}`); }
+  function meter(label, value, max, hint) {
+    const box = make('div',undefined,'meter'), bar = make('progress');
+    bar.max = Math.max(max, 1); bar.value = Math.min(Math.max(value, 0), bar.max); bar.className = value > max ? 'over' : ''; bar.setAttribute('aria-label',label);
+    box.append(make('span',label),bar); if (hint) box.append(make('span',hint));
+    return box;
+  }
+  function mountMeta(mount, state) {
+    const meta = make('div',undefined,'mount-meta'), budget = mount.cache_max_bytes, retention = recovery.retentionLabel(mount.cache_max_age);
+    if (budget > 0 && typeof state.cache_bytes === 'number') meta.append(meter(`正文缓存 ${recovery.formatBytes(state.cache_bytes)} / ${recovery.formatBytes(budget)}（软上限）`,state.cache_bytes,budget,retention));
+    else if (budget > 0) meta.append(make('span',`正文缓存上限 ${recovery.formatBytes(budget)}（软上限）${retention ? '，' + retention : ''}`,'mount-path'));
+    const index = state.directory_index;
+    if (index && index.known > 0) meta.append(meter(`目录清单 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,index.failed ? '部分更新失败，保留旧清单' : index.refreshing ? '后台更新中' : ''));
+    return meta;
+  }
+  function mountActions(mount, state, stale, canRetry) {
+    const action = make('div',undefined,'actions');
+    const toggle = make('button', mount.archived ? '恢复并启动同步' : state.running ? '暂停同步' : '启动挂载', 'button small' + (!mount.archived && !state.running ? ' primary' : '')); toggle.disabled = stale;
+    toggle.addEventListener('click', async () => { toggle.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived ? 'restore_start' : state.running ? 'stop' : 'start'}`, 'POST', {}); if (mount.archived) message('挂载已恢复并启动，后台将继续处理同步任务。'); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { toggle.disabled = false; } });
+    action.append(toggle);
+    if (mount.archived) { action.append(moreMenu(mount,stale)); return action; }
+    if (canOpen && state.running) {
+      const open = make('button', openLabel, 'button small'); open.disabled = stale;
+      open.addEventListener('click', async () => { open.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/open`, 'POST', {}); } catch (e) { message(e.message, true); } finally { open.disabled = stale; } });
+      action.append(open);
+    }
+    if (canRetry && state.running && recovery.hasRetryWork(state)) {
+      const retry = make('button','重试同步','button small'); retry.disabled = stale || !recovery.canRetry(mount,canRetry); retry.title = '重新核验并重试待同步项目';
+      retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = stale || !recovery.canRetry(mount,canRetry); } });
+      action.append(retry);
+    }
+    action.append(moreMenu(mount, stale));
+    return action;
+  }
+  // Rare or destructive actions live here, and removal needs a second, explained click.
+  function moreMenu(mount, stale) {
+    const menu = make('details',undefined,'more-menu'), panel = make('div',undefined,'more-panel');
+    const copyPath = make('button','复制挂载位置','menu-item'); copyPath.addEventListener('click',() => copyText(mount.mountpoint,null));
+    const copyID = make('button','复制挂载标识（内部 ID）','menu-item'); copyID.title = mount.id; copyID.addEventListener('click',() => copyText(mount.id,null));
+    const remove = make('button','删除挂载及缓存…','menu-item danger'); remove.disabled = stale; remove.title = '删除本机挂载配置和缓存；保留飞书文件及账号 Git 历史。有未同步内容时阻止删除。';
+    const confirm = make('div',undefined,'confirm-box'); confirm.hidden = true;
+    const row = make('div',undefined,'row'), yes = make('button','确认删除','button small danger solid'), no = make('button','取消','button small');
+    row.append(yes,no); confirm.append(make('p','删除将安全停止此挂载并清理本机配置和缓存。飞书上的文件不会被删除，账号 Git 历史保留。有未上传修改、冲突或待归档历史时将阻止删除，并提供处理入口。'),row);
+    remove.addEventListener('click',() => { confirm.hidden = false; remove.hidden = true; });
+    no.addEventListener('click',() => { confirm.hidden = true; remove.hidden = false; });
+    yes.addEventListener('click',async () => { yes.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/delete`,'POST',{}); message('挂载配置与本地缓存已删除；飞书文件和 Git 历史仍保留。'); await loadConfig(); await refresh(); } catch(error) { removalHelp(error,mount); confirm.hidden = true; remove.hidden = false; if(error.code==='cleanup_pending'){await loadConfig();await refresh();} } finally { yes.disabled = false; } });
+    panel.append(copyPath,copyID,remove,confirm); menu.append(make('summary','更多'),panel);
+    return menu;
+  }
+  // Status polls re-render every few seconds. Rebuilding identical rows drops focus, hover and
+  // half-finished clicks, and closes an open "更多" menu, so skip unchanged renders.
+  const renderMemo = new Map();
+  function unchanged(key, ...parts) { const sig = JSON.stringify(parts); const same = renderMemo.get(key) === sig; renderMemo.set(key,sig); return same; }
   function renderMounts(mounts = [], canRetry = false) {
+    const same = unchanged('mounts',mounts,canRetry);
+    // An open menu or removal confirmation is user state; the next poll renders once it closes.
+    if (same || document.querySelector?.('#mount-panel details.more-menu[open], #archived-mount-panel details.more-menu[open]')) { if (!same) renderMemo.delete('mounts'); return; }
     $('mount-rows').replaceChildren(); $('archived-mount-rows').replaceChildren();
-    $('mount-empty').hidden = mounts.some(m => !m.archived);
+    $('mount-empty').hidden = mounts.some(m => !m.archived); $('mount-panel').classList.toggle('is-empty',!$('mount-empty').hidden);
     $('archived-mount-panel').hidden = !mounts.some(m => m.archived);
     for (const mount of mounts) {
       const stale = Boolean(mount.status_warning), known = !stale || Boolean(mount.status_updated_at);
-      const state = mount.state || {}, row = make('tr'); const name = make('td'); name.append(make('span', mount.name, 'mount-name'), make('span', mount.mountpoint, 'mount-path'));
-      if (state.directory_index) {
-        const index = state.directory_index;
-        name.append(make('small',`目录清单：已缓存 ${index.cached || 0} / 已知 ${index.known || 0} 个目录${index.refreshing ? '，后台更新中' : ''}${index.failed ? '；部分更新失败，保留旧清单' : ''}`,'mount-path'));
-      }
+      const state = mount.state || {}, row = make('tr'), prefix = stale ? '上次：' : '';
+      const name = make('td'), head = make('div',undefined,'mount-head'), icon = make('span',undefined,'mount-icon'), id = make('div',undefined,'mount-id');
+      icon.setAttribute('aria-hidden','true'); icon.append(make('span',undefined,'ico i-' + (mount.account_root ? 'drive' : 'folder')));
+      const title = make('span',mount.display_name || mount.name,'mount-name'); if (mount.display_name && mount.display_name !== mount.name) title.title = `内部名称：${mount.name}`;
+      id.append(title); if (mount.account_root) id.append(make('span','账号盘','mount-tag'));
+      head.append(icon,id); name.append(head);
+      const place = make('div',undefined,'path-line'), copy = make('button',undefined,'icon-button'); copy.title = '复制路径'; copy.setAttribute('aria-label','复制挂载位置'); copy.append(make('span',undefined,'ico i-copy'));
+      copy.addEventListener('click',() => copyText(mount.mountpoint,copy)); place.append(make('span',mount.mountpoint,'mount-path'),copy); name.append(place);
+      if (known && !mount.archived) name.append(mountMeta(mount,state));
       if (stale) {
         const reasons = {pending:'本机正在处理其他状态查询',auth_required:'账号需要重新授权',identity_changed:'账号身份需要重新核对',worker_unavailable:'挂载服务暂不可用'};
         const reason = reasons[mount.status_warning] || '本机状态更新暂未完成';
         name.append(make('small',known ? `${reason}；保留上次结果（${new Date(mount.status_updated_at).toLocaleTimeString()}）` : `${reason}；尚未取得完整状态`,'mount-path'));
       }
-      const local = make('td'); local.append(make('span', !known ? '等待核对' : (stale ? '上次：' : '') + (state.local_saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), 'state-tag' + (state.local_saved ? '' : ' pending')));
-      const cloud = make('td', !known ? '等待核对' : (stale ? '上次：' : '') + cloudLabel(state)); const queue = make('td',!known ? '暂不可读' : `${stale ? '上次：' : ''}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`); const action = make('td'); const button = make('button', mount.archived ? '恢复并启动同步' : state.running ? '暂停同步' : '启动挂载', 'button small');
-      button.disabled = stale;
-      button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived ? 'restore_start' : state.running ? 'stop' : 'start'}`, 'POST', {}); if (mount.archived) message('挂载已恢复并启动，后台将继续处理同步任务。'); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); action.append(button);
-      const remove = make('button','删除挂载及缓存','button small'); remove.disabled = stale; remove.title = '删除本机挂载配置和缓存；保留飞书文件与 Git 历史。有未同步内容时会阻止删除。';
-      remove.addEventListener('click',async () => { remove.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/delete`,'POST',{}); message('挂载配置与本地缓存已删除；飞书文件和 Git 历史仍保留。'); await loadConfig(); await refresh(); } catch(error) { removalHelp(error,mount); if(error.code==='cleanup_pending'){await loadConfig();await refresh();} } finally { remove.disabled = stale; } }); action.append(remove);
-      if (canRetry && !mount.archived) { const retry = make('button','重试同步','button small'); retry.disabled = stale || !recovery.canRetry(mount,canRetry); retry.title = state.running ? '重新核验并重试待同步项目' : '请先启动挂载'; retry.addEventListener('click',async () => { retry.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{}); message('已请求重新核验并重试同步，请查看云端状态。'); await refresh(); } catch(e) { message(e.message,true); } finally { retry.disabled = stale || !recovery.canRetry(mount,canRetry); } }); action.append(retry); }
-      row.append(name, local, cloud, queue, action); $(mount.archived ? 'archived-mount-rows' : 'mount-rows').append(row);
+      const local = make('td'), saved = state.local_saved;
+      local.append(!known ? chip('等待核对','info') : chip(prefix + (saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), saved ? 'ok' : state.running ? 'pending' : 'stopped'));
+      const cloud = make('td');
+      if (!known) cloud.append(chip('等待核对','info'));
+      else {
+        const [label,tone] = recovery.cloudChip(state,state.running); cloud.append(chip(prefix + label,tone));
+        if (state.last_error) cloud.append(make('small',recovery.errorLabels[state.last_error] || '上次操作未完成','mount-path'));
+      }
+      const counters = make('td',!known ? '暂不可读' : `${prefix}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`,'counters'); // NBSP: wrap only after "，"
+      const action = make('td'); action.append(mountActions(mount,state,stale,canRetry));
+      for (const [cell,label] of [[local,'本机保存'],[cloud,mount.archived ? '状态' : '云端状态'],[counters,mount.archived ? '保留数据' : '待处理']]) cell.setAttribute('data-label',label);
+      row.append(name, local, cloud, counters, action); $(mount.archived ? 'archived-mount-rows' : 'mount-rows').append(row);
     }
+  }
+  function renderGlobalStatus(status) {
+    const mounts = (status.mounts || []).filter(m => !m.archived), conflicts = (status.conflicts || []).length;
+    const failing = mounts.some(m => m.state && (m.state.last_error || ['blocked','offline'].includes(m.state.cloud_state)));
+    const waiting = mounts.some(m => m.state?.running && ((m.state.queued || 0) + (m.state.inflight || 0) > 0));
+    const [text,tone] = !mounts.length ? ['尚未挂载','stopped'] : status.partial ? ['部分状态更新中','info'] : conflicts ? [`${conflicts} 个文件需要合并`,'pending'] : failing ? ['同步遇到问题','error'] : waiting ? ['有内容等待同步','pending'] : mounts.every(m => !m.state?.running) ? ['挂载未启动','stopped'] : ['同步正常','ok'];
+    $('global-status').textContent = text; $('global-status').className = `chip global-status ${tone}`;
   }
   function issueAdvice(issue) {
     switch (issue.code) {
@@ -165,17 +280,22 @@
   const outcomeLabels = {unreviewed:'请先打开复核',draft:'待提交',submitting:'正在提交',queued:'已接受，等待同步',resolved:'已处理，草稿保留',needs_refresh:'需要刷新并复核',failed:'提交失败，可重试',blocked:'无法自动合并，请保存副本'};
   function renderQueue() {
     const records = [...queue.records.values()];
-    $('queue-rows').replaceChildren(); $('queue-empty').hidden = records.length > 0;
+    if (unchanged('queue',queue.running,records.map(r => [r.id,r.name,r.selected,r.status,r.slow,r.outcomeUnknown,r.error,r.newerDraft,r.decision,r.seq,r.savedSeq,Boolean(r.input),Boolean(r.input?.remote_deleted),Boolean(r.input?.local_delete_pending),Boolean(r.input?.text),Boolean(r.input?.has_draft),queue.canSubmit(r)]))) return;
+    $('queue-rows').replaceChildren(); $('queue-empty').hidden = records.length > 0; $('conflict-queue').classList.toggle('is-empty',records.length === 0);
     for (const r of records) {
       const row = make('tr'), select = make('td'), checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.id = `queue-select-${r.id}`; checkbox.checked = r.selected; checkbox.disabled = queue.running || (!r.selected && !queue.canSubmit(r)); checkbox.setAttribute('aria-label',`选择 ${r.name || '待合并文件'}`);
       checkbox.addEventListener('change',() => { queue.select(r.id,checkbox.checked); renderQueue(); $(checkbox.id)?.focus(); }); select.append(checkbox);
       const file = make('td'), open = make('button',r.name || '待合并文件','text-button queue-file'); open.disabled = r.status === 'resolved'; open.addEventListener('click',() => openConflict(r.id)); file.append(open);
       const draft = make('td',!r.input ? '未打开' : !r.input.text ? '非文本，保留副本' : r.seq !== r.savedSeq ? '页面草稿已保留' : r.savedSeq || r.input.has_draft ? '本机草稿已保存' : '来源已载入，尚未修改');
-      const result = make('td'); result.append(make('span',r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status],'queue-outcome ' + r.status));
+      const unknown = r.status === 'failed' && r.outcomeUnknown;
+      const label = unknown ? '结果未知，可重试' : r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status];
+      const result = make('td'); result.append(make('span',label,'queue-outcome ' + r.status + (unknown ? ' unknown' : '')));
+      if (r.status === 'submitting' && r.slow) result.append(make('small','云端复核较慢，仍在等待结果…','queue-detail slow'));
       if (deletionDecision(r.input) && !['queued','resolved'].includes(r.status)) result.append(make('small',r.input.local_delete_pending ? '本地删除尚未完成，请打开文件单独决定。' : '云端已删除，请打开文件单独决定。','queue-detail'));
       if (r.status === 'failed') result.append(make('small',r.error || '请检查本机连接后重试。','queue-detail'));
       if (r.status === 'needs_refresh') result.append(make('small','草稿已保留；打开后刷新差异，再核对来源。','queue-detail'));
       if (r.newerDraft) result.append(make('small','本次提交后的新编辑仍保留在页面中，尚未提交。请复制保存。','queue-detail'));
+      for (const [cell,label] of [[file,'文件'],[draft,'草稿'],[result,'提交结果']]) cell.setAttribute('data-label',label);
       row.append(select,file,draft,result); $('queue-rows').append(row);
     }
     const count = status => records.filter(r => r.status === status).length;
@@ -189,8 +309,17 @@
     if (conflicts) queue.sync(conflicts,partial);
     const records = [...queue.records.values()];
     const count = records.filter(r => r.present && r.status !== 'queued').length;
-    $('conflict-count').textContent = statusPartial ? (count ? `${count}（待更新）` : '待更新') : count; $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
-    for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.disabled = r.status === 'resolved'; button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
+    const listSame = unchanged('conflict-list',current?.id,records.map(r => [r.id,r.name,r.status]));
+    $('conflict-count').textContent = statusPartial ? (count ? `${count}（待更新）` : '待更新') : count; if (!listSame) $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
+    $('conflict-nav').hidden = records.length === 0 && !statusPartial;
+    $('nav-conflict-badge').textContent = count; $('nav-conflict-badge').hidden = !count;
+    // The workspace shows only a summary; the full queue lives on the conflicts page.
+    $('conflict-summary').classList.toggle('attention',count > 0);
+    $('conflict-summary-icon').className = 'ico ' + (count ? 'i-alert' : 'i-check');
+    $('conflict-summary-title').textContent = count ? `${count} 个文件需要合并` : statusPartial ? '冲突状态待更新' : '没有待合并的冲突';
+    $('conflict-summary-text').textContent = count ? '本机与云端对同一文件各有修改，逐个核对后提交。' : statusPartial ? '部分挂载的状态暂未读取完整，稍后会自动更新。' : '本机与云端内容出现不同修改时，会在这里提示。';
+    $('conflict-summary-go').hidden = !count;
+    if (!listSame) for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.disabled = r.status === 'resolved'; button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
     renderQueue();
   }
   function refresh(interactive = false) {
@@ -198,8 +327,9 @@
     statusFlight = (async () => {
       try {
         const status = await api('/api/status');
-        statusPartial = Boolean(status.partial);
-        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); if (current) recoveryControls();
+        networkFailures = 0; statusPartial = Boolean(status.partial);
+        if (status.open_folder_label) { openLabel = status.open_folder_label; canOpen = status.can_open_folder === true; }
+        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
         statusDelay = 5000;
         $('connection').textContent = status.partial ? '已连接本机服务，部分状态稍后更新' : '已连接本机服务';
         if (messageOwner === 'status_refresh') message('');
@@ -207,15 +337,19 @@
         statusDelay = Math.min(30000,statusDelay * 2);
         if (e.status === 403) return;
         $('connection').textContent = '本机状态暂未更新，将自动重试';
+        $('global-status').textContent = '本机服务未响应'; $('global-status').className = 'chip global-status error';
+        // After a desktop restart this tab's port is gone; say so instead of showing raw network errors.
+        networkFailures = e.code === 'network' ? networkFailures + 1 : 0;
+        if (networkFailures >= 2) showSessionError('无法连接到本机 DriveBridge，它可能已退出或重启。请点击系统托盘或菜单栏中的 DriveBridge 图标，选择“打开管理页”重新打开。');
         // Background observation failures must not overwrite an editing/action notice.
-        if (interactive) message('本机状态读取暂未完成，请稍后刷新。',true,'status_refresh');
+        else if (interactive) message(e.code === 'network' ? e.message : '本机状态读取暂未完成，请稍后刷新。',true,'status_refresh');
       }
     })().finally(() => { statusFlight = null; });
     return statusFlight;
   }
   function scheduleStatusPoll() {
     setTimeout(async () => {
-      try { await refresh(); if (activeView === 'settings') await discovery.load(); }
+      try { if (!sessionLost) { await refresh(); if (activeView === 'settings') await discovery.load(); } }
       finally { scheduleStatusPoll(); }
     },statusDelay);
   }
@@ -234,9 +368,26 @@
     try { await api('/api/config','POST',{action:'mount_policy',mount_id:$('pull-policy-mount').value,background_pull_excluded_extensions:values}); message('过滤规则已保存；后台后续检查将使用新规则，显式读取和本地上传保持可用。'); await loadConfig(); }
     catch(error) { message(error.message,true); } finally { $('pull-policy-fields').disabled = !policyMounts.length; }
   });
+  // One re-authorization action. For an already authorized account it first explains the effect,
+  // then starts the recovery flow (stops the account's mounts, keeps pending uploads) when available.
+  function profileRow(p, canRecover) {
+    const row = make('div', undefined, 'profile-row'), title = make('div', p.name);
+    title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`));
+    const button = make('button', p.authorized ? '重新授权' : '授权', 'button small' + (p.authorized ? '' : ' primary')); row.append(title, button);
+    if (!p.authorized) { button.addEventListener('click', async () => { button.disabled = true; try { await startAuth(p.id,false); } finally { button.disabled = false; } }); return row; }
+    const confirm = make('div',undefined,'confirm-box inline profile-confirm'), actions = make('div',undefined,'row'), go = make('button','继续重新授权','button small primary'), cancel = make('button','取消','button small');
+    confirm.hidden = true; actions.append(go,cancel);
+    confirm.append(make('p','重新授权会先停止使用该账号的挂载；待上传数据、冲突和本机缓存都会保留，不会删除飞书上的文件。随后在飞书页面完成授权，并继续应用内登录；若挂载没有自动恢复，请在“文件与同步”中启动。'),actions);
+    button.addEventListener('click',() => { confirm.hidden = !confirm.hidden; });
+    cancel.addEventListener('click',() => { confirm.hidden = true; });
+    go.addEventListener('click', async () => { go.disabled = true; try { await startAuth(p.id,canRecover); confirm.hidden = true; } finally { go.disabled = false; } });
+    row.append(confirm); return row;
+  }
   async function loadConfig() {
     const config = await api('/api/config'); currentPlatform=config.platform; $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
-    for (const p of config.profiles) { const row = make('div', undefined, 'profile-row'); const title = make('div', p.name); title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`)); const button = make('button', p.authorized ? '重新授权' : '授权', 'button small'); button.addEventListener('click', async () => { button.disabled = true; try { const flow = await api('/api/auth/start', 'POST', {profile_id:p.id}); showAuthFlow(flow,p.id); } catch (e) { message(e.message, true); } finally { button.disabled = false; } }); row.append(title, button); $('profiles').append(row); if (p.authorized && config.can_recover) { const recovery = make('button', '停止相关挂载并重新授权，保留待上传数据', 'text-button recovery-auth'); recovery.addEventListener('click', async () => { recovery.disabled = true; try { const flow = await api('/api/auth/start','POST',{profile_id:p.id,recovery:true}); showAuthFlow(flow,p.id); } catch (e) { message(e.message,true); } finally { recovery.disabled = false; } }); $('profiles').append(recovery); } }
+    openLabel = config.open_folder_label || fileManagerLabels[config.platform] || openLabel; canOpen = config.can_open_folder === true;
+    for (const p of config.profiles) $('profiles').append(profileRow(p, config.can_recover === true));
+    $('add-account').open = config.profiles.length === 0;
     const previousPolicyMount = $('pull-policy-mount').value; policyMounts = (config.mounts || []).filter(m => !m.archived);
     options($('pull-policy-mount'),policyMounts,'暂无挂载');
     if (policyMounts.some(m => m.id === previousPolicyMount)) $('pull-policy-mount').value = previousPolicyMount; else $('pull-policy-mount').value = policyMounts[0]?.id || '';
@@ -248,7 +399,7 @@
     return config;
   }
   for (const [id, action] of [['profile-form','profile'],['remote-form','remote'],['mount-form','mount']]) $(id).addEventListener('submit', async event => { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true; const data = Object.fromEntries(new FormData(form)); data.action = action; try { await api('/api/config', 'POST', data); message(action === 'mount' ? '挂载配置已保存，可在“文件与同步”中启动。' : '配置已保存。'); form.reset(); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { button.disabled = false; } });
-  $('auth-complete').addEventListener('click', async () => { if (authAutomatic) { await authMonitor.checkNow(); return; } if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; const authorizedProfile = authProfile; authProfile = ''; message('用户授权成功，正在打开账号盘的应用登录窗口。'); await loadConfig(); if (authorizedProfile) { const started = await discovery.beginLogin(authorizedProfile); if (!started) message('用户授权成功。请在“账号盘与自动目录发现”中检查账号状态，再打开应用登录窗口继续设置。'); } } catch (e) { $('auth-state').textContent = e.message; message(e.message, true); } finally { $('auth-complete').disabled = false; } });
+  $('auth-complete').addEventListener('click', async () => { if (authAutomatic) { await authMonitor.checkNow(); return; } if (!authFlow) return; $('auth-complete').disabled = true; $('auth-state').textContent = '正在等待授权结果并核验身份…'; try { await api('/api/auth/complete','POST',{flow_id:authFlow}); $('auth-flow').hidden = true; authFlow = ''; const authorizedProfile = authProfile; authProfile = ''; message('用户授权成功，正在打开账号盘的应用登录窗口。'); await loadConfig(); if (authorizedProfile) { const started = await discovery.beginLogin(authorizedProfile); if (!started) message('用户授权成功。请在“账号盘”中检查账号状态，再打开应用登录窗口继续设置。'); } } catch (e) { $('auth-state').textContent = authErrors[e.code] || e.message; message(authErrors[e.code] || e.message, true); } finally { $('auth-complete').disabled = false; } });
   function stash(r = record()) {
     if (!r?.input?.text) return;
     try { localStorage.setItem(`draft:${r.id}`,JSON.stringify({text:r.text,generation:r.intent.generation,revision:r.intent.remote_revision})); } catch (_) { /* Keep the in-page and backend copies. */ }
@@ -352,8 +503,8 @@
     }
   }
   function showConflict(r) {
-    current = r.input; current.hunks ||= []; choices = r.choices; manual = r.manual; activeHunk = null;
-    $('merge').hidden = false; view(activeView === 'settings' ? 'conflicts' : activeView);
+    current = r.input; current.hunks ||= []; choices = r.choices; manual = r.manual; activeHunk = null; mergeOpen = true;
+    $('merge').hidden = false; view('conflicts');
     $('merge-name').textContent = r.name; $('merge-version').textContent = current.local_delete_pending ? `本地代次 ${current.generation}，尚未上传到云端。` : current.remote_deleted ? '云端文件已不在原目录，本地修改已保留。' : `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
     $('merge-hint').hidden = deletionDecision(current);
     $('merge-hint').textContent = current.reason === 'unsupported_content'
@@ -365,6 +516,7 @@
     $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
     draftState(r.status === 'queued' ? r.decision === 'accept_delete' ? deletedLabel(r) : (r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步') : r.seq !== r.savedSeq ? '页面草稿已保留' : current.has_draft ? '已载入本机草稿' : '草稿未修改');
     renderConflicts();
+    $('merge').scrollIntoView?.({block:'nearest'});
   }
   async function openConflict(id, reload = false) {
     const requestSeq = ++openSeq;
@@ -431,11 +583,11 @@
   $('submit-selected').addEventListener('click',() => submitFiles());
   $('select-reviewed').addEventListener('click',() => { for (const r of queue.records.values()) queue.select(r.id,true); renderQueue(); });
   $('clear-selection').addEventListener('click',() => { for (const r of queue.records.values()) queue.select(r.id,false); renderQueue(); });
-  $('later').addEventListener('click',async () => { if (await saveDraft()) { $('merge').hidden = true; message('草稿已保留，可随时从列表继续处理。'); } });
+  $('later').addEventListener('click',async () => { if (await saveDraft()) { $('merge').hidden = true; mergeOpen = false; message('草稿已保留，可随时从列表继续处理。'); } });
   window.addEventListener('beforeunload',event => { const unsaved = [...queue.records.values()].filter(r => r.input?.text && r.seq !== r.savedSeq); for (const r of unsaved) stash(r); if (unsaved.length) { event.preventDefault(); event.returnValue = ''; } });
   async function start() {
     const fragment = new URLSearchParams(location.hash.slice(1)); const bootstrap = fragment.get('bootstrap'); history.replaceState(null,'',location.pathname + location.search);
-    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); authMonitor.restore(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); scheduleStatusPoll(); } catch (_) { showSessionError(); }
+    try { const session = bootstrap ? await api('/api/session','POST',{bootstrap}) : await api('/api/session'); csrf = session.csrf; const config = await loadConfig(); await refresh(); authMonitor.restore(); const params = new URLSearchParams(location.search), id = params.get('conflict'); if (params.get('view') === 'conflicts' || id) view('conflicts'); if (id) await openConflict(id); else if (params.get('view') !== 'conflicts' && !config.mounts.length) view('settings'); scheduleStatusPoll(); } catch (e) { showSessionError(e.code === 'network' ? '无法连接到本机 DriveBridge，它可能已退出或重启。请点击系统托盘或菜单栏中的 DriveBridge 图标，选择“打开管理页”重新打开。' : undefined); }
   }
   start();
 })();

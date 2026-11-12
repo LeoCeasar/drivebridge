@@ -3,13 +3,20 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/ownedlogin"
 )
+
+// automaticReconciledKind is the Flow.Kind of a workflow whose interrupted
+// authorization had already completed: there is no link to open, the workflow
+// continues straight to verification, owned login and mount.
+const automaticReconciledKind = "reconciled"
 
 // AutomaticLoginView uses the first official flow as a stable tracking key.
 // Flow always describes the current authorization phase, which may change after
@@ -25,8 +32,7 @@ type AutomaticLoginView struct {
 }
 
 type automaticAuth interface {
-	Start(context.Context, model.ProfileID) (auth.AuthFlow, error)
-	StartRecovery(context.Context, model.ProfileID) (auth.AuthFlow, error)
+	auth.FlowStarter
 	Complete(context.Context, string) (auth.Identity, error)
 	Cancel(context.Context, string) error
 }
@@ -135,6 +141,8 @@ func automaticError(err error) string {
 		return "unsupported"
 	case errors.Is(err, ErrDriver):
 		return "driver_unavailable"
+	case errors.Is(err, auth.ErrReconcileFailed) && !errors.Is(err, auth.ErrBusy) && !errors.Is(err, auth.ErrReferencesBusy) && !errors.Is(err, model.ErrIdentityChanged):
+		return "auth_reconcile_failed"
 	default:
 		return errorCode(err)
 	}
@@ -166,18 +174,26 @@ func (m *Manager) runAutomaticLogin(ctx context.Context, task *automaticLogin, r
 		result = err
 		return
 	}
-	var flow auth.AuthFlow
-	if recovery {
-		flow, err = service.StartRecovery(ctx, task.view.ProfileID)
-	} else {
-		flow, err = service.Start(ctx, task.view.ProfileID)
-	}
+	// An interrupted earlier authorization (expired QR code, restarted desktop,
+	// lost child) leaves auth.ErrNeedsReconcile. Like the CLI login command,
+	// reconcile the retained application configuration instead of failing: either
+	// the earlier authorization had completed, or a fresh link is issued for the
+	// same application and identity. No new identity is ever created here.
+	outcome, err := auth.StartOrReconcile(ctx, service, task.view.ProfileID, recovery)
 	if err != nil {
 		result = err
 		return
 	}
+	flow := outcome.Flow
 	// Always release/reap a retained official child if this workflow is canceled.
-	active := flow.ID
+	active := ""
+	if outcome.Reconciled {
+		// Nothing to wait for. Keep a stable tracking key so the page can poll
+		// progress exactly as for a real flow; it carries no URL.
+		flow = auth.AuthFlow{ID: uuid.NewString(), Kind: automaticReconciledKind}
+	} else {
+		active = flow.ID
+	}
 	defer func() {
 		if active != "" {
 			_ = service.Cancel(context.Background(), active)
@@ -191,29 +207,61 @@ func (m *Manager) runAutomaticLogin(ctx context.Context, task *automaticLogin, r
 	initialSet = true
 	close(task.initialReady)
 	m.automaticMu.Unlock()
-	for phase := 0; phase < 2; phase++ {
+	authorized := outcome.Reconciled
+	restarted := false
+	for !authorized {
 		_, err = service.Complete(ctx, flow.ID)
 		if err == nil {
 			active = ""
 			break
 		}
-		if phase == 0 && flow.Kind == "app_config" && errors.Is(err, auth.ErrUserMissing) {
-			active = ""
-			flow, err = service.Start(ctx, task.view.ProfileID)
-			if err != nil {
+		restart := false
+		switch {
+		case ctx.Err() != nil:
+			result = err
+			return
+		case flow.Kind == "app_config" && errors.Is(err, auth.ErrUserMissing):
+			restart = true
+		case errors.Is(err, auth.ErrNeedsReconcile):
+			// The retained official child ended without a usable result (expired
+			// link, lost child). The user may still have finished authorizing, so
+			// reconcile instead of failing. Never issue a new link behind a user's
+			// back unless the application registration step is what ended.
+			_, reconcileErr := service.Reconcile(ctx, task.view.ProfileID)
+			switch {
+			case reconcileErr == nil:
+				active = ""
+				authorized = true
+				continue
+			case errors.Is(reconcileErr, auth.ErrUserMissing) && flow.Kind == "app_config":
+				restart = true
+			case errors.Is(reconcileErr, auth.ErrUserMissing):
+				failureCode = interruptedAuthorizationCode(flow)
 				result = err
 				return
+			default:
+				result = fmt.Errorf("%w: %w", auth.ErrReconcileFailed, reconcileErr)
+				return
 			}
-			active = flow.ID
-			m.updateAutomatic(task, func(v *AutomaticLoginView) { v.Flow = flow })
+		}
+		if !restart || restarted {
+			result = err
+			return
+		}
+		restarted = true
+		active = ""
+		next, startErr := auth.StartOrReconcile(ctx, service, task.view.ProfileID, false)
+		if startErr != nil {
+			result = startErr
+			return
+		}
+		if next.Reconciled {
+			authorized = true
 			continue
 		}
-		result = err
-		return
-	}
-	if err != nil {
-		result = err
-		return
+		flow = next.Flow
+		active = flow.ID
+		m.updateAutomatic(task, func(v *AutomaticLoginView) { v.Flow = flow })
 	}
 	m.updateAutomatic(task, func(v *AutomaticLoginView) { v.State = "opening_login" })
 	// Match the native login watcher budget: do not keep reporting waiting after
@@ -284,6 +332,16 @@ func automaticDiscoveryCode(view DiscoveryView) string {
 	default:
 		return ""
 	}
+}
+
+// interruptedAuthorizationCode names why a user authorization ended without a
+// user: past the link/local deadline it expired, otherwise it is unfinished.
+func interruptedAuthorizationCode(flow auth.AuthFlow) string {
+	now := time.Now()
+	if (!flow.ExpiresAt.IsZero() && now.After(flow.ExpiresAt)) || (!flow.LocalDeadline.IsZero() && now.After(flow.LocalDeadline)) {
+		return "expired"
+	}
+	return "unauthorized"
 }
 
 func discoveryLoginReady(ctx context.Context, view DiscoveryView, status func(context.Context, model.MountID) (model.MountStatus, error)) bool {

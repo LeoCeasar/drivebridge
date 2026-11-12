@@ -383,12 +383,13 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return w.conflicts(ctx)
 	case "/conflict":
 		var in struct {
-			ID model.ConflictID `json:"id"`
+			ID        model.ConflictID `json:"id"`
+			NoRefresh bool             `json:"no_refresh"`
 		}
 		if err := decodeInput(r, &in); err != nil {
 			return nil, err
 		}
-		return w.conflictDetail(ctx, in.ID)
+		return w.conflictDetail(ctx, in.ID, !in.NoRefresh)
 	case "/conflict/export":
 		var in struct {
 			ID model.ConflictID `json:"id"`

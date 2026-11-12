@@ -18,6 +18,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
 )
 
@@ -50,6 +51,9 @@ func respond(w http.ResponseWriter, status int, v any) {
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
 	messages["status_unavailable"] = "本机状态读取暂未完成，请稍后刷新。"
+	messages["mount_not_running"] = "挂载尚未运行，请先启动挂载。"
+	messages["folder_unavailable"] = "无法找到挂载目录，请确认挂载正在运行。"
+	messages["no_desktop"] = "当前环境无法打开文件管理器，请手动打开挂载位置。"
 	messages["unsupported_content"] = "此内容暂不支持安全提交，草稿已保留。请检查文件格式或文档结构。"
 	messages["mount_archived"] = "此挂载已移除，请先恢复挂载配置，再启动同步。"
 	messages["mount_in_use"] = "暂时不能移除：请先关闭正在使用该挂载的文件，等待本机写入完成后重试；已有数据会保留。"
@@ -76,6 +80,12 @@ func apiError(w http.ResponseWriter, err error) {
 		respondError(w, 503, "local_busy")
 	case errors.Is(err, manager.ErrArchived):
 		respondError(w, 409, "mount_archived")
+	case errors.Is(err, ErrMountNotRunning):
+		respondError(w, 409, "mount_not_running")
+	case errors.Is(err, platform.ErrInvalidFolder):
+		respondError(w, 409, "folder_unavailable")
+	case errors.Is(err, platform.ErrNoDesktop):
+		respondError(w, 503, "no_desktop")
 	case errors.Is(err, manager.ErrConfig):
 		respondError(w, 400, "invalid_request")
 	case errors.Is(err, auth.ErrUserMissing):
@@ -186,6 +196,8 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			v.Mounts[i].StatusWarning = safeCode(v.Mounts[i].StatusWarning)
 		}
 		_, v.CanRetry = h.backend.(SyncRetrier)
+		v.Platform, v.OpenFolderLabel = hostGOOS, FolderOpenLabel(hostGOOS)
+		_, v.CanOpenFolder = h.backend.(FolderOpener)
 		respond(w, 200, v)
 		return
 	case "/api/config":
@@ -196,6 +208,8 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 				apiError(w, err)
 				return
 			}
+			v.OpenFolderLabel = FolderOpenLabel(hostGOOS)
+			_, v.CanOpenFolder = h.backend.(FolderOpener)
 			respond(w, 200, v)
 		case http.MethodPost:
 			var in ConfigRequest
@@ -245,10 +259,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			flow, err = h.backend.AuthStart(r.Context(), in.ProfileID)
 		}
 		if err != nil {
-			apiError(w, err)
+			authStartError(w, err)
 			return
 		}
-		if !safeHTTPS(flow.URL) || flow.ID == "" {
+		if !validAuthStartFlow(flow) {
 			respondError(w, 503, "unavailable")
 			return
 		}
@@ -308,7 +322,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.conflict(w, r, parts[2], parts[3:])
 		return
 	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore" || parts[3] == "delete" || parts[3] == "restore_start") {
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore" || parts[3] == "delete" || parts[3] == "restore_start" || parts[3] == "open") {
 		if r.Method != "POST" {
 			method(w, "POST")
 			return
@@ -326,6 +340,13 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			err = retrier.Retry(r.Context(), model.MountID(parts[2]))
+		} else if parts[3] == "open" {
+			opener, ok := h.backend.(FolderOpener)
+			if !ok {
+				respondError(w, 503, "unavailable")
+				return
+			}
+			err = opener.OpenMountFolder(r.Context(), model.MountID(parts[2]))
 		} else {
 			err = h.backend.Mount(r.Context(), model.MountID(parts[2]), parts[3])
 		}
@@ -474,7 +495,14 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 400, "invalid_request")
 			return
 		}
-		current, err := h.backend.Conflict(r.Context(), cid)
+		timing := newServerTiming()
+		// Version checks read the stored conflict only; the single cloud recheck
+		// happens inside Resolve, so a batch does not pay for extra cloud reads.
+		readVersions := h.backend.Conflict
+		if reader, ok := h.backend.(ResolveVersionReader); ok {
+			readVersions = reader.ConflictForResolve
+		}
+		current, err := readVersions(r.Context(), cid)
 		if err != nil {
 			apiError(w, err)
 			return
@@ -497,7 +525,8 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 				apiError(w, err)
 				return
 			}
-			current, err = h.backend.Conflict(r.Context(), cid)
+			timing.mark("draft")
+			current, err = readVersions(r.Context(), cid)
 			if err != nil {
 				apiError(w, err)
 				return
@@ -507,6 +536,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 				return
 			}
 		}
+		timing.mark("check")
 		if current.Conflict.EntryID != current.Entry.ID || current.Conflict.Generation != in.ExpectedGeneration || current.Entry.Generation != in.ExpectedGeneration || current.Conflict.RemoteRevision != in.ExpectedRemoteRevision {
 			respondError(w, 409, "version_changed")
 			return
@@ -519,7 +549,10 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			respondError(w, 422, "unsupported_content")
 			return
 		}
-		if err = h.backend.Resolve(r.Context(), in); err != nil {
+		err = h.backend.Resolve(r.Context(), in)
+		timing.mark("accept")
+		timing.write(w)
+		if err != nil {
 			apiError(w, err)
 			return
 		}

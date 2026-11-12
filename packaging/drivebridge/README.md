@@ -12,6 +12,8 @@ Build each architecture on its own native runner. Cross-compilation does not pas
 
 ## Product editions
 
+For an unsigned Windows x64 Feishu desktop build, manually run `drivebridge-windows-package.yml` with a numeric installer version. The hosted Windows job provisions checksum-pinned WinFsp/Inno inputs, WiX 4 and .NET 10, stages the pinned official CLI, Node and private Git runtimes, then retains EXE/MSI/ZIP artifacts for 14 days. This produces test installers; it does not replace the protected release workflow or interactive account/mount acceptance.
+
 Native builders default to the Feishu edition. Unix builders accept `--edition feishu` or `--edition full`; Windows accepts `-Edition feishu` or `-Edition full`. The edition is recorded in the payload manifest and checked against the compiled binary through the offline `feishu edition --json` command. Feishu artifact names include `-feishu`.
 
 The Feishu edition uses the `drivebridge_feishu` Go build tag. It registers only the Feishu/local backends and product, configuration, version and platform mount commands. Authentication, Markdown conversion, synchronization, conflict handling and Git history remain included. The full edition retains the original Rclone commands, backends and plugin registration. A plain `go build` remains a full build; the product tag is opt-in outside the packaging scripts. Edition selection is independent of the writable-mount versus `--cli-only` packaging gate.

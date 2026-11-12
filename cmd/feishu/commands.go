@@ -441,27 +441,19 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 }
 func authorize(ctx context.Context, c *cobra.Command, a *auth.Service, id model.ProfileID, recovery bool) (any, error) {
 	for {
-		var flow auth.AuthFlow
-		var err error
 		if recovery {
 			_, _ = fmt.Fprintln(c.ErrOrStderr(), "Stopping related mounts and preserving pending data before same-account authorization.")
-			flow, err = a.StartRecovery(ctx, id)
-		} else {
-			flow, err = a.Start(ctx, id)
 		}
-		if errors.Is(err, auth.ErrNeedsReconcile) {
-			identity, reconcileErr := a.Reconcile(ctx, id)
-			if reconcileErr == nil {
-				return identity, nil
-			}
-			if errors.Is(reconcileErr, auth.ErrUserMissing) {
-				continue
-			}
-			return nil, reconcileErr
-		}
+		// Shared with the management page: an interrupted earlier authorization is
+		// reconciled (completed, or restarted for the same application) first.
+		started, err := auth.StartOrReconcile(ctx, a, id, recovery)
 		if err != nil {
 			return nil, err
 		}
+		if started.Reconciled {
+			return started.Identity, nil
+		}
+		flow := started.Flow
 		_, _ = fmt.Fprintln(c.ErrOrStderr(), flow.URL)
 		identity, err := a.Complete(ctx, flow.ID)
 		if errors.Is(err, auth.ErrUserMissing) {

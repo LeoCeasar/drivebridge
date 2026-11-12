@@ -144,6 +144,9 @@ func TestArchiveUnusedMountDoesNotCreateOrDeleteLocalData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(spec.Mount.Mountpoint, 0700); err != nil {
+		t.Fatal(err)
+	}
 	marker := filepath.Join(spec.Mount.Mountpoint, "existing-local-data")
 	if err := os.WriteFile(marker, []byte("preserve"), 0600); err != nil {
 		t.Fatal(err)

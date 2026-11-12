@@ -31,7 +31,7 @@ func TestSaveDraftFindsLiveTargetAfterLockedOfflineMount(t *testing.T) {
 	live.ID = model.MountID(uuid.NewString())
 	live.Name = "live-target"
 	live.Mountpoint = filepath.Join(filepath.Dir(live.Mountpoint), "live-target")
-	if err = os.Mkdir(live.Mountpoint, 0700); err != nil {
+	if err = validateMountpoint(live.Mountpoint); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = m.AddMount(ctx, live); err != nil {
