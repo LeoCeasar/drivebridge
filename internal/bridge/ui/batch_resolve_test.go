@@ -146,8 +146,11 @@ func TestBatchAcceptWithoutLocalReaderStillRefreshesFirst(t *testing.T) {
 			t.Fatal(res.Status)
 		}
 	}
-	if got := b.cloudReadCount(); got != 4 {
-		t.Fatalf("legacy path cloud reads: got %d, want 4", got)
+	// Without a local reader every version read refreshes from the cloud: the
+	// pre-read, the post-draft reason recheck (deletion conflicts) and Resolve's
+	// own recheck, i.e. three per file.
+	if got := b.cloudReadCount(); got != 6 {
+		t.Fatalf("legacy path cloud reads: got %d, want 6", got)
 	}
 }
 
