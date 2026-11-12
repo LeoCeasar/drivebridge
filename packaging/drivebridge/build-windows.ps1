@@ -32,8 +32,12 @@ if ($Desktop) { $mode += '--desktop' }
 Invoke-Native python (@("$here/package.py", 'preflight', '--platform', 'windows', '--arch', $Arch) + $mode)
 $wixVersion = (& wix --version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $wixVersion -notmatch '^4\.') { throw 'WiX Toolset 4 is required' }
-$innoVersion = (Get-Item -LiteralPath (Get-Command ISCC).Source).VersionInfo.ProductVersion
-if (-not $innoVersion -or $innoVersion -notmatch '^6\.') { throw 'Inno Setup 6 is required' }
+# ISCC's version resource can be 0.0.0.0. Its documented help path prints
+# the compiler banner and exits 1 when no script is compiled.
+$innoHelp = (& ISCC '/?' 2>&1 | Out-String)
+$innoHelpExit = $LASTEXITCODE
+$innoVersion = ($innoHelp -split '[\r\n]+' | Where-Object { $_ -match '^Inno Setup 6 Command-Line Compiler$' } | Select-Object -First 1)
+if ($innoHelpExit -notin @(0,1) -or -not $innoVersion) { throw 'Inno Setup 6 compiler banner not found' }
 if (-not $CliOnly) {
     $driver = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' -ErrorAction SilentlyContinue
     if (-not $driver -or -not (Test-Path (Join-Path $driver.InstallDir 'bin/winfsp-x64.dll'))) {
