@@ -28,3 +28,17 @@ const input = (id,more = {}) => ({id,name:id + '.md',text:true,stale:false,gener
  q.load(input('retained',{remote_revision:'r2'}));assert.equal(retained.text,'keep edited draft');assert.equal(q.canDecide(retained),false);q.review(retained.id);assert.equal(q.canDecide(retained),true);
  console.log('deletion decisions, binary restore, protected drafts, and resolved queue rows verified');
 })().catch(e=>{console.error(e);process.exitCode=1;});
+
+(async () => {
+ const q=createQueue(), local=q.load(input('local-pending',{remote_deleted:false,local_delete_pending:true,reason:'local_delete_pending',remote_revision:'local:4',text:false}));
+ assert.equal(q.canDecide(local),true);assert.equal(q.canSubmit(local),false);assert.equal(q.select(local.id,true),false);
+ const calls=[];const io={save:async s=>calls.push(['save',s.id]),resolve:async s=>calls.push(['resolve',s.action,s.text,s.intent.remote_revision])};
+ await q.submit(io);assert.deepEqual(calls,[]);
+ await q.decide(local.id,'restore_local',io);
+ assert.deepEqual(calls,[['resolve','restore_local',undefined,'local:4']]);
+ assert.equal(local.decision,'restore_local');
+ const changed=q.load(input('changed-local',{remote_deleted:false,local_delete_pending:true,reason:'local_delete_pending',remote_revision:'same'}));q.edit(changed.id,'meaningful edits');
+ q.load(input('changed-local',{remote_deleted:true,local_delete_pending:false,reason:'remote_deleted',remote_revision:'same'}));
+ assert.equal(changed.text,'meaningful edits');assert.equal(changed.reviewRequired,true);assert.equal(q.canDecide(changed),false);
+ console.log('local-only pending deletions require explicit decisions and retain captured binary data');
+})().catch(e=>{console.error(e);process.exitCode=1;});

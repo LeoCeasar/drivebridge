@@ -56,6 +56,15 @@ func (e *Engine) observeDeletion(ctx context.Context, entry model.Entry) (out mo
 	return
 }
 
+func (e *Engine) acceptDeletionDecision(ctx context.Context, entry model.Entry, request model.ResolveRequest) (accepted model.Entry, job model.Job, err error) {
+	err = e.commitDeletion(ctx, entry, func() (bool, error) {
+		var commitErr error
+		accepted, job, commitErr = e.store.ResolveRemoteDeletion(ctx, request)
+		return request.Action == model.ResolveAcceptDelete, commitErr
+	})
+	return
+}
+
 func (e *Engine) deletionAfterReadFailure(ctx context.Context, entry model.Entry, readErr error) error {
 	_, missing, err := e.remoteMissing(ctx, entry)
 	if err != nil {

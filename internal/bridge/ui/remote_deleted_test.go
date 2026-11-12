@@ -88,31 +88,34 @@ func TestRemoteDeletedConflictRequiresExplicitDecision(t *testing.T) {
 }
 
 func TestDeletionDecisionPreservesVersionAndStaleGuards(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		stale      bool
-		generation uint64
-		revision   string
-		status     int
-	}{
-		{"changed generation", false, 5, "r1", 409}, {"changed deletion revision", false, 4, "r2", 409}, {"stale observation", true, 4, "r1", 503},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h, b, c, csrf, _ := fixture(t)
-			b.input.Conflict.Reason = model.ConflictRemoteDeleted
-			b.input.Stale = tc.stale
-			b.input.Entry.Generation = tc.generation
-			b.input.Conflict.RemoteRevision = tc.revision
-			in := model.ResolveRequest{ConflictID: b.input.Conflict.ID, Action: model.ResolveAcceptDelete, ExpectedGeneration: 4, ExpectedRemoteRevision: "r1"}
-			res := request(t, c, h, "POST", "/api/conflicts/"+string(in.ConflictID)+"/resolve", in, csrf, h.URL())
-			res.Body.Close()
-			if res.StatusCode != tc.status || b.resolves != 0 {
-				t.Fatal(res.Status, b.resolves)
-			}
-			if _, err := os.Stat(b.draftFile); !os.IsNotExist(err) {
-				t.Fatal("delete decision wrote a draft", err)
-			}
-		})
+	for _, reason := range []string{model.ConflictRemoteDeleted, model.ConflictLocalDeletePending} {
+		for _, tc := range []struct {
+			name       string
+			stale      bool
+			generation uint64
+			revision   string
+			status     int
+		}{
+			{"changed generation", false, 5, "r1", 409}, {"changed deletion revision", false, 4, "r2", 409}, {"stale observation", true, 4, "r1", 503},
+		} {
+			t.Run(reason+"/"+tc.name, func(t *testing.T) {
+				h, b, c, csrf, _ := fixture(t)
+				b.input.Conflict.Reason = reason
+				b.input.Stale = tc.stale
+				b.input.Entry.Generation = tc.generation
+				b.input.Conflict.RemoteRevision = tc.revision
+				in := model.ResolveRequest{ConflictID: b.input.Conflict.ID, Action: model.ResolveAcceptDelete, ExpectedGeneration: 4, ExpectedRemoteRevision: "r1"}
+				res := request(t, c, h, "POST", "/api/conflicts/"+string(in.ConflictID)+"/resolve", in, csrf, h.URL())
+				res.Body.Close()
+				if res.StatusCode != tc.status || b.resolves != 0 {
+					t.Fatal(res.Status, b.resolves)
+				}
+				if _, err := os.Stat(b.draftFile); !os.IsNotExist(err) {
+					t.Fatal("delete decision wrote a draft", err)
+				}
+			})
+		}
+
 	}
 }
 
@@ -146,6 +149,70 @@ func TestOrdinaryConflictRejectsDeletionActions(t *testing.T) {
 			res.Body.Close()
 			if res.StatusCode != 400 || b.resolves != 0 {
 				t.Fatal(res.Status, b.resolves)
+			}
+		})
+	}
+}
+
+func TestLocalDeletePendingRequiresExplicitLocalDecision(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		text         bool
+		content      []byte
+		status       int
+		save         bool
+	}{
+		{"ordinary merge rejected", "", true, []byte("edited"), 400, false},
+		{"unknown action rejected", "unknown", true, nil, 400, false},
+		{"binary retained", model.ResolveRestoreLocal, false, nil, 200, false},
+		{"edited text retained", model.ResolveRestoreLocal, true, []byte("edited pending file"), 200, true},
+		{"local deletion cancels upload", model.ResolveAcceptDelete, false, nil, 200, false},
+		{"binary edited content rejected", model.ResolveRestoreLocal, false, []byte("edited"), 422, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fake, c, csrf, _ := fixture(t)
+			b := &deletionBackend{fakeBackend: fake}
+			h.backend = b
+			fake.input.Conflict.Reason = model.ConflictLocalDeletePending
+			fake.input.Conflict.RemoteRevision = model.LocalDeletionRevision(fake.input.Entry.ID, fake.input.Entry.Generation)
+			fake.input.Text = tc.text
+			if err := os.WriteFile(fake.draftFile, []byte("existing historical draft"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			id := fake.input.Conflict.ID
+			res := request(t, c, h, "GET", "/api/conflicts/"+string(id), nil, "", "")
+			var view struct {
+				Reason             string `json:"reason"`
+				RemoteDeleted      bool   `json:"remote_deleted"`
+				LocalDeletePending bool   `json:"local_delete_pending"`
+			}
+			err := json.NewDecoder(res.Body).Decode(&view)
+			res.Body.Close()
+			if err != nil || !view.LocalDeletePending || view.RemoteDeleted || view.Reason != model.ConflictLocalDeletePending {
+				t.Fatalf("view=%+v err=%v", view, err)
+			}
+			in := model.ResolveRequest{ConflictID: id, Action: tc.action, ExpectedGeneration: 4, ExpectedRemoteRevision: fake.input.Conflict.RemoteRevision, Content: tc.content}
+			res = request(t, c, h, "POST", "/api/conflicts/"+string(id)+"/resolve", in, csrf, h.URL())
+			res.Body.Close()
+			if res.StatusCode != tc.status {
+				t.Fatalf("status=%d want=%d", res.StatusCode, tc.status)
+			}
+			saved, err := os.ReadFile(fake.draftFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := "existing historical draft"
+			if tc.save {
+				expected = string(tc.content)
+			}
+			if string(saved) != expected {
+				t.Fatalf("draft=%q want=%q", saved, expected)
+			}
+			if tc.status == 200 && (len(b.requests) != 1 || b.requests[0].Action != tc.action) {
+				t.Fatalf("requests=%+v", b.requests)
+			}
+			if tc.status != 200 && len(b.requests) > 0 {
+				t.Fatal("invalid request reached backend")
 			}
 		})
 	}

@@ -218,8 +218,8 @@ func (s *Store) ObserveRemoteDeletion(ctx context.Context, expected model.Entry)
 	return
 }
 
-// ResolveRemoteDeletion settles the captured generation without touching the
-// missing cloud identity. Restore stages a fresh tokenless creation at its path.
+// ResolveRemoteDeletion settles a captured cloud-deletion or unsent local
+// unlink decision. Restore stages a tokenless creation at the original path.
 func (s *Store) ResolveRemoteDeletion(ctx context.Context, r model.ResolveRequest) (e model.Entry, j model.Job, err error) {
 	if r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete {
 		return e, j, ErrInvalidState
@@ -236,7 +236,7 @@ func (s *Store) ResolveRemoteDeletion(ctx context.Context, r model.ResolveReques
 		if er := get(tx, "conflicts", string(r.ConflictID), &c); er != nil {
 			return er
 		}
-		if c.Resolved || c.Reason != model.ConflictRemoteDeleted {
+		if c.Resolved || (c.Reason != model.ConflictRemoteDeleted && c.Reason != model.ConflictLocalDeletePending) {
 			return ErrInvalidState
 		}
 		var er error
@@ -247,7 +247,15 @@ func (s *Store) ResolveRemoteDeletion(ctx context.Context, r model.ResolveReques
 		if e.Generation != r.ExpectedGeneration || c.Generation != e.Generation {
 			return model.ErrGenerationChanged
 		}
-		if e.Token == "" || c.RemoteRevision != r.ExpectedRemoteRevision || c.RemoteRevision != model.DeletedRevision(e.Token) {
+		if c.RemoteRevision != r.ExpectedRemoteRevision {
+			return model.ErrVersionChanged
+		}
+		localDeletion := c.Reason == model.ConflictLocalDeletePending
+		if localDeletion {
+			if e.Token != "" || e.LocalCheckpoint != "" || e.RemoteCheckpoint != "" || c.RemoteRevision != model.LocalDeletionRevision(e.ID, e.Generation) {
+				return model.ErrVersionChanged
+			}
+		} else if e.Token == "" || c.RemoteRevision != model.DeletedRevision(e.Token) {
 			return model.ErrVersionChanged
 		}
 		var metadata Metadata

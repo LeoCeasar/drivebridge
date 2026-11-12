@@ -2,6 +2,7 @@
 ((root) => {
   const version = input => ({generation:input.generation,remote_revision:input.remote_revision});
   const sameVersion = (a,b) => a.generation === b.generation && a.remote_revision === b.remote_revision;
+  const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
   function createQueue() {
     const records = new Map(); let running = false, chain = Promise.resolve();
     const serial = task => { const result = chain.catch(() => {}).then(task); chain = result; return result; };
@@ -31,22 +32,22 @@
         }
         records.set(r.id,r);
       } else {
-        const changed = !sameVersion(r.intent,version(input)) || r.input.remote_deleted !== input.remote_deleted || ['Base','Local','Remote'].some(side => r.input[side] !== input[side]);
+        const changed = !sameVersion(r.intent,version(input)) || r.input.remote_deleted !== input.remote_deleted || r.input.local_delete_pending !== input.local_delete_pending || ['Base','Local','Remote'].some(side => r.input[side] !== input[side]);
         r.reviewRequired = r.reviewRequired || changed || input.stale || input.blocked || r.status === 'needs_refresh';
         r.input = input; r.name = input.name;
         if (changed) { r.manual = true; r.choices = new Map(); }
       }
       if (r.reviewRequired) r.status = 'needs_refresh';
-      if ((!input.text && !input.remote_deleted) || input.blocked) r.status = 'blocked';
-      if (input.remote_deleted) r.selected = false;
+      if ((!input.text && !deletionDecision(input)) || input.blocked) r.status = 'blocked';
+      if (deletionDecision(input)) r.selected = false;
       return r;
     }
     function actionable(r) { return Boolean(r?.present && r.input && !r.input.stale && !r.input.blocked && !r.reviewRequired && !['queued','submitting','resolved'].includes(r.status)); }
-    function canSubmit(r) { return Boolean(actionable(r) && r.input.text && !r.input.remote_deleted); }
-    function canDecide(r) { return Boolean(actionable(r) && r.input.remote_deleted); }
+    function canSubmit(r) { return Boolean(actionable(r) && r.input.text && !deletionDecision(r.input)); }
+    function canDecide(r) { return Boolean(actionable(r) && deletionDecision(r.input)); }
     function select(id, selected) { const r = records.get(id); if (!r || running || (selected && !canSubmit(r))) return false; r.selected = selected; return true; }
     function edit(id,text) { const r = records.get(id); if (!r?.input?.text || r.status === 'resolved') return; r.text = text; r.seq++; if (!['queued','submitting','needs_refresh'].includes(r.status)) r.status = 'draft'; }
-    function review(id) { const r = records.get(id); if (!r?.present || (!r.input?.text && !r.input?.remote_deleted) || r.input.stale || r.input.blocked || running || ['queued','resolved'].includes(r.status)) return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
+    function review(id) { const r = records.get(id); if (!r?.present || (!r.input?.text && !deletionDecision(r.input)) || r.input.stale || r.input.blocked || running || ['queued','resolved'].includes(r.status)) return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
     function snapshot(r) { return {id:r.id,text:r.text,seq:r.seq,intent:{...r.intent}}; }
     function saved(r,s) { if (r.seq === s.seq) r.savedSeq = s.seq; }
     async function save(id,io) {

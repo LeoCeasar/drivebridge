@@ -361,6 +361,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		v := ConflictView{Hunks: []DiffHunk{}, Stale: in.Stale, RefreshWarning: safeCode(in.RefreshWarning), HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
 		v.Reason = in.Conflict.Reason
 		v.RemoteDeleted = in.Conflict.Reason == model.ConflictRemoteDeleted
+		v.LocalDeletePending = in.Conflict.Reason == model.ConflictLocalDeletePending
 		_, v.CanExportCopies = h.backend.(ConflictExporter)
 		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
 			v.Base = string(in.Base)
@@ -438,7 +439,8 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			apiError(w, err)
 			return
 		}
-		deleted := current.Conflict.Reason == model.ConflictRemoteDeleted
+		reason := current.Conflict.Reason
+		deleted := reason == model.ConflictRemoteDeleted || reason == model.ConflictLocalDeletePending
 		if (deleted && in.Action != model.ResolveRestoreLocal && in.Action != model.ResolveAcceptDelete) || (!deleted && in.Action != "") {
 			respondError(w, 400, "invalid_request")
 			return
@@ -460,7 +462,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 				apiError(w, err)
 				return
 			}
-			if (current.Conflict.Reason == model.ConflictRemoteDeleted) != deleted {
+			if current.Conflict.Reason != reason {
 				respondError(w, 409, "version_changed")
 				return
 			}

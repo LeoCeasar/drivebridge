@@ -29,7 +29,8 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 	if captured == nil {
 		return model.Entry{}, model.Job{}, store.ErrNotFound
 	}
-	deleted := captured.Reason == model.ConflictRemoteDeleted
+	localDeletion := captured.Reason == model.ConflictLocalDeletePending
+	deleted := captured.Reason == model.ConflictRemoteDeleted || localDeletion
 	if (deleted && r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete) || (!deleted && r.Action != "") {
 		return model.Entry{}, model.Job{}, model.ErrUnsupportedContent
 	}
@@ -38,8 +39,10 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 			return model.Entry{}, model.Job{}, err
 		}
 	}
-	if err = e.check(ctx); err != nil {
-		return model.Entry{}, model.Job{}, err
+	if !localDeletion {
+		if err = e.check(ctx); err != nil {
+			return model.Entry{}, model.Job{}, err
+		}
 	}
 	unlock, err := e.entryLock(ctx, captured.EntryID)
 	if err != nil {
@@ -52,6 +55,9 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 	}
 	if en.Generation != r.ExpectedGeneration || captured.Generation != r.ExpectedGeneration {
 		return en, model.Job{}, model.ErrGenerationChanged
+	}
+	if localDeletion {
+		return e.acceptDeletionDecision(ctx, en, r)
 	}
 	if captured.Reason == model.ConflictRemoteDeleted {
 		if r.Action != model.ResolveRestoreLocal && r.Action != model.ResolveAcceptDelete {
@@ -75,14 +81,7 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 				}
 			}
 		}
-		var accepted model.Entry
-		var job model.Job
-		err = e.commitDeletion(ctx, en, func() (bool, error) {
-			var commitErr error
-			accepted, job, commitErr = e.store.ResolveRemoteDeletion(ctx, r)
-			return r.Action == model.ResolveAcceptDelete, commitErr
-		})
-		return accepted, job, err
+		return e.acceptDeletionDecision(ctx, en, r)
 	}
 	if r.Action != "" {
 		return en, model.Job{}, model.ErrUnsupportedContent
@@ -139,6 +138,28 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 		return c, err
 	}
 	defer unlock()
+	en, err := e.store.Entry(ctx, c.EntryID)
+	if err != nil {
+		return c, err
+	}
+	if en.Token == "" && (c.Reason == "delete_vs_pending_edit" || c.Reason == model.ConflictLocalDeletePending) {
+		var fresh model.Conflict
+		err = e.commitDeletion(ctx, en, func() (bool, error) {
+			var commitErr error
+			fresh, commitErr = e.store.ObserveUnsentDeletion(ctx, en)
+			return false, commitErr
+		})
+		if err != nil {
+			return c, err
+		}
+		list, err := e.store.Conflicts(ctx)
+		for _, current := range list {
+			if current.ID == id {
+				return current, err
+			}
+		}
+		return fresh, errors.Join(err, store.ErrNotFound)
+	}
 	pending, err := e.store.Pending(ctx)
 	if err != nil {
 		return c, err
@@ -149,10 +170,6 @@ func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (mode
 		}
 	}
 	var cloudErr error
-	en, err := e.store.Entry(ctx, c.EntryID)
-	if err != nil {
-		return c, err
-	}
 	if en.Token != "" && (en.Kind == model.KindFile || en.Kind == model.KindDocx) {
 		if cloudErr = e.check(ctx); cloudErr != nil {
 			return c, cloudErr

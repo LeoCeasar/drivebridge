@@ -9,6 +9,8 @@
   let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '';
   let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false;
   const record = () => current && queue.records.get(current.id);
+  const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
+  const deletedLabel = r => r?.input?.local_delete_pending ? '已确认本地删除，上传已取消' : '已跟随云端删除';
   const make = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
   function message(text, error = false, owner = '') { messageOwner = owner; $('message').textContent = text; $('message').classList.toggle('error', error); $('message').hidden = !text; }
   function showSessionError() { $('session-error').hidden = false; $('workspace').hidden = true; $('settings').hidden = true; $('connection').textContent = '本机会话已失效'; }
@@ -103,8 +105,8 @@
       checkbox.addEventListener('change',() => { queue.select(r.id,checkbox.checked); renderQueue(); $(checkbox.id)?.focus(); }); select.append(checkbox);
       const file = make('td'), open = make('button',r.name || '待合并文件','text-button queue-file'); open.disabled = r.status === 'resolved'; open.addEventListener('click',() => openConflict(r.id)); file.append(open);
       const draft = make('td',!r.input ? '未打开' : !r.input.text ? '非文本，保留副本' : r.seq !== r.savedSeq ? '页面草稿已保留' : r.savedSeq || r.input.has_draft ? '本机草稿已保存' : '来源已载入，尚未修改');
-      const result = make('td'); result.append(make('span',r.status === 'queued' && r.decision === 'accept_delete' ? '已跟随云端删除' : outcomeLabels[r.status],'queue-outcome ' + r.status));
-      if (r.input?.remote_deleted && !['queued','resolved'].includes(r.status)) result.append(make('small','云端已删除，请打开文件单独决定。','queue-detail'));
+      const result = make('td'); result.append(make('span',r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status],'queue-outcome ' + r.status));
+      if (deletionDecision(r.input) && !['queued','resolved'].includes(r.status)) result.append(make('small',r.input.local_delete_pending ? '本地删除尚未完成，请打开文件单独决定。' : '云端已删除，请打开文件单独决定。','queue-detail'));
       if (r.status === 'failed') result.append(make('small',r.error || '请检查本机连接后重试。','queue-detail'));
       if (r.status === 'needs_refresh') result.append(make('small','草稿已保留；打开后刷新差异，再核对来源。','queue-detail'));
       if (r.newerDraft) result.append(make('small','本次提交后的新编辑仍保留在页面中，尚未提交。请复制保存。','queue-detail'));
@@ -186,17 +188,21 @@
   function recoveryControls() {
     const r = record(), state = recovery.conflictState(current,queue.running);
     const complete = ['queued','resolved'].includes(r?.status);
-    $('merged-text').disabled = !state.canEdit; $('merged-text').readOnly = complete || (current?.remote_deleted && queue.running);
+    $('merged-text').disabled = !state.canEdit; $('merged-text').readOnly = complete || (deletionDecision(current) && queue.running);
     $('save-draft').disabled = !state.canSaveDraft || complete || queue.running;
-    $('resolve').hidden = Boolean(current?.remote_deleted);
+    $('resolve').hidden = deletionDecision(current);
     $('resolve').disabled = queue.running || !queue.canSubmit(r);
     $('resolve').title = r?.reviewRequired || current?.stale ? '请先刷新差异并重新核对来源' : '';
-    $('reset-choices').hidden = Boolean(current?.remote_deleted);
+    $('reset-choices').hidden = deletionDecision(current);
     $('reset-choices').disabled = !state.canEdit || queue.running || complete;
     $('refresh-conflict').disabled = queue.running || complete;
-    $('remote-deleted').hidden = !current?.remote_deleted;
+    $('remote-deleted').hidden = !deletionDecision(current);
+    $('deletion-title').textContent = current?.local_delete_pending ? '这是尚未上传的本地文件，之前的删除尚未完成。' : '云端文件已删除或已移出同步目录';
+    $('deletion-description').textContent = current?.local_delete_pending ? '可以保留本地版本并上传，或确认删除本地文件并取消上传。文本可先在下方编辑。' : '可以保留本地版本并在云端重新创建文件，或确认跟随云端删除本地文件。文本可先在下方编辑。';
+    $('restore-local').textContent = current?.local_delete_pending ? '保留本地版本并上传' : '保留本地版本并重新上传';
+    $('accept-delete').textContent = current?.local_delete_pending ? '确认本地删除（取消上传）' : '跟随云端删除';
     $('restore-local').disabled = $('accept-delete').disabled = queue.running || !queue.canDecide(r);
-    $('review-sources').hidden = !r?.reviewRequired || current?.stale || (!current?.text && !current?.remote_deleted) || complete;
+    $('review-sources').hidden = !r?.reviewRequired || current?.stale || (!current?.text && !deletionDecision(current)) || complete;
     $('review-sources').disabled = queue.running;
     $('later').disabled = queue.running;
     $('export-copies').hidden = !current?.can_export_copies;
@@ -252,8 +258,8 @@
     return start === end ? `第 ${start + 1} 行前` : start + 1 === end ? `第 ${start + 1} 行` : `第 ${start + 1}–${end} 行`;
   }
   function renderHunks() {
-    $('hunk-list').replaceChildren(); $('hunk-count').textContent = current.remote_deleted ? '云端删除需要单独决定；保留时使用本地版本或下方编辑结果。' : `${current.hunks.length} 处差异，点击可定位三份来源`;
-    if (current.remote_deleted) return;
+    $('hunk-list').replaceChildren(); $('hunk-count').textContent = current.local_delete_pending ? '本地删除需要单独决定；保留时使用本地版本或下方编辑结果。' : current.remote_deleted ? '云端删除需要单独决定；保留时使用本地版本或下方编辑结果。' : `${current.hunks.length} 处差异，点击可定位三份来源`;
+    if (deletionDecision(current)) return;
     for (const h of current.hunks) {
       const row = make('div',undefined,'hunk-row' + (h.id === activeHunk ? ' active' : '')); row.dataset.hunk = h.id;
       const heading = make('div',undefined,'hunk-row-heading');
@@ -279,11 +285,11 @@
   function showConflict(r) {
     current = r.input; current.hunks ||= []; choices = r.choices; manual = r.manual; activeHunk = null;
     $('merge').hidden = false; view(activeView === 'settings' ? 'conflicts' : activeView);
-    $('merge-name').textContent = r.name; $('merge-version').textContent = current.remote_deleted ? '云端文件已不在原目录，本地修改已保留。' : `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
-    $('merge-hint').hidden = Boolean(current.remote_deleted);
+    $('merge-name').textContent = r.name; $('merge-version').textContent = current.local_delete_pending ? `本地代次 ${current.generation}，尚未上传到云端。` : current.remote_deleted ? '云端文件已不在原目录，本地修改已保留。' : `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
+    $('merge-hint').hidden = deletionDecision(current);
     renderSources(); $('merged-text').value = r.text; recoveryControls(); renderHunks();
     $('copy-paths').replaceChildren(); $('copy-paths').hidden = true;
-    draftState(r.status === 'queued' ? (r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步') : r.seq !== r.savedSeq ? '页面草稿已保留' : current.has_draft ? '已载入本机草稿' : '草稿未修改');
+    draftState(r.status === 'queued' ? r.decision === 'accept_delete' ? deletedLabel(r) : (r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步') : r.seq !== r.savedSeq ? '页面草稿已保留' : current.has_draft ? '已载入本机草稿' : '草稿未修改');
     renderConflicts();
   }
   async function openConflict(id, reload = false) {
@@ -298,7 +304,7 @@
       const r = queue.load(data,cached); stash(r);
       if (requestSeq !== openSeq) return;
       showConflict(r);
-      if (!data.text) message(data.remote_deleted ? '该文件不是可编辑文本。可直接保留本地版本并重新上传，或确认跟随云端删除。' : '该文件不是可编辑文本。原版和双方副本仍保留，请保存副本后处理。');
+      if (!data.text) message(data.local_delete_pending ? '该文件不是可编辑文本。可直接保留本地版本并上传，或确认本地删除并取消上传。' : data.remote_deleted ? '该文件不是可编辑文本。可直接保留本地版本并重新上传，或确认跟随云端删除。' : '该文件不是可编辑文本。原版和双方副本仍保留，请保存副本后处理。');
     } catch(e) { if (requestSeq === openSeq) message(e.message,true); }
   }
   $('refresh-conflict').addEventListener('click',() => { if (current && !queue.running) openConflict(current.id,true); });
@@ -324,7 +330,7 @@
     }
     renderConflicts(); recoveryControls();
     if (r && r.id === current?.id) {
-      draftState(r.status === 'queued' ? r.decision === 'accept_delete' ? '已跟随云端删除' : r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步' : r.status === 'submitting' ? '正在保存并提交本次草稿…' : '草稿已保留');
+      draftState(r.status === 'queued' ? r.decision === 'accept_delete' ? deletedLabel(r) : r.newerDraft ? '新编辑仍在页面中，请复制保存' : '已在本机接受，等待同步' : r.status === 'submitting' ? '正在保存并提交本次草稿…' : '草稿已保留');
       // Batch replies only change controls and status; they never replace editor text.
     }
     if (current) renderHunks();
@@ -340,10 +346,10 @@
   $('resolve').addEventListener('click',() => { if (current && queue.canSubmit(record())) submitFiles([current.id]); });
   async function decideDeletion(action) {
     const r = record(); if (queue.running || !queue.canDecide(r)) return;
-    if (action === 'accept_delete' && !window.confirm('确定跟随云端删除此文件？本地文件和待同步的本地修改将被删除。可先保存副本。')) return;
+    if (action === 'accept_delete' && !window.confirm(r.input.local_delete_pending ? '确定删除此尚未上传的本地文件并取消上传？本地文件和修改将被删除。可先保存副本。' : '确定跟随云端删除此文件？本地文件和待同步的本地修改将被删除。可先保存副本。')) return;
     clearTimeout(draftTimer); stash(r);
     await queue.decide(r.id,action,draftIO,batchChanged);
-    message(r.status === 'queued' ? action === 'accept_delete' ? '已接受云端删除。' : '已保留本地版本，等待重新上传并确认云端。' : '本次决定尚未接受，草稿已保留；请查看文件状态。',r.status !== 'queued');
+    message(r.status === 'queued' ? action === 'accept_delete' ? r.input.local_delete_pending ? '已确认本地删除，上传已取消。' : '已接受云端删除。' : r.input.local_delete_pending ? '已保留本地版本，等待上传并确认云端。' : '已保留本地版本，等待重新上传并确认云端。' : '本次决定尚未接受，草稿已保留；请查看文件状态。',r.status !== 'queued');
     await refresh();
   }
   $('restore-local').addEventListener('click',() => decideDeletion('restore_local'));

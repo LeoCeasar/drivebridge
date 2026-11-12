@@ -20,10 +20,15 @@ import (
 
 func stoppedConflictFixture(t *testing.T, archived bool, body []byte) (*Manager, model.MountID, model.Entry, model.Conflict) {
 	t.Helper()
+	return stoppedConflictFixtureWithIdentity(t, archived, body, "missing-file", "fixture")
+}
+
+func stoppedConflictFixtureWithIdentity(t *testing.T, archived bool, body []byte, token, reason string) (*Manager, model.MountID, model.Entry, model.Conflict) {
+	t.Helper()
 	ctx := context.Background()
 	m, id, _, _ := fixture(t, nil)
 	_, s := offlineInstallationStore(t, m, id)
-	entry, err := s.ObserveEntry(ctx, store.Observation{Remote: "local.bin", Token: "missing-file", Kind: model.KindFile})
+	entry, err := s.ObserveEntry(ctx, store.Observation{Remote: "local.bin", Token: token, Kind: model.KindFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +36,7 @@ func stoppedConflictFixture(t *testing.T, archived bool, body []byte) (*Manager,
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := model.Conflict{ID: model.ConflictID(uuid.NewString()), EntryID: entry.ID, Generation: entry.Generation, Local: entry.Local, Reason: "fixture"}
+	c := model.Conflict{ID: model.ConflictID(uuid.NewString()), EntryID: entry.ID, Generation: entry.Generation, Local: entry.Local, Reason: reason}
 	if err = s.SaveConflict(ctx, c); err != nil {
 		t.Fatal(err)
 	}
@@ -304,5 +309,136 @@ func TestRunningConflictControlsUseWorkerIPC(t *testing.T) {
 	current, err := w.services.store.Entry(ctx, entry.ID)
 	if err != nil || current.Token != "" || current.Local != entry.Local {
 		t.Fatal("running restore changed accepted binary content", current, err)
+	}
+}
+
+func TestArchivedUnsentDeletionReviewAndChoicesNeedNoAuth(t *testing.T) {
+	for _, action := range []string{model.ResolveRestoreLocal, model.ResolveAcceptDelete} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			m, mountID, entry, c := stoppedConflictFixtureWithIdentity(t, true, []byte("accepted local bytes"), "", "delete_vs_pending_edit")
+			view, err := m.Conflict(ctx, c.ID)
+			if err != nil || view.Stale || view.Conflict.Reason != model.ConflictLocalDeletePending || view.Conflict.RemoteRevision != model.LocalDeletionRevision(entry.ID, entry.Generation) || string(view.Local) != "accepted local bytes" || string(view.Draft) != "unfinished draft" {
+				t.Fatal("local deletion review required managed auth or lost captures", view, err)
+			}
+			before, err := m.Status(ctx, mountID)
+			if err != nil || before.Running || before.Queued != 1 || before.Conflicts != 1 {
+				t.Fatal("review discarded local data before an explicit choice", before, err)
+			}
+			request := model.ResolveRequest{Action: action, ConflictID: c.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: view.Conflict.RemoteRevision}
+			if err = m.ResolveConflict(ctx, request); err != nil {
+				t.Fatal("local deletion choice required managed auth", err)
+			}
+			var out struct{}
+			if err = m.withStore(ctx, mountID, "/conflicts", nil, &out, func(s *store.Store) error {
+				pending, err := s.Pending(ctx)
+				if err != nil {
+					return err
+				}
+				current, err := s.Entry(ctx, entry.ID)
+				if err != nil || current.Local != entry.Local || current.Token != "" {
+					t.Fatal("local decision lost accepted bytes", current, err)
+				}
+				metadata, err := s.Metadata(ctx, entry.ID)
+				if err != nil {
+					return err
+				}
+				if action == model.ResolveAcceptDelete {
+					if len(pending) != 0 || !metadata.Tombstone {
+						t.Fatal("accept-delete did not settle local history", pending, metadata)
+					}
+				} else if len(pending) != 1 || pending[0].State != model.StatusQueued || pending[0].Local != entry.Local || metadata.Tombstone {
+					t.Fatal("restore did not queue original local bytes", pending, metadata)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			mount, err := m.ResolveMount(ctx, string(mountID))
+			if err != nil || !mount.Archived || m.localWorker(mountID) != nil {
+				t.Fatal("local decision restored or started archived mount", mount, err)
+			}
+		})
+	}
+}
+
+func TestArchivedGenericTokenlessConflictCannotUseLocalDeletionChoices(t *testing.T) {
+	ctx := context.Background()
+	m, mountID, entry, c := stoppedConflictFixtureWithIdentity(t, true, []byte("saved overlap"), "", "overlapping edits")
+	view, err := m.Conflict(ctx, c.ID)
+	if err != nil || !view.Stale || view.Conflict.Reason != c.Reason {
+		t.Fatal("generic tokenless conflict became a deletion choice", view, err)
+	}
+	if err = m.ResolveConflict(ctx, model.ResolveRequest{Action: model.ResolveAcceptDelete, ConflictID: c.ID, ExpectedGeneration: entry.Generation}); err == nil {
+		t.Fatal("generic conflict bypassed managed resolution")
+	}
+	status, err := m.Status(ctx, mountID)
+	if err != nil || status.Running || status.Queued != 1 || status.Conflicts != 1 {
+		t.Fatal("generic conflict lost protected work", status, err)
+	}
+}
+
+func TestArchivedLocalDeletionKeepsUnknownPredecessorProtected(t *testing.T) {
+	ctx := context.Background()
+	m, mountID, entry, c := stoppedConflictFixtureWithIdentity(t, true, []byte("saved bytes"), "", "delete_vs_pending_edit")
+	view, err := m.Conflict(ctx, c.ID)
+	if err != nil || view.Stale {
+		t.Fatal(view, err)
+	}
+	if err = m.ResolveConflict(ctx, model.ResolveRequest{Action: model.ResolveRestoreLocal, ConflictID: c.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: view.Conflict.RemoteRevision}); err != nil {
+		t.Fatal(err)
+	}
+	var unknown model.Job
+	var captured model.Conflict
+	var out struct{}
+	err = m.withStore(ctx, mountID, "/conflicts", nil, &out, func(s *store.Store) error {
+		pending, err := s.Pending(ctx)
+		if err != nil || len(pending) != 1 {
+			t.Fatal(pending, err)
+		}
+		unknown, entry, err = s.Prepare(ctx, pending[0].ID)
+		if err != nil {
+			return err
+		}
+		if err = s.MarkUnknown(ctx, unknown.ID); err != nil {
+			return err
+		}
+		entry, _, err = s.Stage(ctx, entry.ID, nil, strings.NewReader("newer accepted local bytes"))
+		if err != nil {
+			return err
+		}
+		captured = model.Conflict{ID: model.ConflictID(uuid.NewString()), EntryID: entry.ID, Generation: entry.Generation, Local: entry.Local, Reason: model.ConflictLocalDeletePending, RemoteRevision: model.LocalDeletionRevision(entry.ID, entry.Generation)}
+		if err = s.SaveConflict(ctx, captured); err != nil {
+			return err
+		}
+		return s.SaveDraft(ctx, captured.ID, strings.NewReader("protected human draft"))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = m.Conflict(ctx, captured.ID)
+	if err != nil || !view.Stale || view.Conflict.Reason != model.ConflictLocalDeletePending || string(view.Draft) != "protected human draft" {
+		t.Fatal("unknown predecessor was treated as a safe deletion", view, err)
+	}
+	if err = m.ResolveConflict(ctx, model.ResolveRequest{Action: model.ResolveAcceptDelete, ConflictID: captured.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: captured.RemoteRevision}); !errors.Is(err, model.ErrUnknownResult) {
+		t.Fatal("local delete discarded an unknown predecessor", err)
+	}
+	err = m.withStore(ctx, mountID, "/conflicts", nil, &out, func(s *store.Store) error {
+		job, err := s.Job(ctx, unknown.ID)
+		if err != nil || job.State != model.StatusAwaitingVerification {
+			t.Fatal("unknown journal was changed", job, err)
+		}
+		current, err := s.Entry(ctx, entry.ID)
+		if err != nil || current.Local != entry.Local || current.Generation != entry.Generation {
+			t.Fatal("local decision changed accepted bytes", current, err)
+		}
+		metadata, err := s.Metadata(ctx, entry.ID)
+		if err != nil || metadata.Tombstone {
+			t.Fatal("local decision tombstoned protected data", metadata, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -254,6 +254,20 @@ func (m *Manager) stoppedConflict(ctx context.Context, s *store.Store, id model.
 	if err != nil {
 		return view, err
 	}
+	// A never-bound local unlink has no cloud identity to check. The store
+	// validates its journals before exposing the explicit local choices.
+	if view.Entry.Token == "" && (view.Conflict.Reason == "delete_vs_pending_edit" || view.Conflict.Reason == model.ConflictLocalDeletePending) {
+		_, refreshErr := s.ObserveUnsentDeletion(ctx, view.Entry)
+		view, err = findSummary(ctx, s, id)
+		if err != nil {
+			return view, err
+		}
+		if refreshErr != nil {
+			view.Stale = true
+			view.RefreshWarning = errorCode(refreshErr)
+		}
+		return materializeConflict(ctx, s, view)
+	}
 	spec, refreshErr := m.spec(ctx, view.Entry.MountID)
 	if refreshErr == nil {
 		var engine conflictEngine
@@ -278,6 +292,10 @@ func (m *Manager) stoppedConflict(ctx context.Context, s *store.Store, id model.
 func (m *Manager) stoppedResolve(ctx context.Context, s *store.Store, r model.ResolveRequest, build conflictEngineBuilder) error {
 	view, err := findSummary(ctx, s, r.ConflictID)
 	if err != nil {
+		return err
+	}
+	if view.Conflict.Reason == model.ConflictLocalDeletePending {
+		_, _, err = s.ResolveRemoteDeletion(ctx, r)
 		return err
 	}
 	spec, err := m.spec(ctx, view.Entry.MountID)

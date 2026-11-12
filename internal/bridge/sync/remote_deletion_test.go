@@ -201,3 +201,42 @@ func TestLocalDeletionSupersedesUploadAndDeletesCloud(t *testing.T) {
 		t.Fatal(source.deletes, source.writes, jobs, actions)
 	}
 }
+
+func TestLegacyUnsentDeletionDecisionNeedsNoCloudOrAuthentication(t *testing.T) {
+	for _, action := range []string{model.ResolveAcceptDelete, model.ResolveRestoreLocal} {
+		t.Run(action, func(t *testing.T) {
+			s, e, source, _ := setup(t, model.KindFile)
+			entry, err := s.EnsureEntry(bg, "unsent.md", model.KindFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry = stageContent(t, s, entry, "never uploaded\n")
+			c := model.Conflict{ID: "legacy-delete", EntryID: entry.ID, Generation: entry.Generation, Local: entry.Local, Reason: "delete_vs_pending_edit"}
+			if err = s.SaveConflict(bg, c); err != nil {
+				t.Fatal(err)
+			}
+			checks := 0
+			e.deps.CheckIdentity = func(context.Context) error { checks++; return os.ErrPermission }
+			source.readErr = os.ErrPermission
+			fresh, err := e.RefreshConflict(bg, c.ID)
+			if err != nil || fresh.Reason != model.ConflictLocalDeletePending || checks != 0 {
+				t.Fatal(fresh, checks, err)
+			}
+			request := model.ResolveRequest{Action: action, ConflictID: c.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: fresh.RemoteRevision}
+			if action == model.ResolveRestoreLocal {
+				request.Content = []byte("chosen local edit\n")
+			}
+			accepted, job, err := e.Resolve(bg, request)
+			if err != nil || checks != 0 || source.writes+source.deletes+source.creates != 0 {
+				t.Fatal(accepted, job, checks, err)
+			}
+			if action == model.ResolveRestoreLocal {
+				if job.ID == "" || accepted.Token != "" || blobText(t, s, accepted.Local) != "chosen local edit\n" {
+					t.Fatal(accepted, job)
+				}
+			} else if _, err = s.EntryByRemote(bg, entry.Remote); !errors.Is(err, store.ErrNotFound) {
+				t.Fatal(err)
+			}
+		})
+	}
+}

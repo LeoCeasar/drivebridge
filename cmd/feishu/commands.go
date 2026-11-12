@@ -322,9 +322,9 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	conflict.AddCommand(openConflict)
 	resolve := &cobra.Command{Use: "resolve ID", Args: exactArgs(1)}
 	resolve.Flags().String("file", "", "Merged file to submit")
-	resolve.Flags().String("action", "", "Deleted cloud file decision: restore_local or accept_delete")
+	resolve.Flags().String("action", "", "Deletion decision: restore_local or accept_delete")
 	resolve.Flags().Uint64("expected-generation", 0, "Captured local generation")
-	resolve.Flags().String("expected-remote-revision", "", "Captured cloud revision or observation identity")
+	resolve.Flags().String("expected-remote-revision", "", "Captured conflict revision or deletion marker")
 	resolve.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
 		action, filename := flagString(resolve, "action"), flagString(resolve, "file")
 		if (action != "" && action != model.ResolveRestoreLocal && action != model.ResolveAcceptDelete) || (action == "" && filename == "") || (action == model.ResolveAcceptDelete && filename != "") {
