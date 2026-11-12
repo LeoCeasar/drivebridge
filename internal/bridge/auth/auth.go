@@ -617,6 +617,18 @@ func (s *Service) Reconcile(ctx context.Context, id model.ProfileID) (Identity, 
 		return Identity{}, ErrUserMissing
 	}
 	identity, err := s.validateIdentity(e, v)
+	if errors.Is(err, ErrMissingScopes) {
+		// The verified user matches the expected identity (validateIdentity checks
+		// the identity hash before scopes) but did not grant every required scope.
+		// Keep the application and let the same identity authorize again, instead
+		// of leaving the enrollment unrecoverable.
+		e.State = "app_ready"
+		r.Enrollments[i] = e
+		if err = s.saveRegistry(r); err != nil {
+			return Identity{}, err
+		}
+		return Identity{}, ErrUserMissing
+	}
 	if err != nil {
 		return Identity{}, err
 	}

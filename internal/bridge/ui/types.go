@@ -27,16 +27,24 @@ type MountView struct {
 	CacheMaxAge                      string            `json:"cache_max_age"`
 	ID                               model.MountID     `json:"id"`
 	Name                             string            `json:"name"`
+	DisplayName                      string            `json:"display_name,omitempty"`
+	AccountName                      string            `json:"account_name,omitempty"`
+	AccountRoot                      bool              `json:"account_root,omitempty"`
+	ProfileID                        model.ProfileID   `json:"profile_id,omitempty"`
 	RemoteID                         model.RemoteID    `json:"remote_id"`
 	Mountpoint                       string            `json:"mountpoint"`
 	State                            model.MountStatus `json:"state"`
 }
 type ConfigView struct {
-	Platform   string        `json:"platform"`
-	CanRecover bool          `json:"can_recover"`
-	Profiles   []ProfileView `json:"profiles"`
-	Remotes    []RemoteView  `json:"remotes"`
-	Mounts     []MountView   `json:"mounts"`
+	Platform   string `json:"platform"`
+	CanRecover bool   `json:"can_recover"`
+	// OpenFolderLabel is the host's own file-manager name; the browser never
+	// guesses the platform. CanOpenFolder is false for fixture hosts.
+	OpenFolderLabel string        `json:"open_folder_label,omitempty"`
+	CanOpenFolder   bool          `json:"can_open_folder"`
+	Profiles        []ProfileView `json:"profiles"`
+	Remotes         []RemoteView  `json:"remotes"`
+	Mounts          []MountView   `json:"mounts"`
 }
 type ConflictSummary struct {
 	ID      model.ConflictID `json:"id"`
@@ -44,11 +52,14 @@ type ConflictSummary struct {
 	MountID model.MountID    `json:"mount_id"`
 }
 type StatusView struct {
-	Partial       bool              `json:"partial,omitempty"`
-	SchemaVersion int               `json:"schema_version"`
-	CanRetry      bool              `json:"can_retry"`
-	Mounts        []MountView       `json:"mounts"`
-	Conflicts     []ConflictSummary `json:"conflicts"`
+	Platform        string            `json:"platform,omitempty"`
+	OpenFolderLabel string            `json:"open_folder_label,omitempty"`
+	CanOpenFolder   bool              `json:"can_open_folder"`
+	Partial         bool              `json:"partial,omitempty"`
+	SchemaVersion   int               `json:"schema_version"`
+	CanRetry        bool              `json:"can_retry"`
+	Mounts          []MountView       `json:"mounts"`
+	Conflicts       []ConflictSummary `json:"conflicts"`
 }
 type ConfigRequest struct {
 	MountID                          model.MountID   `json:"mount_id,omitempty"`
@@ -124,6 +135,14 @@ type ConflictCopies struct {
 }
 type ConflictExporter interface {
 	ExportConflict(context.Context, model.ConflictID) (ConflictCopies, error)
+}
+
+// ResolveVersionReader lets the accept-merge endpoint check the stored
+// generation and remote revision without re-reading the cloud. The authoritative
+// cloud recheck is part of Backend.Resolve; reading it twice only serializes two
+// more Feishu round trips per file in a batch.
+type ResolveVersionReader interface {
+	ConflictForResolve(context.Context, model.ConflictID) (ConflictInputs, error)
 }
 type Backend interface {
 	Status(context.Context) (StatusView, error)

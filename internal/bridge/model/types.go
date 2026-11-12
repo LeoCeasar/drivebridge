@@ -301,6 +301,10 @@ type DirectoryIndexStatus struct {
 
 type MountStatus struct {
 	DirectoryIndex *DirectoryIndexStatus `json:"directory_index,omitempty"`
+	// CacheBytes is the clean-body cache size observed by the last periodic
+	// sweep (store blobs plus fetched VFS data). Nil until measured; it is an
+	// observation for display, never a quota decision.
+	CacheBytes *int64 `json:"cache_bytes,omitempty"`
 	SchemaVersion  int                   `json:"schema_version"`
 	MountID        MountID               `json:"mount_id"`
 	Running        bool                  `json:"running"`

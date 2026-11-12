@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -335,12 +336,17 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	indexedRun := metadataIndexedRun(engine.Run, func(ctx context.Context) error {
 		return overlayFS.WarmDirectoriesWithNotify(ctx, v.NotifyManagedDirectoryChanged)
 	}, dirs, indexWake)
+	var cacheObserved atomic.Int64
+	cacheObserved.Store(-1)
 	backgroundRun := metadataIndexedRun(indexedRun, func(ctx context.Context) error {
-		_, err := sweepCleanBodies(ctx, s, v, overlayFS.NewObject, cacheAge, spec.Mount.CacheMaxBytes, time.Now().UTC())
+		result, err := sweepCleanBodies(ctx, s, v, overlayFS.NewObject, cacheAge, spec.Mount.CacheMaxBytes, time.Now().UTC())
+		if err == nil {
+			cacheObserved.Store(result.BytesAfter)
+		}
 		return err
 	}, 5*time.Minute)
 	success = true
-	return &workerServices{store: s, runtime: native, run: backgroundRun, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
+	return &workerServices{store: s, runtime: native, run: backgroundRun, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
 		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {

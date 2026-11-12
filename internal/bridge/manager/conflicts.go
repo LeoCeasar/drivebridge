@@ -97,12 +97,12 @@ func findSummary(ctx context.Context, s *store.Store, id model.ConflictID) (Conf
 func (w *worker) conflicts(ctx context.Context) ([]ConflictView, error) {
 	return conflictSummaries(ctx, w.services.store)
 }
-func (w *worker) conflictDetail(ctx context.Context, id model.ConflictID) (ConflictView, error) {
+func (w *worker) conflictDetail(ctx context.Context, id model.ConflictID, refresh bool) (ConflictView, error) {
 	view, err := findSummary(ctx, w.services.store, id)
 	if err != nil {
 		return view, err
 	}
-	if w.services.refreshConflict != nil {
+	if refresh && w.services.refreshConflict != nil {
 		fresh, refreshErr := w.services.refreshConflict(ctx, id)
 		if fresh.ID != "" {
 			view, err = findSummary(ctx, w.services.store, id)
@@ -152,14 +152,27 @@ func (m *Manager) findConflict(ctx context.Context, id model.ConflictID) (Confli
 	return ConflictView{}, store.ErrNotFound
 }
 func (m *Manager) Conflict(ctx context.Context, id model.ConflictID) (ConflictView, error) {
+	return m.conflictView(ctx, id, true)
+}
+
+// ConflictForResolve returns the locally stored versions without re-reading the
+// cloud. Accepting a merge is rechecked against the cloud exactly once, inside
+// the worker's resolve step, so a pre-read here would only repeat that round trip
+// (two more serialized lark-cli processes per file) while holding the file's
+// entry lock.
+func (m *Manager) ConflictForResolve(ctx context.Context, id model.ConflictID) (ConflictView, error) {
+	return m.conflictView(ctx, id, false)
+}
+func (m *Manager) conflictView(ctx context.Context, id model.ConflictID, refresh bool) (ConflictView, error) {
 	summary, err := m.findConflict(ctx, id)
 	if err != nil {
 		return summary, err
 	}
 	var out ConflictView
 	err = m.withStore(ctx, summary.Entry.MountID, "/conflict", struct {
-		ID model.ConflictID `json:"id"`
-	}{id}, &out, func(s *store.Store) error {
+		ID        model.ConflictID `json:"id"`
+		NoRefresh bool             `json:"no_refresh,omitempty"`
+	}{id, !refresh}, &out, func(s *store.Store) error {
 		out, err = m.stoppedConflict(ctx, s, id, m.buildConflictEngine)
 		return err
 	})

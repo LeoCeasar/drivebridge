@@ -19,6 +19,7 @@ class Element {
   replaceChildren(...items) { this.children = []; if (this.tag === 'select') this.value = ''; this.append(...items); }
   addEventListener(name,fn) { this.listeners[name] = fn; }
 }
+const text = e => (e.textContent || '') + (e.children || []).map(text).join('');
 const elements = new Map();
 const document = {getElementById(id) { if (!elements.has(id)) elements.set(id,new Element(id === 'discovery-profile' ? 'select' : 'div')); return elements.get(id); },createElement(tag) { return new Element(tag); }};
 const calls = [], pending = new Map();
@@ -38,7 +39,8 @@ const api = async (route,method = 'GET',body) => {
   assert.match(elements.get('discovery-login-session').textContent,/应用独立登录窗口/);
   assert.match(elements.get('discovery-login-component').textContent,/自动核验身份/);
   assert.equal(elements.get('discovery-login-result').hidden,true);
-  assert.match(elements.get('discovery-sources').children[2].textContent,/部分完成/);
+  assert.match(text(elements.get('discovery-sources').children[2]),/隐藏共享入口.*部分完成/);
+  assert.match(text(elements.get('discovery-sources').children[0]),/个人目录入口/,'counts are entrance folders, not files');
   assert.equal(elements.get('discovery-entries').children.length,1);
   assert.equal(await view.beginLogin('unauthorized'),false);
   const first = view.beginLogin('a');
@@ -57,13 +59,13 @@ const api = async (route,method = 'GET',body) => {
   assert.equal(elements.get('discovery-result-title').textContent,'登录完成');
   assert.match(elements.get('discovery-feedback').textContent,/登录完成/);
   assert.match(elements.get('discovery-result-summary').textContent,/2 个去重目录入口/);
-  assert.match(elements.get('discovery-result-mountpoint').textContent,/账号盘挂载位置：\/Volumes\/工作盘/);
   assert.match(elements.get('discovery-result-guidance').textContent,/可以关闭登录窗口/);
   assert.match(elements.get('discovery-result-guidance').textContent,/重新扫描/);
   cachedView.state = 'partial'; await view.load();
   assert.equal(elements.get('discovery-login-result').hidden,true,'partial data cannot claim login completion');
   assert.ok(!elements.get('discovery-feedback').textContent.includes('登录完成'),'partial state cannot retain a completed-login notice');
-  assert.match(elements.get('discovery-last-scan').textContent,/\/Volumes\/工作盘/,'partial scans preserve the existing mountpoint');
+  assert.equal(elements.get('discovery-mountpoint').textContent,'/Volumes/工作盘','partial scans preserve the existing mountpoint');
+  assert.ok(!elements.get('discovery-last-scan').textContent.includes('/Volumes'),'the mount location is shown once, not repeated in the scan line');
   assert.equal(loginResult({...cachedView,state:'stale'}).visible,false);
   assert.equal(loginResult({...cachedView,state:'complete',snapshot:{complete:false}}).visible,false,'connected helper does not prove scan or identity completion');
   assert.equal(loginResult({...cachedView,state:'needs_login'}).visible,false);

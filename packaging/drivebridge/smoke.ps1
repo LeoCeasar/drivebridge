@@ -16,7 +16,7 @@ Run python @("$PSScriptRoot/package.py", 'verify', '--root', $Payload)
 $m = Get-Content (Join-Path $Payload 'manifest.json') -Raw | ConvertFrom-Json
 Run python @("$PSScriptRoot/package.py", 'preflight', '--platform', 'windows', '--arch', $m.architecture)
 if (-not $m.mount) { throw 'NOT VERIFIED: CLI-only package cannot pass mount gate' }
-$driver = Get-ItemProperty 'HKLM:\SOFTWARE\WinFsp' -ErrorAction SilentlyContinue
+$driver = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' -ErrorAction SilentlyContinue
 if (-not $driver -or -not (Test-Path (Join-Path $driver.InstallDir 'bin/winfsp-x64.dll'))) { throw 'NOT VERIFIED: WinFsp absent' }
 # Native runner supplies a disposable WinFsp drive letter. A normal NTFS directory cannot pass.
 if ($MountPoint -notmatch '^[A-Za-z]:\\?$') { throw 'Provide disposable WinFsp drive root' }

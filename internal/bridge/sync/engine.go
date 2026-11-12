@@ -40,16 +40,21 @@ type Options struct {
 	Now                             func() time.Time
 	Concurrency                     int
 	PollInterval, DirectoryInterval time.Duration
+	// ForegroundGrace is how long background cloud work yields after an
+	// interactive conflict request. Zero selects the default; negative disables
+	// the gate entirely.
+	ForegroundGrace time.Duration
 }
 type Engine struct {
-	store     *store.Store
-	source    Source
-	publisher Publisher
-	deps      Dependencies
-	opt       Options
-	locks     sync.Map
-	retryMu   sync.Mutex
-	retries   map[model.JobID]retryState
+	store      *store.Store
+	source     Source
+	publisher  Publisher
+	deps       Dependencies
+	opt        Options
+	locks      sync.Map
+	retryMu    sync.Mutex
+	retries    map[model.JobID]retryState
+	foreground foregroundGate
 }
 
 func New(d Dependencies, o Options) (*Engine, error) {

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>DriveBridge Windows 操作手册</title>
+  <style>
+    :root{--paper:#f6faf8;--white:#fff;--ink:#193a37;--text:#314743;--muted:#62736e;--teal:#087f79;--teal-light:#e6f4ef;--line:#d9e5df;--amber:#835d13;--amber-light:#fff5da;--red:#9d3f35;--red-light:#fff0eb;--max:1160px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--text);font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB",sans-serif;font-size:16px;line-height:1.85}a{color:var(--teal);text-underline-offset:4px}a:hover{text-decoration-thickness:2px}button{font:inherit}a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--teal);outline-offset:4px}::selection{background:#c5e9df;color:var(--ink)}
+    .skip{position:absolute;left:20px;top:-70px;background:var(--ink);color:white;padding:8px 16px;z-index:10}.skip:focus{top:12px}.page{max-width:var(--max);margin:auto;padding:0 32px}.masthead{border-bottom:1px solid var(--line)}.masthead .page{display:flex;justify-content:space-between;align-items:center;gap:20px;padding-top:21px;padding-bottom:21px}.brand{font-size:20px;font-weight:700;letter-spacing:-.5px;color:var(--ink)}.edition{font-size:13px;color:var(--muted)}.hero{padding-top:64px;padding-bottom:42px}.hero h1{font-size:clamp(32px,5vw,52px);line-height:1.25;letter-spacing:-1.6px;color:var(--ink);margin:0 0 20px;font-weight:650}.hero .lead{font-size:19px;max-width:740px;margin:0;color:var(--muted)}.toolbar{display:flex;gap:20px;align-items:center;margin-top:24px;font-size:14px;flex-wrap:wrap}.print{border:1px solid var(--line);background:var(--white);color:var(--ink);padding:6px 16px;cursor:pointer;border-radius:4px}.print:hover{border-color:var(--teal)}
+    .overview{border:1px solid var(--line);background:var(--white);border-top:4px solid var(--teal);padding:25px 28px 24px;margin-bottom:48px}.overview h2{margin:0 0 10px;font-size:21px;color:var(--ink);display:flex;gap:14px;align-items:center;flex-wrap:wrap}.overview p{margin:0}.metadata{margin:22px 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 24px;border-top:1px solid var(--line);padding-top:18px}.metadata div{min-width:0}.metadata dt{color:var(--muted);font-size:12px}.metadata dd{margin:2px 0 0;font-size:14px;overflow-wrap:anywhere}.status{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:12px;line-height:1.5;padding:4px 9px;border-radius:3px;font-weight:500;background:#edf1ef;color:#53645e;vertical-align:middle}.status:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.status.verified{background:var(--teal-light);color:#17644d}.status.partial,.status.blocked{background:var(--amber-light);color:var(--amber)}.status.failed{background:var(--red-light);color:var(--red)}
+    .layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px;align-items:start}.toc{position:sticky;top:26px;font-size:13px}.toc h2{font-size:14px;color:var(--ink);margin:0 0 12px}.toc ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--line)}.toc li a{display:block;padding:6px 0 6px 17px;text-decoration:none;color:var(--muted);position:relative}.toc li a:hover,.toc li a[aria-current="true"]{color:var(--teal)}.toc li a[aria-current="true"]:before{position:absolute;left:-2px;top:11px;bottom:11px;width:3px;background:var(--teal);content:""}.toc .scope{margin-top:22px;color:var(--muted);font-size:12px;line-height:1.8}.content{min-width:0}.intro{padding-bottom:36px;border-bottom:1px solid var(--line)}h2,h3,h4{color:var(--ink);line-height:1.5}h2{font-size:26px;margin:0 0 20px;letter-spacing:-.5px}h3{font-size:18px;margin:28px 0 12px}p{margin:0 0 14px}ul,ol{padding-left:1.4em}li{padding-left:.25em;margin:7px 0}code{font-family:ui-monospace,Consolas,"SFMono-Regular",monospace;font-size:.88em;background:#edf3ef;padding:2px 5px;overflow-wrap:anywhere;border-radius:3px}pre{background:#f0f5f2;border:1px solid var(--line);padding:15px 18px;overflow:auto;line-height:1.7;font-size:13px}pre code{padding:0;background:none}.pre-label{font-size:12px;color:var(--muted);margin:18px 0 -8px}.note{border-left:3px solid var(--teal);background:var(--teal-light);padding:15px 18px;margin:20px 0;font-size:14px}.note p:last-child{margin-bottom:0}.note.warning{border-color:#b78d35;background:var(--amber-light)}.note.danger{border-color:var(--red);background:var(--red-light)}.step{padding:42px 0;border-bottom:1px solid var(--line)}.step-head{display:flex;align-items:flex-start;gap:18px;margin-bottom:20px}.step-number{flex:0 0 35px;color:var(--teal);font-size:31px;font-weight:300;line-height:1.35;font-variant-numeric:tabular-nums}.step-head h2{margin:0;font-size:25px}.step-head .status{margin-top:9px}.guide{padding-left:0;list-style:none;counter-reset:action}.guide>li{counter-increment:action;position:relative;padding-left:30px;margin:14px 0}.guide>li:before{content:counter(action);position:absolute;left:0;top:3px;border:1px solid #bfd5cc;color:var(--teal);width:20px;height:20px;line-height:18px;text-align:center;font-size:12px;border-radius:50%}.expected{font-size:14px;color:var(--muted)}.evidence{margin-top:27px;padding-top:20px;border-top:1px dashed var(--line)}.evidence h3{margin:0 0 10px;font-size:15px}.evidence p{font-size:14px}.evidence .observation{color:var(--ink)}.checks{font-size:13px;color:var(--muted);padding-left:1.4em;margin-bottom:0}.empty-shot{margin:16px 0 0;padding:15px 18px;border:1px dashed #c8d8d0;color:var(--muted);font-size:13px;background:#f9fcfa}.screenshot{margin:20px 0 0;background:white;border:1px solid var(--line)}.screenshot img{display:block;max-width:100%;height:auto;margin:auto;cursor:zoom-in}.screenshot figcaption{border-top:1px solid var(--line);padding:10px 14px;font-size:12px;color:var(--muted);line-height:1.7}.shot-button{display:block;padding:0;border:0;background:transparent;width:100%;cursor:zoom-in}.shot-button:focus-visible{outline-offset:0}.record{padding:42px 0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;line-height:1.7}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:12px 10px}th{font-weight:600;color:var(--ink);background:#edf4ef}td:first-child{width:34%}td .status{font-size:11px}table p{margin:0}.legend{display:flex;gap:10px 16px;flex-wrap:wrap;margin:18px 0}.legend span{font-size:12px;color:var(--muted)}details{border-bottom:1px solid var(--line);padding:15px 0}summary{cursor:pointer;color:var(--ink);font-weight:550}details p{font-size:14px;margin:12px 0 0}footer{border-top:1px solid var(--line);padding-top:26px;padding-bottom:38px;margin-top:24px;color:var(--muted);font-size:12px}footer p{margin-bottom:6px}.no-script{padding:20px;border:1px solid #d4ae62;background:var(--amber-light)}dialog{max-width:min(95vw,1500px);max-height:94vh;border:0;padding:12px;background:white;color:var(--ink)}dialog::backdrop{background:rgba(14,37,31,.75)}dialog img{max-width:100%;max-height:80vh;object-fit:contain;display:block;margin:auto}.dialog-top{display:flex;justify-content:space-between;gap:20px;align-items:center;font-size:13px;margin-bottom:10px}.dialog-top p{margin:0}.dialog-top button{border:1px solid var(--line);padding:3px 12px;background:var(--paper);cursor:pointer}.print-only{display:none}
+    @media(max-width:850px){.page{padding-left:24px;padding-right:24px}.layout{grid-template-columns:1fr;gap:28px}.toc{position:static;border-bottom:1px solid var(--line);padding-bottom:22px}.toc ol{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.toc .scope{margin-top:12px}.hero{padding-top:40px}.overview{margin-bottom:30px}.metadata{grid-template-columns:repeat(2,minmax(0,1fr))}.step{padding:32px 0}}
+    @media(max-width:480px){body{font-size:15px}.page{padding-left:16px;padding-right:16px}.masthead .page{align-items:flex-start}.edition{font-size:11px;text-align:right;max-width:130px}.hero h1{letter-spacing:-1px}.hero .lead{font-size:17px}.overview{padding:19px 18px}.overview h2{font-size:19px}.metadata{grid-template-columns:1fr 1fr;gap:12px}.step-head{gap:12px}.step-head h2{font-size:22px}.step-number{flex-basis:29px;font-size:28px}.toolbar{gap:16px}.toc ol{font-size:12px}.note{padding:13px 15px}.record{padding-top:32px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+    @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{background:white;font-size:10.5pt;line-height:1.7;color:#20382f}.page{max-width:none;padding-left:0;padding-right:0}.masthead .page{padding-top:0;padding-bottom:12px}.hero{padding-top:22px;padding-bottom:22px}.hero h1{font-size:28pt}.hero .lead{font-size:12pt}.overview{margin-bottom:22px;padding:15px 18px}.toolbar,.toc,.skip,dialog{display:none!important}.layout{display:block}.metadata{grid-template-columns:repeat(3,minmax(0,1fr))}.step{padding:24px 0}.step-head h2,h2{font-size:18pt}.step-head{break-after:avoid}.step-number{font-size:23pt}.evidence,.note,.screenshot,pre,tr{break-inside:avoid}.screenshot img{max-height:155mm;object-fit:contain}.screenshot{max-width:100%}.empty-shot{font-size:9pt}.record{padding-top:24px}a{color:inherit;text-decoration:none}footer{margin-top:15px;padding-bottom:0}.print-only{display:block}@page{size:A4;margin:17mm 16mm 18mm}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">跳到操作步骤</a>
+  <header class="masthead"><div class="page"><div class="brand">DriveBridge</div><div class="edition">Windows 客户端操作手册<br><span id="edition-date">2026-11-12</span></div></div></header>
+  <div class="page">
+    <section class="hero" aria-labelledby="title"><h1 id="title">从飞书共享目录，<br>到 Windows 资源管理器。</h1><p class="lead">在 Windows 11 上安装、授权、挂载与同步的逐步说明，命令默认使用 PowerShell。每一步同时保留本轮实机操作结果，便于区分使用方法与已经验证的能力。</p><div class="toolbar"><button type="button" class="print" id="print-button">打印或保存 PDF</button><a href="#validation">查看实际验证记录</a><a href="Windows问题报告.md">Windows 问题报告</a><a href="操作手册.html">macOS 手册</a></div></section>
+    <section class="overview" aria-labelledby="overview-title"><h2 id="overview-title">本轮验收结论 <span class="status partial" id="overall-status">部分验证</span></h2><p id="overall-summary">Windows 便携包 r7 已完成核心同步链路、冷热读取和两份冲突一次批量提交的实测，管理页已改版。授权中断恢复已在真实账号上通过。MSI 安装和登录自启动尚未执行。</p><dl class="metadata" id="metadata"></dl></section>
+    <div class="layout">
+      <nav class="toc" aria-label="操作目录"><h2>操作顺序</h2><ol id="toc-list"></ol><p class="scope">本页以 Windows 11 x64 为操作环境，使用未签名便携包完成验收。macOS 结果见 <a href="操作手册.html">macOS 手册</a>；Linux 未做实机验收。</p></nav>
+      <main class="content" id="main">
+        <section class="intro" id="before"><h2>开始前</h2><p>准备自己的飞书账号、可访问的共享文件夹，以及当前用户可写的本机挂载位置。管理页使用本机浏览器；同步由独立的后台 Worker 进程运行，命令行示例默认使用 PowerShell 7（Windows PowerShell 5.1 也可运行，部分 .NET 行为不同，见“遇到问题时”）。</p><div class="note warning"><p><strong>本页记录开发版状态。</strong>只有包含桌面托盘、WinFsp 挂载引擎与 WebView2 登录组件的完整 Windows x64 桌面包，才能走完本手册。纯 CLI 包、<code>--headless</code> 预览或没有 WinFsp 的环境，均不能算作完整桌面客户端验收。本轮使用未签名便携包（r6 首轮验收，r7 修复后复测）；MSI 已构建但未安装。</p></div><p>新建 .md 默认上传为飞书原生文档并投影为本地 Markdown，可使用三方合并；既有普通 .md 文件走普通文件路径，自带基准三方合并。其他普通文件发生并发修改时保留冲突副本。WinFsp 目录挂载要求父目录存在、末级目录不存在；不要把挂载点放在已有内容的目录上。先在共享空间中新建一个专用测试文件夹。测试只放新建的文本、Markdown 和子目录；不要使用已有业务资料。手册中的文件名和内容是可自行创建的测试样例。</p><div class="legend"><span><b class="status verified">已验证</b> 有本轮执行证据</span><span><b class="status partial">部分验证</b> 尚有条件未满足或发现缺陷</span><span><b class="status blocked">受阻</b> 已发现阻塞</span><span><b class="status pending">未执行</b> 无实际操作证据</span></div></section>
+        <div id="steps"></div>
+        <section class="record" id="formal-owned-login"><h2>Windows 原生登录验收状态</h2><p>Windows 正式接入使用应用自有的 WebView2 登录窗口（随包登录组件，需要 Microsoft Edge WebView2 Runtime），不要求浏览器扩展，也不读取日常浏览器 Cookie。本轮在便携包中验证：官方页面登录、账号核验、可见共享目录发现、关闭窗口后继续扫描，以及桌面与登录组件重启后复用会话。</p><p>尚未验证：MSI 安装后的登录入口、Windows 注销或重启后的会话复用、双真实账号隔离、有隐藏共享入口账号的目录增减、企业 SSO 变体。登录窗口只承担登录与目录发现，不承诺整站浏览兼容。</p></section>
+        <section class="record" id="platforms"><h2>其他平台参考</h2><p>下表来自当前项目说明与本轮实测，不能代替在对应操作系统上的安装、驱动和同步验证。</p><div class="table-wrap"><table><thead><tr><th>平台</th><th>桌面入口与运行条件</th><th>本手册覆盖</th></tr></thead><tbody><tr><td>Windows x64</td><td>无控制台桌面 EXE（<code>bin\drivebridge-desktop.exe</code>）与用户快捷方式；挂载需要 WinFsp（支持自定义安装路径）；应用内登录需要 WebView2 Runtime。登录自启动使用当前用户的交互式计划任务。MSI 为当前用户安装，默认位置 <code>%LOCALAPPDATA%\Programs\DriveBridge</code>。</td><td>便携包本轮实机验收；MSI、自启动待测</td></tr><tr><td>macOS</td><td><code>DriveBridge.app</code> 菜单栏入口；完整挂载需要 macFUSE；应用内原生登录要求 macOS 14 或更新版本。</td><td>见 <a href="操作手册.html">macOS 手册</a></td></tr><tr><td>Linux</td><td>桌面入口或 <code>launch-desktop.sh</code>；挂载需要 FUSE3。原生托盘还需要 GTK3、GIO、Ayatana AppIndicator 及可用的桌面托盘服务；应用内原生网页登录当前不可用。</td><td>未做 Linux 实机验收</td></tr></tbody></table></div><p>本机常用位置：用户配置 <code>%APPDATA%\DriveBridge\config.json</code>；运行状态、Store、VFS 缓存与 Worker 日志 <code>%LOCALAPPDATA%\DriveBridge\State</code>（每个挂载的日志在 <code>mounts\&lt;mount_id&gt;\logs</code>）。便携包与 MSI 共用同一份当前用户配置和状态。</p></section>
+        <section class="record" id="validation"><h2>实际验证记录</h2><p id="record-summary">本表汇总本轮记录。操作说明中的“应看到”是验收目标，不代表已经达到。</p><div class="table-wrap"><table><thead><tr><th>步骤</th><th>本轮状态</th><th>实际观察</th></tr></thead><tbody id="record-rows"></tbody></table></div><div class="note"><p>截图只展示实际截取的界面。没有执行、没有截图或截图文件缺失时，本页会直接标明。截图已遮盖授权二维码、短期授权链接、账号与目录标识及企业地址；不保存密码、令牌或凭据。</p></div></section>
+        <section class="record" id="mount-management"><h2>移除挂载与后台拉取过滤</h2><p>在“文件与同步”点击对应项的“停止同步”可暂时停用；点击“移除挂载”可从常规列表移除该配置。移除不会删除飞书文件，会保留本机缓存、待上传任务和冲突副本，盘符或目录挂载点随之释放。打开“已移除挂载（本机数据保留）”可恢复配置，恢复后仍保持停止，需另行点击“启动挂载”。</p><p>在“账号与目录”展开“后台拉取过滤（可选）”，选择挂载并编辑后缀输入框，默认 <code>.log, .db</code>，可追加 <code>.sqlite</code> 等后缀。以逗号、空格或分号分隔，留空保存表示不排除。保存后无需重启挂载。</p><p>过滤仅阻止后台拉取正文。文件名保持可见，显式打开、<code>Get-Content</code> 或 <code>Select-String</code> 可按需下载，本地新增与修改仍会上传。内容搜索首次读取会下载整文件，大量搜索会消耗带宽和缓存；搜索未上传的修改时读取本机内容，不代表云端已确认。</p><pre><code># 只在专用测试目录内搜索，避免一次下载整个账号盘
+Get-ChildItem -LiteralPath $ApprovedTestFolder -Recurse -File | Select-String -Pattern 'local-v2'</code></pre><p>本轮在独立 <code>X:</code> 盘验证：移除后盘符释放，11 个缓存文件共 2889 字节保留；恢复配置后保持停止，显式启动后重新可读。临时把 <code>.txt</code> 加入过滤后，显式读取仍得到完整正文，结束后已恢复原规则。</p><div data-shot="assets/windows-10-pull-policy.png" data-caption="管理页中已保存的后台拉取过滤设置；结束后已恢复原规则。"></div><div data-shot="assets/windows-11-archived-mount.png" data-caption="X: 盘配置在“已移除挂载”区域保留，可以恢复；恢复后保持停止。"></div></section>
+        <section class="record" id="plain-markdown-merge"><h2>普通 Markdown 的自动合并</h2><p>普通云盘 <code>.md</code> 文件（包括大写 <code>.MD</code>）支持三方同步，无需另行开启。系统保留上次确认同步的基准：仅本地变化时上传本地；仅云端变化时更新本地；双方改动相同则确认；双方修改不同位置时自动合并。</p><p>双方修改重叠且不一致时，保留基准、本地、云端三份内容，进入“冲突与合并”。在 diff 页面核对、编辑并提交；如果提交前云端或本地又变化，草稿保留，需要刷新后重新确认。提交被接受表示排队同步，云端回读核验完成后才显示已确认。</p><p>非 Markdown 文件继续使用覆盖方式。自动合并与文本编辑限有效 UTF-8、无 NUL、每份正文及合并结果不超过 10 MiB；保留 CRLF 与末尾换行状态，复杂差异保守保留冲突。飞书接口没有原子条件写入能力，仍存在短暂竞争窗口。</p><p>Windows 上普通 Markdown 三方合并、重读云端版本和草稿保护的回归测试通过；本轮真实云端冲突使用的是飞书原生文档投影，没有对普通 Markdown 做真实飞书双向冲突。</p></section>
+<section class="record" id="hidden-shared-sync">
+<h2>开启或关闭隐藏共享文件夹同步</h2>
+<p>此开关针对飞书中被隐藏的共享文件夹，不是 Windows 中带“隐藏”属性的本地文件夹。默认开启，每个账号独立保存。</p>
+<h3>操作步骤</h3>
+<ol class="guide">
+<li>从任务栏通知区域的 DriveBridge 托盘菜单打开管理页，进入“账号与目录”。</li>
+<li>在“已授权账号”下拉框中选择需要设置的账号；切换账号后，开关显示该账号自己的设置。</li>
+<li>找到“同步飞书中隐藏的共享文件夹”：勾选为开启，取消勾选为关闭。修改会自动保存，无需另点保存按钮，也不需要重新登录或重新挂载。</li>
+<li>等待页面显示“已开启隐藏共享同步”或“已关闭隐藏共享同步”。关闭后，“隐藏共享”来源显示“已暂停同步（保留清单）”。</li>
+<li>需要恢复时，重新勾选同一开关。已知目录恢复原路径，保留的待上传任务继续处理；新出现的目录入口由后续扫描发现，也可点击“重新扫描”更新。</li>
+</ol>
+<h3>开关会影响什么</h3>
+<div class="table-wrap"><table><thead><tr><th>设置</th><th>账号盘中的行为</th></tr></thead><tbody>
+<tr><td>开启（默认）</td><td>包含隐藏共享入口，按需读取文件并处理后台同步。</td></tr>
+<tr><td>关闭</td><td>仅从隐藏共享来源发现的目录会从账号盘隐藏，暂停后续目录扫描、正文刷新及新上传、重命名或删除任务；本机缓存、待上传内容、冲突和草稿保留。</td></tr>
+</tbody></table></div>
+<p>个人、可见共享及手动添加等明确入口仍可同步；单独创建的其他挂载不受此开关影响。</p>
+<div class="note"><p>关闭不是删除云端文件，也不是撤销访问权限。已开始的请求可能完成，正在打开或仍有本机写入的文件可能暂时保留显示（资源管理器窗口停留在该目录时尤其明显）。保留清单不代表这些入口正在同步。</p></div>
+<h3>本轮验证记录</h3>
+<p>本机已验证取消勾选与重新开启都能保存并给出反馈，测试后恢复默认开启。本次账号的隐藏共享来源为 0 项，因此目录增减行为没有实际可观察对象，待有隐藏入口的账号复测。</p>
+<div data-shot="assets/windows-09-hidden-sharing.png" data-caption="本机管理页中的隐藏共享开关；已实测保存与恢复，本账号隐藏入口为 0。"></div>
+</section>
+        <section class="record" id="help"><h2>遇到问题时</h2>
+          <details><summary>WinFsp 已安装，诊断仍提示驱动缺失</summary><p>WinFsp 的安装目录记录在 32 位注册表视图 <code>HKLM\SOFTWARE\WOW6432Node\WinFsp</code> 的 <code>InstallDir</code>。本版已按该视图识别自定义安装路径（如 <code>D:\Work\WinFsp</code>）。若仍失败，用下面命令确认记录与 <code>bin\winfsp-x64.dll</code> 均存在，必要时用 WinFsp 安装包修复安装。</p><pre><code>Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' | Select-Object InstallDir
+&amp; $DriveBridge feishu doctor --json</code></pre></details>
+          <details><summary>启动后没有托盘图标</summary><p>Windows 默认把新图标收进通知区域溢出菜单：点击任务栏右下角的 <code>^</code> 查看，可拖到任务栏常驻，或在“设置 → 个性化 → 任务栏 → 其他系统托盘图标”中打开 DriveBridge。确认运行的是 <code>drivebridge-desktop.exe</code> 完整桌面包，且在当前用户的交互式桌面中启动。能够打开管理页，只能证明本机服务可用；请另行确认图标可见以及菜单可以点击。</p></details>
+          <details><summary>管理页提示本机会话失效</summary><p>管理页入口使用短期、一次性的本机引导凭证；桌面进程重启后，旧标签页会话失效。不要从浏览器历史打开旧地址，从托盘“打开管理页”或运行 <code>&amp; $DriveBridge desktop start</code> 重新打开新标签页。</p></details>
+          <details><summary>挂载失败或目录看起来是空的</summary><p>查看管理页中的挂载状态、账号权限和共享文件夹标识，再确认 WinFsp 可用。目录挂载点的父目录必须存在、末级目录必须不存在（由 WinFsp 创建）；盘符挂载点不能已被占用。配置已保存并不表示已经挂载。</p></details>
+          <details><summary>资源管理器里文件显示 0 KB</summary><p>尚未下载正文的占位文件在列表中显示 0 KB，这不代表文件为空。r7 起，第一次打开时会先下载正文，程序拿到的是真实大小和完整内容；r6 及更早版本中，按长度读取的程序（如 Windows PowerShell 5.1 的 <code>[IO.File]::ReadAllBytes</code>）第一次可能读到空内容（问题报告第 13 项）。删除或移动冷文件同样会先下载正文；网络不可用、下载失败时，该文件暂时不能删除或改名，恢复后重试即可。</p></details>
+          <details><summary>文件已保存，但云端还没有更新</summary><p>分别查看“本机保存”和“云端状态”。等待同步、正在上传、等待回读核验、离线和冲突都没有完成云端确认。保留本地数据，检查网络与授权，在挂载运行时按“重试同步”重新核验；也可用 <code>&amp; $DriveBridge feishu upload status $MountId --json</code> 查看待处理项。</p></details>
+          <details><summary>授权二维码过期，再点授权没有进展</summary><p>r7 起再次点击“授权”即可：管理页会核对已保存的授权，未完成则发出新链接，已在浏览器完成则直接继续登录，不会新建账号或丢弃待上传数据。如果核对失败，页面会显示原因和“重试”按钮。旧版本（r6）请用随包 CLI 接续：保持终端运行，在本机打开它给出的链接完成授权。命令可能显示短期授权链接，不要截图或转发。</p><pre><code>&amp; $DriveBridge feishu account login --profile '管理页显示的账号名称'</code></pre></details>
+          <details><summary>应用登录窗口提示缺少 WebView2</summary><p>安装 <a href="https://developer.microsoft.com/microsoft-edge/webview2/">Microsoft Edge WebView2 Evergreen x64 运行时</a>后，从管理页重新打开登录窗口。WebView2 工具窗口不出现在任务栏；关闭窗口可能只是隐藏，从管理页再次打开即可。</p></details>
+          <details><summary>安全停止没有立即完成</summary><p>关闭正在编辑的文件，以及停留在挂载目录中的资源管理器窗口和终端（它们会占用目录句柄），等后台处理待上传内容。安全停止可能因为打开文件、待同步内容或超时而未完成；先确认挂载路径是否已物理消失，再查看界面原因。有待保存数据时不要清缓存或直接结束 Worker 进程。</p></details>
+        </section>
+      </main>
+    </div>
+    <footer><p>DriveBridge 桌面客户端 · Windows 离线操作手册 · <span id="footer-date">2026-11-12</span></p><p>项目依据：<a href="../drivebridge-desktop.md">桌面客户端说明</a>、<a href="操作手册.html">macOS 操作手册</a>、<a href="Windows问题报告.md">Windows 问题报告</a>。如与实际观察不同，以本页明确记录的本轮结果为准。</p><p>本页不联网、不加载第三方字体或脚本。截图可点击放大，也可随页面打印。</p></footer>
+  </div>
+  <dialog id="image-dialog" aria-labelledby="dialog-caption"><div class="dialog-top"><p id="dialog-caption"></p><button type="button" id="close-dialog">关闭</button></div><img id="dialog-image" alt=""></dialog>
+  <noscript><div class="page"><p class="no-script">此手册使用内嵌脚本显示操作步骤与验证记录。请在支持 JavaScript 的浏览器中打开本地 HTML。当前结论：Windows 便携包 r7 核心同步、冷热读取和批量冲突已实测；MSI、自启动和授权恢复的真实账号复测未执行。</p></div></noscript>
+  <script>
+    'use strict';
+    const evidence = /*EVIDENCE_START*/{"title":"DriveBridge Windows 操作手册与实机验证","date":"2026-11-12","platform":"Windows 11 25H2 x64 / PowerShell 7","version":"0.1.0 开发版；未签名便携包 r7","source_head":"682abc635 + 工作区修复（未提交，含 r7 修复）","driver":"WinFsp（自定义安装路径）+ WebView2 Runtime","overall":"partial","summary":"便携包 r7 在真实飞书账号上通过：授权中断后的自动恢复、登录、目录发现、账号盘挂载、双向读写、安全停止和恢复。r6 发现的冷读缺陷（冷文件第一次打开时长度为 0）已修复：第一次打开即可读到完整内容，列目录不触发下载。两份真实冲突在一次批量提交中全部被接受，并经两个独立挂载读回。管理页已改版，「在资源管理器中打开」实测可用。MSI 安装和 Windows 登录自启动未执行；签名发布未做。","steps":[
+      {"id":"install","title":"安装 WinFsp 与 DriveBridge","status":"partial","observed":"WinFsp 安装在自定义路径，修复后 feishu doctor 的驱动、挂载引擎和随包飞书 CLI 检查均通过。便携 ZIP 的 21 个文件与清单哈希一致；desktop capabilities 报告 native_tray_compiled=true。WiX 4.0.6 已生成未签名的当前用户 MSI，但未实际安装，安装、升级、卸载和签名均未验证。","checks":["自定义路径 WinFsp 由 32 位注册表视图识别（问题 1 已修复）","中文 Windows 打包 UTF-8 读取修复（问题 3），39 项可运行的打包测试通过","MSI 组件 GUID 修复后可编译（问题 12），原生安装未执行"],"screenshots":[{"src":"assets/windows-01-native-doctor.png","caption":"PowerShell 实测诊断：挂载引擎、WinFsp 与飞书 CLI 检查通过；独立验收盘 X: 由 WinFsp 挂载。"}]},
+      {"id":"first-open","title":"打开软件与托盘","status":"partial","observed":"desktop start 后 running=true，三个视图可用。退出托盘（继续同步）后账号盘 Worker 保留且可读。r7 的改版管理页实测：挂载名显示「DriveBridge — 账号显示名」并带「账号盘」标签；缓存用量对照上限显示（127 MiB / 5 GiB）；「在资源管理器中打开」打开了正确的挂载目录；移除挂载收进「更多」菜单，且菜单在状态轮询时保持打开。桌面重启后，旧标签页显示「本机会话已失效」引导页（问题 5）。在 1086 px、1440 px 和 375 px 宽度下无溢出。托盘图标视觉和 Windows 登录自启动未实测（登录自启动本轮按要求不做）。","checks":["首次 desktop start 状态目录认领顺序已修复（问题 2）","登录自启动需注销并重新登录验证，本轮未执行"],"screenshots":[{"src":"assets/windows-00-manager-files.jpg","caption":"r7 改版后的“文件与同步”：友好挂载名、缓存用量、目录清单进度与「在资源管理器中打开」；账号显示名已遮盖。"}]},
+      {"id":"login","title":"通过官方飞书页面授权","status":"verified","observed":"r6：第一次授权时二维码过期，重启后管理页再点“授权”立即返回 503，没有可见进展（问题 4）。r7 实机复测：在管理页发起重新授权，不完成，再重启桌面进程中断流程，然后再次点击重新授权。接口返回 200（kind=reconciled），核对出已保存的授权仍然有效，于是自动继续应用登录。约 30 秒内完成核验，发现 10 个入口，账号盘以原挂载 ID 和原缓存恢复，无待处理项，全程无需扫码。复测中还修复了一个前端问题：在 Edge/Chrome 中，授权进度会报「Illegal invocation」。真实账号未走到「授权失效、重新发链接」这一分支，由回归测试覆盖。r6 当时的处理：改用随包 CLI 的 feishu account login --profile 复核已有应用配置并发出新链接，用户完成真实授权，账号显示已授权。账号条目与应用配置均被复用，没有复制凭据，未记录授权码或二维码。","screenshots":[{"src":"assets/windows-02-official-auth-result.png","caption":"飞书用户授权完成后，本机账号显示已授权。"}]},
+      {"id":"owned-login","title":"应用内登录与后台目录发现","status":"verified","observed":"用户在 WebView2 独立窗口用同一账号登录。之后后台自动核验身份并扫描：可见共享 9 个入口，个人入口 0，隐藏共享 0；按链接补录测试子目录后共 10 个去重入口。桌面和登录组件重启后，重新打开窗口能复用会话并完成新一轮扫描，无需重新登录。","checks":["真实隐藏共享入口为 0，隐藏来源的增减没有可观察对象","双真实账号隔离、Windows 注销/重启后复用未测"],"screenshots":[{"src":"assets/windows-03b-native-login.png","caption":"Windows 独立登录窗口：网页登录已验证、目录发现已完成。"},{"src":"assets/windows-03-discovery.png","caption":"应用会话核验、目录发现及账号盘位置；补录后共 10 个入口。"}]},
+      {"id":"mount","title":"登录后自动挂载账号盘","status":"verified","observed":"登录和目录发现完成后，账号盘自动挂载，根目录分“个人目录”和“共享目录”两组。本轮在保留挂载 ID、缓存和原配置备份的前提下，把同一挂载迁到测试根目录下的“账号盘”。专用测试子目录不在首次扫描的入口中：名称搜索能找到；按链接补录时，会核验其归属的共享根并按原层级展示。WinFsp 卸载后安全停止曾返回配置错误（问题 6），已修复并复测。","checks":["默认挂载位置在 %USERPROFILE%\\DriveBridge 下；管理页没有就地修改账号盘路径的入口","目录索引最终 1819/1819 已缓存，失败 0"],"screenshots":[{"src":"assets/windows-04-account-mount.png","caption":"迁移后的账号盘运行状态，队列和在途均为零。"},{"src":"assets/windows-04b-folder-search.png","caption":"按名称找到 DriveBridge-WinTest 测试目录，目录标识已遮盖。"}]},
+      {"id":"placeholder-cache","title":"浏览占位文件与冷热读取","status":"verified","observed":"r7 复测（问题 13 已修复）：在 Windows PowerShell 5.1 中，冷 Markdown 第一次 ReadAllBytes 读到完整 5015 字节（5.6 s），热读 8 ms；另一份冷文件第一次 FileInfo.Length 和第一次打开的句柄长度都是真实大小；329 KB 的冷 .docx 第一次读取即完整（文件头为 PK），复制件哈希一致。列目录两次后冷文件数不变，逐个读取后正好减少相应数量，说明列目录不触发下载。以下为 r6 时的原始记录：列出两层共 81 项首次 717 ms，再次 17 ms。冷占位文件在列表中显示 0 字节，首次打开下载正文：普通文件约 4.5 s，原生文档转 Markdown 约 4.5–13 s。下载后热读 6–26 ms，哈希与复制件一致。缺陷：首次打开时 Windows 拿到的句柄长度为 0。例如一个 15588 字节的 .docx，第一次 ReadAllBytes（.NET Framework）读到 0 字节，第二次正常；同一冷文件的第一次 FileInfo.Length 也返回 0。Copy-Item、Get-Content、cmd type 读到完整内容。独立 X: 盘从热缓存启动挂载用时 3.9 s，首次列目录 47 ms，安全停止 0.36 s。","checks":["默认 7 天未用或超过每挂载 5 GiB 软容量时释放已同步正文；仅受控时间测试，未等待真实 7 天","r7 起，在资源管理器中删除、移动冷文件也会先下载正文；下载失败时该文件暂时不能删除或改名","资源管理器预览窗格或属性对话框会实际读取文件，可能触发下载"],"screenshots":[]},
+      {"id":"upload","title":"在 test 目录上传与同步","status":"verified","observed":"写入时先后遇到目录同步被拒（问题 7）和 Flush 拒绝访问（问题 8），修复后通过。经用户确认，先备份卡住的待保存文件再停止旧 Worker；修复版从原缓存恢复同一份 42 字节 TXT，哈希一致。根目录 TXT、根目录 Markdown，以及 test 子目录下的 Markdown 均写入成功并读回。云端状态回到已确认，队列、在途、冲突、VFS 待保存均为 0。","screenshots":[{"src":"assets/windows-05-local-write.png","caption":"写入后本机已持久保存，云端任务仍在途。"},{"src":"assets/windows-05b-synced.png","caption":"完成云端核验后，账号盘回到已确认，各计数为 0。"}]},
+      {"id":"bidirectional","title":"验证双向更新","status":"verified","observed":"本地→云端：TXT 追加 local-v2，test 子目录 Markdown 写入 local-subfolder-v1；用另一套独立缓存的 X: 挂载从飞书重新读取，两个标记都在。云端→本地：在飞书网页上传 44 字节 TXT 到 test，账号盘出现后首次读取和内存映射读取的 SHA-256 均与原文件一致。原生文档的 Markdown 投影可能新增转义符，因此按内容标记核验。","screenshots":[{"src":"assets/windows-06-explorer-test-folder.png","caption":"资源管理器中同时出现本地写入的子目录 Markdown 和云端上传的 TXT。"}]},
+      {"id":"conflict","title":"处理多个文件冲突","status":"verified","observed":"r7 复测（问题 11 已修复）：账号盘与独立 X: 挂载同时修改同一份文档的同一行，产生两份真实 overlapping_edits，两个挂载各一份。在管理页分别写入并保存合并草稿后，一次「提交已选文件（2）」两份都被接受：第一份 5.2 s，第二份再用 9.0 s。服务端计时显示本地两步各约 20 ms，其余为唯一一次云端复核。约 1 分钟后两边都显示已确认，且账号盘读回 A 的合并结果、X: 读回 B 的合并结果，即对方挂载提交、经云端拉回的内容。以下为 r6 时的记录：对两份合成飞书原生文档制造了真实 overlapping_edits。两份草稿各自保存，跨页面重开后仍在。两份都勾选后批量提交，A 被接受；B 超过 30 秒验收窗口仍显示“正在提交”（问题 11，原因未分解）。重新打开 B 单独提交后被接受。最终队列、在途、冲突归零，独立挂载从云端读回两份合并结果。","checks":["一次批处理接受两份已在 r7 实测通过","打开冲突需先从云端刷新，约 9 s；期间页面会保持当前内容"],"screenshots":[{"src":"assets/windows-07-conflict-diff.png","caption":"三份来源与已保存的合并草稿。"},{"src":"assets/windows-08-conflict-batch.png","caption":"两份草稿已复核并勾选，提交前状态。"},{"src":"assets/windows-08b-conflict-accepted.png","caption":"B 单独提交后本机已接受；云端确认来自独立挂载读回。"}]},
+      {"id":"stop","title":"安全停止与恢复","status":"verified","observed":"账号盘待处理归零后执行 mount stop --wait-upload 60s，返回 stopped=true，挂载路径消失。随后 mount start --background 恢复，测试文件可读，内存映射校验一致。X: 测过移除、恢复、显式启动和安全停止；2026-11-12 复测时再次启动并停止，均成功。","checks":["MSI 安装后的停止、升级保留数据未测"],"screenshots":[{"src":"assets/windows-12-stopped.png","caption":"账号盘安全停止后显示“启动挂载”，待处理项为 0。"}]}
+    ],"history":[
+      {"title":"已修复并复测：驱动识别、首启与打包（问题 1–3、12）","observed":"WinFsp 安装在自定义路径时，Manager 和打包脚本原先查的注册表视图与安装记录不一致，现改读 32 位注册表视图。首次 desktop start 时，启动器先写日志、后认领状态目录，导致认领失败，现已调整顺序。Python 打包在中文系统按 GBK 解码 UTF-8 输出出错，现显式按 UTF-8 读取。WiX 4 不能为以 HKCU 为键路径的组件自动生成 GUID，现由升级码和相对路径生成确定性 GUID。","screenshots":[]},
+      {"title":"已修复并复测：路径与写入（问题 6–9）","observed":"做缓存归属检查时，Windows 扩展长度路径与普通盘符路径直接比较，导致安全停止误报配置错误，现先统一路径形式再比较。对目录调用 File.Sync 在 Windows 上被拒，现改为平台实现：Windows 上目录同步为空操作，文件替换使用写穿透的 MoveFileEx。写入路径在原 Blob 仍有读句柄时重复发布同一 Blob，Windows 拒绝替换，现在直接接受已持久化的 Blob。此外修正了 Windows 测试夹具。","screenshots":[]},
+      {"title":"r7 修复并复测：冷读长度、批量提交、Blob 覆盖、授权恢复（问题 3、4、11、13、14）","observed":"冷文件第一次打开时长度为 0：WinFsp 在打开前就读取了文件大小，现在由这次读取先下载正文，列目录则改为直接提供占位大小。批量提交第二份卡住：所有飞书请求共用一把账号锁，而每份提交要读两次云端，第一份的后台上传也在抢锁；现改为每份只读一次云端，提交期间后台同步暂停让路，界面超时后会标为“结果未知，可重试”。Blob 覆盖：写入内容相同的 Blob 时，若 Windows 因文件被占用而拒绝替换，且已有文件大小一致，就直接复用。授权恢复：管理页先核对已保存的授权，再决定是接续还是重新发链接。冷读和批量提交已在真实账号上通过；授权恢复已在真实账号上通过“已授权、直接接续”这一分支，“重新发链接”分支由回归测试覆盖。","screenshots":[]}
+    ]}/*EVIDENCE_END*/;
+
+    const guides = [
+      {id:'install',title:'安装 WinFsp 与 DriveBridge',actions:[
+        '从 WinFsp 官网（winfsp.dev/rel）下载并安装驱动，按 Windows 提示完成管理员确认。可以使用自定义安装路径，DriveBridge 会从注册表识别。',
+        '取得完整 Windows x64 桌面包。便携 ZIP：解压到当前用户可写的目录，保留 bin、libexec 和 manifest.json，不要只复制单个 EXE。MSI：按当前用户安装，默认位置为 %LOCALAPPDATA%\\Programs\\DriveBridge（本轮未实测）。',
+        '确认已安装 Microsoft Edge WebView2 Runtime（Windows 11 通常自带）。应用内登录依赖它。',
+        '打开 PowerShell，运行下方诊断命令。'
+      ],commands:"$TestRoot = 'D:\\Work\\DriveBridge-WinTest'\n$Bundle = Join-Path $TestRoot 'drivebridge-0.1.0-windows-amd64-desktop-unsigned-test-r6'\n$DriveBridge = Join-Path $Bundle 'bin\\drivebridge.exe'\n& $DriveBridge desktop capabilities\n& $DriveBridge feishu doctor --json",expected:'应看到：native_tray_compiled 为 true；doctor 中挂载引擎、WinFsp 和随包飞书 CLI 检查均通过。',note:'当前开发包未签名，首次运行可能出现 SmartScreen 或“未知发布者”提示，请先核对包来源和清单哈希再继续。只有 CLI 包或缺少 WinFsp 时应记录为阻塞；--headless 预览不能补足桌面验收。'},
+      {id:'first-open',title:'首次打开与托盘',actions:[
+        '双击 bin\\drivebridge-desktop.exe（无控制台窗口）。在任务栏右下角通知区域找到 DriveBridge 图标；如果没有，点击 ^ 展开隐藏图标，可把它拖到任务栏常驻。',
+        '点击托盘中的“打开管理页”，在默认浏览器中打开本机管理界面，查看“文件与同步”“冲突与合并”和“账号与目录”。',
+        '需要每次登录 Windows 后自动运行时，在托盘中启用一次“登录时启动”（当前用户计划任务）。必须注销并重新登录才能证明自启动生效。'
+      ],commands:"& $DriveBridge desktop start\n& $DriveBridge desktop status",expected:'应看到：running 为 true；托盘图标和菜单可用，管理页连接到本机服务。',note:'关闭浏览器标签不停止后台同步。“退出托盘（继续同步）”只退出桌面管理进程，不停止独立 Worker。旧标签页在桌面重启后会话失效，从托盘重新打开即可。'},
+      {id:'login',title:'通过官方飞书页面授权',actions:[
+        '打开“账号与目录”，在“添加并授权账号”中填写账号名称，选择“飞书”（Lark 用户选择 Lark），点击“添加账号”。',
+        '在新增账号旁点击“授权”，再点击“打开授权页面”。首次需要配置飞书 CLI 应用，已有应用可选择 Use Existing App；应用配置成功不代表用户已经登录。',
+        '在飞书官方页面完成用户权限同意。若需要第二阶段授权，页面会自动更新授权链接。后台会自动核验结果并打开应用登录窗口，无需回来点击“完成”。',
+        '二维码或链接过期后，再次点击“授权”即可：r7 会先核对已保存的授权，未完成则发出新链接，已完成则直接继续登录。旧版本（r6）请改用下方 CLI 命令。'
+      ],commands:"& $DriveBridge feishu account login --profile '管理页显示的账号名称'",expected:'应看到：账号从“待授权”变为“已授权”；后续能读取有权限的共享目录。',note:'授权页面和 CLI 输出可能包含短期链接与二维码。截图应避开授权链接、二维码、令牌和完整账号信息。'},
+      {id:'owned-login',title:'应用内登录与后台目录发现',actions:[
+        '官方授权完成后会自动打开 DriveBridge 的独立登录窗口（WebView2），用同一飞书账号登录，不需要浏览器插件。窗口不出现在任务栏；关闭后可在“账号盘与自动目录发现”点击“打开应用登录窗口”重新打开。',
+        '登录后后台自动核验账号并发现目录。等待时间较长时，展开“登录遇到问题？”重新检查。完成页显示“网页登录已验证、目录发现已完成”。',
+        '在管理页查看各来源的分页状态、去重入口数量和账号盘位置。之后可用“重新扫描”、按名称搜索或按链接补录来更新入口。'
+      ],expected:'应看到：个人、可见共享、隐藏共享三路来源都显示“本次入口分页完成”，账号盘位置已显示。',note:'三路入口完成不代表全部子树或任意共享链接全集。被共享的子目录可能不作为独立入口出现，需按名称搜索或按链接补录。'},
+      {id:'mount',title:'登录后自动挂载账号盘',actions:[
+        '完成授权和应用内登录后，后台自动核对身份、扫描目录入口并创建或复用账号盘，无需手动选择挂载路径。',
+        '在“文件与同步”查看账号盘的实际路径（默认在 %USERPROFILE%\\DriveBridge 下），在资源管理器中打开。根目录分为“个人目录”和“共享目录”两组。',
+        '如果挂载失败，检查 WinFsp 和账号状态。单独挂载某个共享目录或自定义盘符属于“高级设置”，默认不需要填写。自定义目录挂载点必须满足：父目录已存在，末级目录不存在。'
+      ],commands:"& $DriveBridge feishu mount status --json\nGet-ChildItem -LiteralPath $AccountDisk",expected:'应看到：running 为 true，云端状态为 synced；资源管理器能列出个人与共享两组目录。',note:'当前管理页没有就地修改账号盘路径的入口。本轮迁移路径的做法是：先安全停止，在保留挂载 ID、缓存和配置备份的前提下修改配置，再启动。普通用户不建议这样操作。'},
+      {id:'placeholder-cache',title:'浏览占位文件与冷热读取',actions:[
+        '在资源管理器进入个人目录或共享目录，已索引的文件名直接显示。尚未下载正文的文件显示为 0 KB，这是占位，不代表文件为空。',
+        '打开需要的文件，首次打开时下载正文（普通小文件约数秒，原生文档转 Markdown 可能更久），之后再打开直接读取本机缓存。资源管理器的预览窗格和属性对话框也会实际读取，可能触发下载。',
+        'r7 起，冷文件第一次打开就会得到真实大小和完整内容；列目录不会下载正文。',
+        '默认 7 天未使用或超过每挂载 5 GiB 软容量时，释放最久未用的已同步正文，保留文件名；再次打开会重新下载。'
+      ],commands:"$f = Join-Path $ApprovedTestFolder 'test\\Win11-20261112-05-cloud-source.txt'\n(Get-FileHash -LiteralPath $LocalSource).Hash -eq (Get-FileHash -LiteralPath $f).Hash",expected:'应看到：首次打开获得完整内容，哈希与云端源文件一致；热读明显快于冷读。未上传、冲突、恢复或正在使用的数据不会被清理。',note:'7 天策略通过受控时间测试验证，未等待 7 个真实日历日。Windows 搜索索引、杀毒软件全盘扫描等会逐个打开文件，可能让大量正文被下载；建议把挂载目录排除在全盘扫描之外。'},
+      {id:'upload',title:'新建测试文件并上传',actions:[
+        '在挂载中的专用测试目录内新建“01-本地上传.txt”，写入“DriveBridge 本地上传测试 v1”，保存并关闭编辑器。再在手动创建的 test 子目录中新建“02-说明.md”，写入简短的 Markdown 内容。',
+        '回到“文件与同步”，观察“本机保存”“云端状态”和待处理数量，等待上传与回读核验完成。',
+        '在飞书网页中打开专用测试文件夹，确认两个新文件和子目录存在，打开文件比对名称与内容。'
+      ],commands:"$MountId = '填入 mount status 中账号盘的 mount_id'\n& $DriveBridge feishu upload status $MountId --json",expected:'应看到：本机内容已持久保存，云端完成确认；飞书文件名、目录结构和内容与本地一致。',note:'这些名称和文字仅为待创建的合成测试样例，示例本身不是上传成功的证据。'},
+      {id:'bidirectional',title:'验证本地与云端双向更新',actions:[
+        '本地到云端：在“01-本地上传.txt”末尾新增“local-v2”，保存并等待云端确认，再在飞书打开同一文件核对新增文字。',
+        '云端到本地：在飞书网页向 test 子目录上传一份带 cloud-v1 标记的新 TXT。等待刷新后，在挂载目录中打开并比对哈希。',
+        '逐项记录两端的文件名、文本标记和状态。最好用另一套独立缓存的挂载（例如单独挂载到 X:）从飞书重新读取，以证明正文确实到了云端。'
+      ],expected:'应看到：两个方向各完成一次真实内容更新，目标端读回正确；没有待处理、未知结果或未处理冲突。',note:'只看到列表里出现文件，或只看到本机写入成功，都不足以证明双向同步完成。原生文档的 Markdown 投影可能新增转义符，应按内容标记核验，不要求字节完全一致。'},
+      {id:'conflict',title:'处理冲突与逐文件差异',actions:[
+        '只对专用飞书原生文档及其本地 .md 投影制造并发修改：在本地和云端分别改动同一段，保留各自独有的测试标记。等待管理页出现“需要合并”。',
+        '在“冲突与合并”中选择文件，查看“共同原版”“本地内容”“云端内容”的差异；在“合并结果”中编辑，或逐个差异选择保留哪一方。三份来源保持只读。',
+        '多个冲突文件可分别编辑草稿，切换文件时草稿会保留。勾选已复核的文件后，点击“提交已选文件（数量）”，逐项查看提交结果。',
+        '等待本机保存与飞书确认，分别读回本地和云端文件，核对合并结果和冲突数量。'
+      ],commands:"& $DriveBridge feishu conflict list $MountId --json",expected:'应看到：真实冲突能按文件定位，差异来源清楚；合并内容在两端一致，处理后没有残留冲突。',note:'批量提交期间后台同步会暂停让路。如果某份超过 10 秒，会显示“云端复核较慢”；超过 90 秒会标为“结果未知，可重试”，草稿不会丢失。飞书没有条件写入（CAS），覆盖窗口等兼容边界仍然存在。'},
+      {id:'stop',title:'安全停止与日常退出',actions:[
+        '结束编辑并关闭测试文件，同时关闭停留在挂载目录中的资源管理器窗口和终端。查看待处理和冲突数量，仍有等待或未知结果时先等待，或点击“重试同步”核验。',
+        '在管理页点击对应挂载的“停止同步”，或用托盘的“停止同步／停止全部同步”。等待界面确认停止后，核对挂载路径已经消失。',
+        '只想关闭界面时，关浏览器标签即可。要退出托盘程序，选择“退出托盘（继续同步）”。要结束后台同步，必须先执行停止同步。'
+      ],commands:"& $DriveBridge feishu mount stop $MountId --wait-upload 60s --json\n& $DriveBridge feishu mount status $MountId --json\n& $DriveBridge feishu mount start $MountId --background --wait 30s --json",expected:'应看到：停止结果明确；未完成或超时会显示原因，待上传和恢复数据保留。',note:'“停止同步”和“退出托盘”是两种操作。停止未完成时会保留缓存与恢复数据，按界面提示继续处理，不要直接结束进程。'}
+    ];
+    const statusNames = {verified:'已验证',partial:'部分验证',blocked:'受阻',pending:'未执行',failed:'未通过'};
+    const safeStatus = value => Object.hasOwn(statusNames,value) ? value : 'pending';
+    function element(tag,text,className){const node=document.createElement(tag);if(text!==undefined&&text!==null)node.textContent=String(text);if(className)node.className=className;return node;}
+    function badge(status){const value=safeStatus(status);return element('span',statusNames[value],'status '+value);}
+    function addMeta(label,value){const row=element('div');row.append(element('dt',label),element('dd',value||'未记录'));document.getElementById('metadata').append(row);}
+    document.title=evidence.title||'DriveBridge Windows 操作手册';
+    document.getElementById('edition-date').textContent=evidence.date||'日期未记录';
+    document.getElementById('footer-date').textContent=evidence.date||'日期未记录';
+    const overall=safeStatus(evidence.overall);
+    document.getElementById('overall-status').replaceWith(Object.assign(badge(overall),{id:'overall-status'}));
+    document.getElementById('overall-summary').textContent=evidence.summary||'尚未提供本轮验收结论。';
+    addMeta('验证日期',evidence.date);addMeta('操作环境',evidence.platform);addMeta('版本',evidence.version);addMeta('源码基线',evidence.source_head);addMeta('运行条件',evidence.driver);addMeta('证据口径','真实操作；未执行项单独标明');
+    const givenSteps=Array.isArray(evidence.steps)?evidence.steps:[];
+    const seen=new Set();
+    const combined=guides.map(guide=>{seen.add(guide.id);return {...guide,...givenSteps.find(step=>step.id===guide.id)};});
+    givenSteps.filter(step=>step&&step.id&&!seen.has(step.id)).forEach(step=>combined.push({...step,actions:[]}));
+    const dialog=document.getElementById('image-dialog');
+    function showImage(src,caption){document.getElementById('dialog-image').src=src;document.getElementById('dialog-image').alt=caption;document.getElementById('dialog-caption').textContent=caption;if(typeof dialog.showModal==='function')dialog.showModal();}
+    function attachShot(section,source,caption){
+      const figure=element('figure',undefined,'screenshot');const button=element('button',undefined,'shot-button');button.type='button';button.setAttribute('aria-label','放大截图：'+caption);
+      const img=element('img');img.src=source;img.alt=caption;img.loading='lazy';img.decoding='async';button.append(img);button.addEventListener('click',()=>showImage(source,caption));figure.append(button,element('figcaption',caption));
+      img.addEventListener('error',()=>figure.replaceWith(element('div','截图文件未能加载：'+source+'。请保留与 HTML 同目录的 assets 文件夹；本页未使用替代图片。','empty-shot')),{once:true});section.append(figure);
+      return figure;
+    }
+    combined.forEach((step,index)=>{
+      const id=String(step.id).replace(/[^a-zA-Z0-9_-]/g,'-');const title=step.title||'未命名步骤';const state=safeStatus(step.status);const article=element('article',undefined,'step');article.id=id;
+      const head=element('div',undefined,'step-head');head.append(element('span',String(index+1).padStart(2,'0'),'step-number'));const heading=element('div');heading.append(element('h2',title),badge(state));head.append(heading);article.append(head);
+      if(Array.isArray(step.actions)&&step.actions.length){const actions=element('ol',undefined,'guide');step.actions.forEach(action=>actions.append(element('li',action)));article.append(actions);}
+      if(step.commands){article.append(element('p','PowerShell','pre-label'));const pre=element('pre');pre.append(element('code',step.commands));article.append(pre);}
+      if(step.expected)article.append(element('p',step.expected,'expected'));
+      if(step.note)article.append(element('div',step.note,'note'));
+      const proof=element('section',undefined,'evidence');proof.setAttribute('aria-label',title+'的实际记录');proof.append(element('h3','本轮实际记录'));
+      if(step.body)proof.append(element('p',step.body));
+      proof.append(element('p',step.observed||'尚未记录本轮操作观察，不能认定此步骤通过。','observation'));
+      if(Array.isArray(step.checks)&&step.checks.length){const checks=element('ul',undefined,'checks');step.checks.forEach(check=>checks.append(element('li',check)));proof.append(checks);}
+      const shots=Array.isArray(step.screenshots)?step.screenshots:[];
+      if(shots.length)shots.forEach((shot,i)=>{const source=typeof shot==='string'?shot:shot.src;const caption=typeof shot==='string'?title+'：实机截图 '+(i+1):shot.caption||title+'：实机截图 '+(i+1);if(source)attachShot(proof,source,caption);});
+      else proof.append(element('div',state==='pending'?'尚未执行／没有本轮截图。此处不展示模拟界面。':'没有本轮截图。上述文字按实际 PowerShell 记录列示，不能由说明代替视觉验收。','empty-shot'));
+      article.append(proof);document.getElementById('steps').append(article);
+      const navItem=element('li');const navLink=element('a',String(index+1).padStart(2,'0')+'  '+title);navLink.href='#'+id;navItem.append(navLink);document.getElementById('toc-list').append(navItem);
+      const row=element('tr');const name=element('td');const link=element('a',title);link.href='#'+id;name.append(link);const result=element('td');result.append(badge(state));row.append(name,result,element('td',step.observed||'未记录'));document.getElementById('record-rows').append(row);
+    });
+    document.querySelectorAll('[data-shot]').forEach(slot=>{const figure=attachShot(slot.parentNode,slot.dataset.shot,slot.dataset.caption||'实机截图');slot.replaceWith(figure);});
+    if(Array.isArray(evidence.history)&&evidence.history.length){
+      const history=element('section',undefined,'record');history.id='history';history.append(element('h2','本轮发现与修复记录'));
+      const intro=element('p');intro.append('逐条复现、根因、处理与复测范围见 ');const report=element('a','Windows 问题报告');report.href='Windows问题报告.md';intro.append(report,'。');history.append(intro);
+      evidence.history.forEach(item=>{const detail=element('details');detail.append(element('summary',item.title||'验证记录'),element('p',item.observed||''));if(item.source_url){const reference=element('a','参考说明');reference.href=item.source_url;detail.append(reference);}for(const shot of item.screenshots||[])attachShot(detail,shot.src,shot.caption||item.title||'真实截图');history.append(detail);});
+      document.getElementById('help').before(history);
+    }
+    ['formal-owned-login','platforms','validation','mount-management','plain-markdown-merge','hidden-shared-sync',...(document.getElementById('history')?['history']:[]),'help'].forEach(id=>{const item=element('li');const link=element('a',document.querySelector('#'+id+' h2').textContent);link.href='#'+id;item.append(link);document.getElementById('toc-list').append(item);});
+    document.getElementById('print-button').addEventListener('click',()=>window.print());
+    document.getElementById('close-dialog').addEventListener('click',()=>dialog.close());
+    dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
+    if('IntersectionObserver' in window){const observer=new IntersectionObserver(entries=>{entries.filter(entry=>entry.isIntersecting).forEach(entry=>{document.querySelectorAll('.toc a').forEach(link=>{if(link.hash==='#'+entry.target.id)link.setAttribute('aria-current','true');else link.removeAttribute('aria-current');});});},{rootMargin:'-10% 0px -70% 0px'});document.querySelectorAll('.step,.record').forEach(section=>observer.observe(section));}
+  </script>
+</body>
+</html>
