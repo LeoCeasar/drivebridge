@@ -23,6 +23,12 @@ func errorCode(err error) string {
 		return ""
 	case errors.Is(err, ErrArchived):
 		return "mount_archived"
+	case errors.Is(err, ErrMountUnsynced):
+		return "mount_unsynced"
+	case errors.Is(err, ErrHistoryPending):
+		return "history_pending"
+	case errors.Is(err, ErrCleanupPending):
+		return "cleanup_pending"
 	case errors.Is(err, ErrPending), errors.Is(err, auth.ErrReferencesBusy), errors.Is(err, auth.ErrBusy), errors.Is(err, store.ErrLocked), errors.Is(err, store.ErrBusy):
 		return "pending"
 	case errors.Is(err, model.ErrIdentityChanged), errors.Is(err, ErrInstanceChanged):
@@ -49,6 +55,12 @@ func errorFromCode(code string) error {
 	switch code {
 	case "mount_archived":
 		return ErrArchived
+	case "mount_unsynced":
+		return ErrMountUnsynced
+	case "history_pending":
+		return ErrHistoryPending
+	case "cleanup_pending":
+		return ErrCleanupPending
 	case "pending":
 		return ErrPending
 	case "identity_changed":
@@ -73,7 +85,16 @@ func errorFromCode(code string) error {
 }
 func ErrorInfo(err error) *Error {
 	code := errorCode(err)
-	return &Error{Code: code, Message: code, Retryable: code == "network" || code == "worker_unavailable"}
+	message := code
+	switch code {
+	case "mount_unsynced":
+		message = "尚有未同步内容，未删除。请先查看 upload status 或 conflict list 并处理后重试。"
+	case "history_pending":
+		message = "历史尚未完成归档，未删除。请保持应用运行，在 history status 中查看进度后重试。"
+	case "cleanup_pending":
+		message = "挂载已删除，缓存清理待完成；后台将自动重试。"
+	}
+	return &Error{Code: code, Message: message, Retryable: code == "network" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
 }
 func ExitCode(err error) int {
 	switch errorCode(err) {
@@ -87,7 +108,7 @@ func ExitCode(err error) int {
 		return 4
 	case "network", "worker_unavailable":
 		return 5
-	case "pending":
+	case "pending", "mount_unsynced", "history_pending", "cleanup_pending":
 		return 6
 	case "identity_changed", "version_changed":
 		return 7
@@ -116,6 +137,26 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			out.Queued++
 		}
 		if j.State == model.StatusPaused || j.State == model.StatusBlocked {
+			en, err := s.Entry(ctx, j.EntryID)
+			if err != nil {
+				return out, err
+			}
+			issue := model.SyncIssue{JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
+			r, err := s.ReadBlob(ctx, j.Local)
+			if err != nil {
+				return out, err
+			}
+			info, err := r.(interface{ Stat() (os.FileInfo, error) }).Stat()
+			closeErr := r.Close()
+			if err != nil {
+				return out, err
+			}
+			if closeErr != nil {
+				return out, closeErr
+			}
+			issue.LocalSaved = true
+			issue.CanDownload = info.Size() <= maxUploadCopyBytes
+			out.Issues = append(out.Issues, issue)
 			out.CloudState = string(j.State)
 		}
 	}
@@ -163,6 +204,7 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 }
 func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStatus, error) {
 	var out model.MountStatus
+	var currentHistory *model.HistoryStatus
 	err := m.call(ctx, id, "/status", nil, &out)
 	if err == nil {
 		return out, nil
@@ -204,6 +246,11 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 			return out, openErr
 		}
 		out.Running = false
+		actual, historyErr := s.HistoryStatus(ctx)
+		if historyErr != nil {
+			return out, historyErr
+		}
+		currentHistory = &actual
 		pending, cacheErr := offlineCachePending(ownershipFor(m.options.ConfigFile, spec))
 		if cacheErr != nil {
 			return out, cacheErr
@@ -216,6 +263,14 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 		return out, statErr
 	}
 	readLastWorkerError(spec.Paths.Root, &out)
+	readHistoryState(spec.Paths.Root, &out)
+	if currentHistory != nil {
+		if cached := out.History; cached != nil {
+			currentHistory.Bytes, currentHistory.BudgetBytes, currentHistory.OverBudget, currentHistory.UsageAt = cached.Bytes, cached.BudgetBytes, cached.OverBudget, cached.UsageAt
+			currentHistory.MaintenanceError = cached.MaintenanceError
+		}
+		out.History = currentHistory
+	}
 	return out, nil
 }
 

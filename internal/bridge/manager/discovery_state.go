@@ -227,6 +227,32 @@ func (m *Manager) DiscoveryViews(ctx context.Context) ([]DiscoveryView, error) {
 	return out, nil
 }
 func accountToken(id model.ProfileID) string { return "drivebridge-account-" + string(id) }
+
+// RecreateAccountMount is an explicit user action; background discovery never
+// clears a removal intent or silently recreates a deleted account drive.
+func (m *Manager) RecreateAccountMount(ctx context.Context, id model.ProfileID) error {
+	if err := m.admittedConfigUpdate(ctx, func(c *config.Config) error {
+		for i := range c.Remotes {
+			if c.Remotes[i].ProfileID == id && c.Remotes[i].AccountRoot {
+				c.Remotes[i].MountRemoved = false
+				return nil
+			}
+		}
+		return ErrConfig
+	}); err != nil {
+		return err
+	}
+	p, err := m.ResolveProfile(ctx, string(id))
+	if err != nil {
+		return err
+	}
+	mount, err := m.ensureAccountMount(ctx, p)
+	if err != nil {
+		return err
+	}
+	_, err = m.Start(ctx, mount.ID, true)
+	return err
+}
 func (m *Manager) ensureAccountMount(ctx context.Context, profile model.Profile) (model.Mount, error) {
 	var mount model.Mount
 	err := m.admittedConfigUpdate(ctx, func(c *config.Config) error {
@@ -245,6 +271,9 @@ func (m *Manager) ensureAccountMount(ctx context.Context, profile model.Profile)
 		}
 		if remote.FolderToken != accountToken(profile.ID) {
 			return ErrConfig
+		}
+		if remote.MountRemoved {
+			return ErrArchived
 		}
 		for _, existing := range c.Mounts {
 			if existing.RemoteID == remote.ID {

@@ -13,10 +13,12 @@ type ProfileView struct {
 	Authorized bool            `json:"authorized"`
 }
 type RemoteView struct {
-	ID          model.RemoteID  `json:"id"`
-	Name        string          `json:"name"`
-	ProfileID   model.ProfileID `json:"profile_id"`
-	FolderToken string          `json:"folder_token"`
+	AccountRoot  bool            `json:"account_root,omitempty"`
+	MountRemoved bool            `json:"mount_removed,omitempty"`
+	ID           model.RemoteID  `json:"id"`
+	Name         string          `json:"name"`
+	ProfileID    model.ProfileID `json:"profile_id"`
+	FolderToken  string          `json:"folder_token"`
 }
 type MountView struct {
 	Archived                         bool              `json:"archived,omitempty"`

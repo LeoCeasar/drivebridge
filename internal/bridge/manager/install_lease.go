@@ -252,9 +252,38 @@ func validateInstallationOwner(o ownership) error {
 	return nil
 }
 
-// Discover historical owners across every config hash, including configs whose
-// current mount list no longer names that store. A lock-only or malformed owner
-// directory cannot establish which data it protects and is therefore refused.
+type configReference struct {
+	Schema     int    `json:"schema"`
+	ConfigFile string `json:"config_file"`
+}
+
+// A retired owner domain retains its exact config identity, not just lock files.
+// This allows future installation without guessing a path from a config hash.
+func installationConfigReference(dir string) (string, error) {
+	name := filepath.Join(dir, "config.ref")
+	if err := installationRegular(name); err != nil {
+		return "", err
+	}
+	info, err := os.Stat(name)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > 64<<10 {
+		return "", ErrConfig
+	}
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return "", err
+	}
+	var ref configReference
+	if json.Unmarshal(b, &ref) != nil || ref.Schema != 1 || !filepath.IsAbs(ref.ConfigFile) || filepath.Clean(ref.ConfigFile) != ref.ConfigFile || hashPath(ref.ConfigFile) != filepath.Base(dir) {
+		return "", ErrConfig
+	}
+	return ref.ConfigFile, nil
+}
+
+// Discover historical owners and explicitly retired config domains. A lock-only
+// directory without either kind of identity evidence is still refused.
 func (m *Manager) installationConfigs(ctx context.Context) ([]string, error) {
 	files := map[string]bool{m.options.ConfigFile: true}
 	root := filepath.Join(m.domain, "worker-state")
@@ -302,7 +331,11 @@ func (m *Manager) installationConfigs(ctx context.Context) ([]string, error) {
 			found = true
 		}
 		if !found && len(entries) > 0 {
-			return nil, fmt.Errorf("%w: owner directory has no valid root reference", ErrConfig)
+			file, err := installationConfigReference(filepath.Join(root, dir.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("%w: owner directory has no valid root reference: %v", ErrConfig, err)
+			}
+			files[file] = true
 		}
 	}
 	out := make([]string, 0, len(files))

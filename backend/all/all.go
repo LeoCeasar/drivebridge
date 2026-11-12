@@ -1,3 +1,5 @@
+//go:build !drivebridge_feishu
+
 // Package all imports all the backends
 package all
 

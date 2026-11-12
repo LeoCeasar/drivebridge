@@ -19,7 +19,7 @@ func (e *CommittedError) Error() string   { return "local namespace committed: "
 func (e *CommittedError) Unwrap() error   { return e.Err }
 func (e *CommittedError) Committed() bool { return true }
 func safeSaveSibling(src, dst string) bool {
-	return parentPath(src) == parentPath(dst) && strings.HasPrefix(path.Base(dst), path.Base(src)+".sb-") && safeSaveDirectory.MatchString(path.Base(dst))
+	return model.EditorTildeBackup(src, dst) || parentPath(src) == parentPath(dst) && strings.HasPrefix(path.Base(dst), path.Base(src)+".sb-") && safeSaveDirectory.MatchString(path.Base(dst))
 }
 
 func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, error) {
@@ -38,7 +38,10 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	// A complete listing may introduce the destination mapping. Serialize its
 	// classification with namespace preparation so a new virtual target cannot
 	// slip between the readonly check and an atomic replacement reservation.
-	if err := f.lockNamespace(ctx, parentPath(src), parentPath(dst)); err != nil {
+	editorBackup := model.EditorTildeBackup(src, dst)
+	if editorBackup {
+		f.listMu.Lock()
+	} else if err := f.lockNamespace(ctx, parentPath(src), parentPath(dst)); err != nil {
 		return "", err
 	}
 	defer f.listMu.Unlock()
@@ -65,7 +68,7 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	if err = f.requireWritable(ctx, source); err != nil {
 		return "", err
 	}
-	if source.Token != "" && source.Kind == model.KindDocx && !strings.EqualFold(path.Ext(dst), ".md") {
+	if source.Token != "" && source.Kind == model.KindDocx && !strings.EqualFold(path.Ext(dst), ".md") && !editorBackup {
 		return "", model.ErrUnsupportedContent
 	}
 	if _, err = f.directory(ctx, parentPath(dst)); err != nil {
@@ -85,12 +88,17 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 		return "", err
 	}
 	safeSaveBackup := kind == "rename" && source.Kind == model.KindFile && source.Token != "" && safeSaveSibling(src, dst)
-	op, err := f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: kind, Src: src, Dst: dst})
+	var op model.NamespaceOp
+	if editorBackup && source.Token != "" && (source.Kind == model.KindFile || source.Kind == model.KindDocx) {
+		op, err = f.store.PrepareEditorBackup(ctx, src, dst)
+	} else {
+		op, err = f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: kind, Src: src, Dst: dst})
+	}
 	if err != nil {
 		return "", err
 	}
 	kind = op.Kind
-	if safeSaveBackup {
+	if safeSaveBackup && !editorBackup {
 		if err = f.store.ConfigureSafeSaveBackup(ctx, op.ID); err != nil {
 			_ = f.store.AbortNamespace(ctx, op.ID)
 			return "", err

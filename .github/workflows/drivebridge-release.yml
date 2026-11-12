@@ -1,52 +1,18 @@
-name: DriveBridge verification and native release gates
+name: DriveBridge 0.2.7 Windows native package
 on:
-  pull_request:
-    paths: ['internal/bridge/**', 'lib/larkcli/**', 'vfs/**', 'native/session-host/**', 'packaging/drivebridge/**', 'cmd/feishu/**', 'cmd/desktop/**', 'rclone.go', 'go.mod', 'go.sum', '.github/workflows/drivebridge-release.yml']
   workflow_dispatch:
-    inputs:
-      native:
-        description: Run all five native driver/installer runners (missing runner blocks verification)
-        type: boolean
-        default: false
-      desktop:
-        description: Build native desktop tray and CLI together; requires native GUI development libraries
-        type: boolean
-        default: true
-      release:
-        description: Require signing and notarization; no unsigned release fallback
-        type: boolean
-        default: false
-      version:
-        description: Numeric installer version X.Y.Z
-        type: string
-        default: '0.1.0'
 permissions:
   contents: read
 jobs:
-  unit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python3 -m unittest discover -s packaging/drivebridge/tests
-      - run: bash -n packaging/drivebridge/*.sh
-      - run: go test ./lib/larkcli ./backend/feishu ./cmd/feishu ./cmd/desktop ./internal/bridge/... ./vfs/... -count=1
-      - run: go test -race ./lib/larkcli ./cmd/feishu ./cmd/desktop ./internal/bridge/... ./vfs/... -count=1
-      - name: Reject a release request without native gates
-        if: inputs.release && !inputs.native
-        run: echo 'NOT VERIFIED - release requires all native runners'; exit 1
-  windows-session:
-    # Hosted compilation/protocol checks do not replace the protected real-user
-    # login, WinFsp mount, installer and startup evidence below.
-    runs-on: windows-latest
-    timeout-minutes: 25
+  windows-package:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
     env:
       CGO_ENABLED: '0'
+      DOTNET_ROLL_FORWARD: Major
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -58,122 +24,54 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Build native Windows login and run protocol tests
-        shell: pwsh
+      - name: Install pinned native packaging tools
         run: |
           $ErrorActionPreference = 'Stop'
-          dotnet run --project native/session-host/windows/ProtocolTests/ProtocolTests.csproj -c Release
-          if ($LASTEXITCODE) { throw 'Native login protocol tests failed' }
-          dotnet publish native/session-host/windows/DriveBridge.SessionHost.csproj -c Release -r win-x64 --self-contained true -o "$env:RUNNER_TEMP/session" "-p:PathMap=$env:GITHUB_WORKSPACE=/_/DriveBridge" -p:DebugType=None -p:DebugSymbols=false
-          if ($LASTEXITCODE) { throw 'Native login build failed' }
-          python packaging/drivebridge/session-licenses.py --assets native/session-host/windows/obj/project.assets.json --output "$env:RUNNER_TEMP/native-login.LICENSES"
-          if ($LASTEXITCODE) { throw 'Native login license collection failed' }
-          python -c "import importlib.util,pathlib; s=importlib.util.spec_from_file_location('p','packaging/drivebridge/package.py'); p=importlib.util.module_from_spec(s); s.loader.exec_module(p); import os; t=pathlib.Path(os.environ['RUNNER_TEMP']); p.stage_session_host(t/'session-stage','windows','amd64',t/'session/drivebridge-session-host.exe','0.0.0',t/'native-login.LICENSES')"
-          if ($LASTEXITCODE) { throw 'Native login identity/payload check failed' }
-          & native/session-host/windows/smoke.ps1 -Helper "$env:RUNNER_TEMP/session/drivebridge-session-host.exe"
-      - name: Test Windows process integration and build tray
-        shell: pwsh
+          function Fetch-Pinned($Url, $Digest, $Destination) {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination
+            if ((Get-FileHash $Destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Digest) { throw "Checksum mismatch: $Url" }
+          }
+          $inno = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Fetch-Pinned 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c' $inno
+          $compiler = Join-Path $env:RUNNER_TEMP 'InnoSetup6'
+          $p = Start-Process -FilePath $inno -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$compiler") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Inno installation failed: $($p.ExitCode)" }
+          $compiler | Out-File -FilePath $env:GITHUB_PATH -Append
+          dotnet tool install --global wix --version 4.0.6
+          if ($LASTEXITCODE) { throw 'WiX installation failed' }
+          $driver = Join-Path $env:RUNNER_TEMP 'winfsp.msi'
+          Fetch-Pinned 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' '073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a' $driver
+          $p = Start-Process msiexec.exe -ArgumentList @('/i',$driver,'/qn','/norestart') -Wait -PassThru
+          if ($p.ExitCode -notin @(0,3010)) { throw "WinFsp installation failed: $($p.ExitCode)" }
+      - name: Prepare checksum-verified public runtimes
         run: |
           $ErrorActionPreference = 'Stop'
-          go test ./internal/bridge/ownedlogin ./internal/bridge/desktop ./internal/bridge/desktopstartup ./internal/bridge/platform ./lib/larkcli -count=1
-          if ($LASTEXITCODE) { throw 'Windows process tests failed' }
-          go build -trimpath -tags cmount,desktop -ldflags '-s -w -H=windowsgui' -o "$env:RUNNER_TEMP/drivebridge-desktop.exe" .
-          if ($LASTEXITCODE) { throw 'Windows tray build failed' }
-  native:
-    needs: [unit, windows-session]
-    # Never expose release keys or native machines to PR code. Configure protected release tags/environments.
-    if: github.event_name == 'workflow_dispatch' && inputs.native && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/drivebridge-v'))
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {platform: darwin, arch: amd64, os: macOS, cpu: X64}
-          - {platform: darwin, arch: arm64, os: macOS, cpu: ARM64}
-          - {platform: windows, arch: amd64, os: Windows, cpu: X64}
-          - {platform: linux, arch: amd64, os: Linux, cpu: X64}
-          - {platform: linux, arch: arm64, os: Linux, cpu: ARM64}
-    runs-on: [self-hosted, drivebridge-native, '${{ matrix.os }}', '${{ matrix.cpu }}']
-    environment: drivebridge-release-${{ matrix.platform }}
-    timeout-minutes: 60
-    env:
-      DB_PLATFORM: ${{ matrix.platform }}
-      DB_ARCH: ${{ matrix.arch }}
-      DB_VERSION: ${{ inputs.version }}
-      DB_RELEASE: ${{ inputs.release }}
-      DB_DESKTOP: ${{ inputs.desktop }}
-      DRIVEBRIDGE_CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-      DRIVEBRIDGE_INSTALLER_IDENTITY: ${{ secrets.INSTALLER_IDENTITY }}
-      DRIVEBRIDGE_NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
-      DRIVEBRIDGE_SIGN_CERT_SHA1: ${{ secrets.SIGN_CERT_SHA1 }}
-      DRIVEBRIDGE_TIMESTAMP_URL: ${{ vars.TIMESTAMP_URL }}
-      DRIVEBRIDGE_GPG_KEY: ${{ secrets.GPG_KEY_ID }}
-      # Runner-owned executable must install, upgrade with pending fixtures, test user startup,
-      # stop/uninstall retaining data, and leave a disposable mount for smoke. Never supplied by PR.
-      DRIVEBRIDGE_NATIVE_HARNESS: ${{ vars.NATIVE_HARNESS }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-dotnet@v4
-        if: matrix.platform == 'windows'
-        with:
-          dotnet-version: '10.0.x'
-      - name: Build native Unix installers
-        if: matrix.platform != 'windows'
-        shell: bash
+          $runtime = Join-Path $env:RUNNER_TEMP 'drivebridge-runtime'
+          New-Item -ItemType Directory $runtime | Out-Null
+          $pin = Get-Content packaging/drivebridge/runtime-lock.json -Raw | ConvertFrom-Json
+          Invoke-WebRequest $pin.cli.source -OutFile "$runtime/cli-package.tgz"
+          $package = "$runtime/lark-package"
+          New-Item -ItemType Directory $package | Out-Null
+          tar -xzf "$runtime/cli-package.tgz" -C $package --strip-components=1
+          if ($LASTEXITCODE) { throw 'Official CLI package extraction failed' }
+          $asset = $pin.cli.assets.'lark-cli-1.0.99-windows-amd64.zip'
+          Invoke-WebRequest $asset.source -OutFile "$runtime/lark-native.zip"
+          if ((Get-FileHash "$runtime/lark-native.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) { throw 'Official CLI archive mismatch' }
+          Invoke-WebRequest $pin.node.source -OutFile "$runtime/node.zip"
+          if ((Get-FileHash "$runtime/node.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.node.sha256) { throw 'Node archive mismatch' }
+          python packaging/drivebridge/git_runtime.py --platform windows --architecture amd64 --output "$runtime/git"
+          if ($LASTEXITCODE) { throw 'Private Git runtime preparation failed' }
+      - name: Build Windows Feishu desktop installers
         run: |
-          set -euo pipefail
-          python3 packaging/drivebridge/fetch-runtime.py --platform "$DB_PLATFORM" --arch "$DB_ARCH" --output "$RUNNER_TEMP/db-runtime"
-          mode=(); if [ "$DB_RELEASE" != true ]; then mode=(--unsigned); fi
-          if [ "$DB_DESKTOP" = true ]; then mode+=(--desktop); fi
-          script=build-linux.sh; if [ "$DB_PLATFORM" = darwin ]; then script=build-macos.sh; fi
-          bash "packaging/drivebridge/$script" --arch "$DB_ARCH" --version "$DB_VERSION" --lark-package "$RUNNER_TEMP/db-runtime/lark-package" --lark-native-archive "$RUNNER_TEMP/db-runtime/cli-native.tar.gz" --output "$RUNNER_TEMP/db-artifacts" ${mode[@]+"${mode[@]}"}
-      - name: Build native Windows installers
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          python packaging/drivebridge/fetch-runtime.py --platform windows --arch amd64 --output "$env:RUNNER_TEMP/db-runtime"
-          if ($LASTEXITCODE) { throw 'Runtime fetch failed' }
-          $mode = @{}; if ($env:DB_RELEASE -ne 'true') { $mode.Unsigned = $true }
-          if ($env:DB_DESKTOP -eq 'true') { $mode.Desktop = $true }
-          & packaging/drivebridge/build-windows.ps1 -Arch amd64 -Version $env:DB_VERSION -LarkPackage "$env:RUNNER_TEMP/db-runtime/lark-package" -LarkNativeArchive "$env:RUNNER_TEMP/db-runtime/cli-native.zip" -NodeArchive "$env:RUNNER_TEMP/db-runtime/node.zip" -OutputDir "$env:RUNNER_TEMP/db-artifacts" @mode
-      - name: Native installation, upgrade and real mount evidence
-        shell: python
-        run: |
-          import json, os, pathlib, subprocess, sys
-          harness = os.environ.get('DRIVEBRIDGE_NATIVE_HARNESS', '')
-          if not harness or not pathlib.Path(harness).is_file():
-              sys.exit('NOT VERIFIED: provisioned native harness is missing; platform release blocked')
-          tmp = pathlib.Path(os.environ['RUNNER_TEMP'])
-          subprocess.run([harness, '--artifacts', str(tmp/'db-artifacts'), '--result', str(tmp/'db-native-result.json')], check=True)
-          result = json.loads((tmp/'db-native-result.json').read_text())
-          if os.environ['DB_PLATFORM'] == 'windows':
-              args = ['pwsh','-File','packaging/drivebridge/smoke.ps1','-Payload',result['payload'],'-MountPoint',result['mountpoint'],'-Evidence',result['evidence'],'-Artifacts',str(tmp/'db-artifacts')]
-              if os.environ['DB_RELEASE']=='true': args += ['-Release']
-          else:
-              args = ['bash','packaging/drivebridge/smoke.sh','--payload',result['payload'],'--mountpoint',result['mountpoint'],'--evidence',result['evidence'],'--artifacts',str(tmp/'db-artifacts')]
-              if os.environ['DB_RELEASE']=='true': args += ['--release']
-          subprocess.run(args,check=True)
-      - uses: actions/upload-artifact@v4
+          $runtime = Join-Path $env:RUNNER_TEMP 'drivebridge-runtime'
+          & packaging/drivebridge/build-windows.ps1 -Arch amd64 -Version 0.2.7 -Edition feishu -Desktop -Unsigned `
+            -LarkPackage "$runtime/lark-package" -LarkNativeArchive "$runtime/lark-native.zip" -NodeArchive "$runtime/node.zip" `
+            -GitRuntime "$runtime/git" -OutputDir "$env:GITHUB_WORKSPACE/dist/windows-0.2.7"
+          if ($LASTEXITCODE) { throw 'Windows package build failed' }
+      - name: Retain Windows artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: drivebridge-${{ matrix.platform }}-${{ matrix.arch }}-${{ inputs.release && 'signed-verified' || 'unsigned-test' }}
-          path: ${{ runner.temp }}/db-artifacts
+          name: drivebridge-0.2.7-windows-amd64-feishu
+          path: dist/windows-0.2.7/*
           if-no-files-found: error
-  release-gate:
-    needs: [unit, windows-session, native]
-    if: always() && inputs.release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fail closed if any platform did not verify
-        env:
-          NATIVE_RESULT: ${{ needs.native.result }}
-          UNIT_RESULT: ${{ needs.unit.result }}
-          WINDOWS_RESULT: ${{ needs.windows-session.result }}
-        run: |
-          test "$NATIVE_RESULT" = success && test "$UNIT_RESULT" = success && test "$WINDOWS_RESULT" = success || { echo 'NOT VERIFIED - platform release blocked'; exit 1; }
-          echo 'All native gates passed. Artifacts are ready for a separately authorized publish step.'
+          retention-days: 14

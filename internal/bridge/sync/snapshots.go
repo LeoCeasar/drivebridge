@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/rclone/rclone/internal/bridge/cloud"
+	"github.com/rclone/rclone/internal/bridge/doccache"
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 )
@@ -51,7 +52,11 @@ func (e *Engine) saveDocProjection(ctx context.Context, d cloud.Document, versio
 	if err != nil {
 		return model.Snapshot{}, v, err
 	}
-	sn, err := e.store.SaveSnapshot(ctx, model.Snapshot{Token: d.Token, Revision: d.Revision, XML: x, Markdown: m, BlockMap: b, Size: int64(len(v.Markdown))})
+	sn, err := doccache.Prepare(ctx, e.store, e.source, model.Snapshot{Token: d.Token, Revision: d.Revision, XML: x, Markdown: m, BlockMap: b, Size: int64(len(v.Markdown))}, v.Assets)
+	if err != nil {
+		return model.Snapshot{}, v, err
+	}
+	sn, err = e.store.SaveSnapshot(ctx, sn)
 	return sn, v, err
 }
 func (e *Engine) loadDoc(ctx context.Context, id model.SnapshotID) (model.Snapshot, model.DocView, error) {

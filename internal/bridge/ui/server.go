@@ -53,6 +53,9 @@ func respondError(w http.ResponseWriter, status int, code string) {
 	messages["unsupported_content"] = "此内容暂不支持安全提交，草稿已保留。请检查文件格式或文档结构。"
 	messages["mount_archived"] = "此挂载已移除，请先恢复挂载配置，再启动同步。"
 	messages["mount_in_use"] = "暂时不能移除：请先关闭正在使用该挂载的文件，等待本机写入完成后重试；已有数据会保留。"
+	messages["mount_unsynced"] = "尚有未上传修改、冲突或待确认操作，未删除任何数据。请处理下方同步任务后再删除。"
+	messages["history_pending"] = "历史尚未归档完成，本次未删除。请保持同步后台运行，可在“修改历史”查看进度，完成后再删除。"
+	messages["cleanup_pending"] = "挂载配置已删除，但缓存清理暂未完成。后台会自动重试；请保留应用运行并检查磁盘权限。"
 	messages["local_busy"] = "本机正在处理其他操作，请稍后重试。"
 	messages["user_authorization_required"] = "应用已配置，请再次点击授权以完成用户登录。"
 	messages["refresh_required"] = "云端尚未重新核验，草稿已保留。请恢复连接后刷新差异。"
@@ -63,6 +66,12 @@ func respondError(w http.ResponseWriter, status int, code string) {
 }
 func apiError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, manager.ErrCleanupPending):
+		respondError(w, 503, "cleanup_pending")
+	case errors.Is(err, manager.ErrMountUnsynced):
+		respondError(w, 409, "mount_unsynced")
+	case errors.Is(err, manager.ErrHistoryPending):
+		respondError(w, 409, "history_pending")
 	case errors.Is(err, manager.ErrPending), errors.Is(err, store.ErrLocked), errors.Is(err, store.ErrBusy), errors.Is(err, auth.ErrBusy), errors.Is(err, auth.ErrReferencesBusy):
 		respondError(w, 503, "local_busy")
 	case errors.Is(err, manager.ErrArchived):
@@ -109,7 +118,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/history-view.js" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -122,7 +131,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
+		case "/history-view.js", "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -147,6 +156,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		respondError(w, 403, "forbidden")
 		return
 	}
+	if strings.HasPrefix(p, "/api/history") {
+		h.historyRoutes(w, r)
+		return
+	}
 	switch p {
 	case "/api/session":
 		if r.Method != http.MethodGet {
@@ -167,6 +180,9 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range v.Mounts {
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
+			for j := range v.Mounts[i].State.Issues {
+				v.Mounts[i].State.Issues[j].Code = safeCode(v.Mounts[i].State.Issues[j].Code)
+			}
 			v.Mounts[i].StatusWarning = safeCode(v.Mounts[i].StatusWarning)
 		}
 		_, v.CanRetry = h.backend.(SyncRetrier)
@@ -261,6 +277,29 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && parts[3] == "uploads" && validID(parts[4]) && parts[5] == "local" {
+		if r.Method != "GET" {
+			method(w, "GET")
+			return
+		}
+		backend, ok := h.backend.(interface {
+			UploadLocalCopy(context.Context, model.MountID, model.JobID) (manager.UploadCopy, error)
+		})
+		if !ok {
+			respondError(w, 503, "unavailable")
+			return
+		}
+		copy, err := backend.UploadLocalCopy(r.Context(), model.MountID(parts[2]), model.JobID(parts[4]))
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": copy.Name}))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(copy.Content)
+		return
+	}
 	if len(parts) >= 2 && parts[0] == "api" && parts[1] == "discovery" {
 		h.discovery(w, r, parts[2:])
 		return
@@ -269,7 +308,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.conflict(w, r, parts[2], parts[3:])
 		return
 	}
-	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore") {
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore" || parts[3] == "delete" || parts[3] == "restore_start") {
 		if r.Method != "POST" {
 			method(w, "POST")
 			return
@@ -291,7 +330,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			err = h.backend.Mount(r.Context(), model.MountID(parts[2]), parts[3])
 		}
 		if err != nil {
-			if parts[3] == "archive" && errors.Is(err, manager.ErrPending) {
+			if (parts[3] == "archive" || parts[3] == "delete") && errors.Is(err, manager.ErrPending) {
 				respondError(w, 409, "mount_in_use")
 			} else {
 				apiError(w, err)
@@ -309,7 +348,7 @@ func method(w http.ResponseWriter, allow string) {
 }
 func safeCode(s string) string {
 	switch s {
-	case "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content":
+	case "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
 		return s
 	}
 	return "operation_failed"

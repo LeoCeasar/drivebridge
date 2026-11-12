@@ -15,7 +15,7 @@ import (
 // precedes planning, and any unsupported edit discards every planned operation.
 func PlanStepWithBase(baseLocal, local []byte, baseRemote, remote model.DocView) (model.MergeResult, error) {
 	if baseRemote.ProjectionVersion < 2 && remote.ProjectionVersion < 2 {
-		return PlanStep(baseLocal, local, remote)
+		return planPlainWithBase(baseLocal, local, baseRemote, remote)
 	}
 	rich := false
 	for _, d := range []model.DocView{baseRemote, remote} {
@@ -24,7 +24,7 @@ func PlanStepWithBase(baseLocal, local []byte, baseRemote, remote model.DocView)
 		}
 	}
 	if !rich {
-		return PlanStep(baseLocal, local, remote)
+		return planPlainWithBase(baseLocal, local, baseRemote, remote)
 	}
 	return planReadable(baseLocal, local, baseRemote, remote)
 }
@@ -95,6 +95,7 @@ func projectedAtoms(b []byte) ([]atom, error) {
 			}
 			out[i].Kind = nodes[0].tag
 			out[i].xml = string(source)
+			normalizeLocalAssetAliases(nodes[0])
 			out[i].Hash = digest("readable\x00" + opaqueSemantic(nodes[0]))
 			out[i].Readable = true
 		} else {
@@ -486,6 +487,7 @@ func oneXML(s string) (*xnode, error) {
 	if len(n) != 1 {
 		return nil, unsupported("table source")
 	}
+	normalizeLocalAssetAliases(n[0])
 	return n[0], nil
 }
 func planTable(base, local, baseRemote, remote atom, old, now model.Block) (string, []model.Operation, error) {
@@ -538,4 +540,20 @@ func planTable(base, local, baseRemote, remote atom, old, now model.Block) (stri
 	}
 	// Keep remote-only paragraph changes in the complete desired projection.
 	return serialize(rn), ops, nil
+}
+
+// Editors may spell the same relative managed image with a leading "./".
+// Normalize only that alias for comparison; other resource/path edits still
+// differ from the accepted projection and remain unsupported.
+func normalizeLocalAssetAliases(n *xnode) {
+	if n.tag == "img" {
+		for i, a := range n.attrs {
+			if a.Name.Space == "" && a.Name.Local == "src" && strings.HasPrefix(a.Value, "./.drivebridge-assets/") {
+				n.attrs[i].Value = strings.TrimPrefix(a.Value, "./")
+			}
+		}
+	}
+	for _, c := range n.kids {
+		normalizeLocalAssetAliases(c)
+	}
 }

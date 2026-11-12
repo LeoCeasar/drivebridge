@@ -102,6 +102,7 @@ class PolicyTests(unittest.TestCase):
             p.check_release(manifest, None)
         evidence = {'platform': 'linux', 'architecture': 'amd64', 'payload_sha256': p.payload_digest([]),
                     'checks': {name: 'passed' for name in p.NATIVE_GATES}, 'runner': 'fixture-native'}
+        manifest['history'] = {'git_runtime': True}
         p.check_release(manifest, evidence)
         evidence['checks']['upgrade_preserves_pending'] = 'not_verified'
         with self.assertRaisesRegex(ValueError, 'upgrade_preserves_pending'):

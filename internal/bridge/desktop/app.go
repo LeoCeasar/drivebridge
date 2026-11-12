@@ -164,6 +164,7 @@ func Run(ctx context.Context, o Options) error {
 					initializationRelease = nil
 					ready = true
 					startDiscovery(ctx, o.Manager, &operations)
+					startHistoryMaintenance(ctx, o.Manager, &operations)
 					publish()
 					mounts, e := backend.Mounts(ctx)
 					if e == nil && len(mounts) == 0 && !o.Headless {

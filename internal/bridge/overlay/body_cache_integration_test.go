@@ -220,6 +220,7 @@ func TestManagedBodyCacheRealLifecycleAndAccessCAS(t *testing.T) {
 	if err := os.Chtimes(bodyPath, aged, aged); err != nil {
 		t.Fatal(err)
 	}
+	archiveStoreHistory(t, st)
 	freshCandidate := integrationCandidate(t, st, entry.ID)
 	if called, evicted, err := integrationEvict(t, f, st, managed, freshCandidate); err != nil || !called || !evicted {
 		t.Fatal("closed clean body did not evict", called, evicted, err)

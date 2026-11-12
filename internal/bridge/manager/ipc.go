@@ -266,7 +266,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
-	case "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
+	case "/local-metadata/reconcile", "/history/pending", "/history/version-local", "/history/body-local", "/history/pending-bytes", "/history/protection", "/history/sync", "/history/current", "/history/restore", "/upload-copy", "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
 		controlCtx, release, err := w.beginControl(ctx)
 		if err != nil {
 			return nil, err
@@ -275,6 +275,65 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		ctx = controlCtx
 	}
 	switch r.URL.Path {
+	case "/local-metadata/reconcile":
+		return s.store.ReconcileSystemMetadata(ctx)
+	case "/history/pending":
+		var in historyLocalRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return localPendingHistory(ctx, s.store, in)
+	case "/history/version-local":
+		var in historyLocalRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return localHistoryVersion(ctx, s.store, in.ID)
+	case "/history/body-local":
+		var in historyLocalRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return localHistoryBody(ctx, s.store, in.ID, in.Role)
+	case "/history/current":
+		var in struct {
+			ID model.EntryID `json:"id"`
+		}
+		if err := decodeInput(r, &in); err != nil || !validID(string(in.ID)) {
+			return nil, ErrConfig
+		}
+		return historyCurrent(ctx, s.store, in.ID)
+	case "/history/restore":
+		var in model.HistoryRestoreRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return w.restoreHistory(ctx, in)
+	case "/history/protection":
+		if r.Method != "GET" {
+			return nil, ErrConfig
+		}
+		return s.store.HistoryProtection(ctx)
+	case "/history/pending-bytes":
+		if r.Method != "GET" {
+			return nil, ErrConfig
+		}
+		return s.store.PendingHistoryBytes(ctx)
+	case "/history/status":
+		if r.Method != "GET" {
+			return nil, ErrConfig
+		}
+		return w.historyStatus(ctx)
+	case "/history/sync":
+		var in struct{}
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		repo, err := w.manager.historyRepository(ctx, w.spec.Profile.ID)
+		if err != nil {
+			return nil, err
+		}
+		return repo.Ingest(ctx, s.store)
 	case "/refresh-directories":
 		var in struct{}
 		if err := decodeInput(r, &in); err != nil {
@@ -295,6 +354,14 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 			return nil, ErrConfig
 		}
 		return struct{}{}, w.stopPolicy(ctx, time.Duration(input.Wait), r.URL.Path == "/recovery/stop")
+	case "/upload-copy":
+		var in struct {
+			ID model.JobID `json:"id"`
+		}
+		if err := decodeInput(r, &in); err != nil || !validID(string(in.ID)) {
+			return nil, ErrConfig
+		}
+		return pendingUploadCopy(ctx, s.store, in.ID)
 	case "/uploads":
 		if r.Method != "GET" {
 			return nil, ErrConfig

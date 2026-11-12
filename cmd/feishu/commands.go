@@ -151,18 +151,21 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	mount.AddCommand(addMount)
 	for _, kind := range []string{"remove", "restore"} {
 		kind := kind
-		entry := &cobra.Command{Use: kind + " NAME", Args: exactArgs(1), Short: "Hide or restore this computer's mount configuration without deleting cloud files"}
+		entry := &cobra.Command{Use: kind + " NAME", Args: exactArgs(1), Short: "Delete a clean local mapping and caches, or restore a legacy archived mapping; cloud files remain"}
 		entry.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
 			v, err := m.ResolveMount(ctx, args[0])
 			if err != nil {
+				if kind == "remove" && errors.Is(err, manager.ErrConfig) {
+					return map[string]bool{"deleted": true}, m.DeleteMount(ctx, model.MountID(args[0]))
+				}
 				return nil, err
 			}
 			if kind == "remove" {
-				err = m.ArchiveMount(ctx, v.ID)
+				err = m.DeleteMount(ctx, v.ID)
 			} else {
 				err = m.RestoreMount(ctx, v.ID)
 			}
-			return map[string]any{"archived": kind == "remove", "data_preserved": true}, err
+			return map[string]any{"deleted": kind == "remove", "cloud_files_preserved": true, "history_preserved": true}, err
 		})
 		mount.AddCommand(entry)
 	}

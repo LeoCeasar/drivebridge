@@ -16,6 +16,7 @@ import (
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/store"
 )
 
 const docAssetsDirectory = ".drivebridge-assets"
@@ -44,6 +45,7 @@ func (f *Fs) ValidateManagedOpen(_ context.Context, remote string, write bool) e
 	if write && isDocAssetPath(remote) {
 		return fs.ErrorPermissionDenied
 	}
+
 	return nil
 }
 
@@ -74,6 +76,8 @@ type docAssetReference struct {
 	asset   model.DocAsset
 	owner   model.Entry
 	modTime time.Time
+	blob    model.BlobID
+	size    int64
 }
 
 // docAssets reads only immutable sidecars bound to current accepted checkpoints
@@ -92,14 +96,26 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 	}
 	result := make(map[string]docAssetReference)
 	for _, e := range entries {
-		if e.Kind != model.KindDocx || e.Token == "" || e.RemoteCheckpoint == "" || !policy.allows(e.Remote) {
+		if e.Kind != model.KindDocx || !policy.allows(e.Remote) {
 			continue
 		}
-		sn, err := f.store.Snapshot(ctx, e.RemoteCheckpoint)
+		assetMetadata, err := f.store.Metadata(ctx, e.ID)
 		if err != nil {
 			return nil, err
 		}
-		if sn.Token != e.Token || sn.BlockMap == "" {
+		checkpoint := e.RemoteCheckpoint
+		restoredAssets := assetMetadata.HistorySnapshot != "" && assetMetadata.HistoryMediaBody == e.Local
+		if restoredAssets {
+			checkpoint = assetMetadata.HistorySnapshot
+		}
+		if checkpoint == "" {
+			continue
+		}
+		sn, err := f.store.Snapshot(ctx, checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		if (!restoredAssets && sn.Token != e.Token) || sn.BlockMap == "" {
 			continue
 		}
 		r, err := f.store.ReadBlob(ctx, sn.BlockMap)
@@ -142,7 +158,7 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 		if err != nil {
 			return nil, err
 		}
-		if metadata.Tombstone {
+		if metadata.Tombstone || restoredAssets && (metadata.HistorySnapshot != checkpoint || metadata.HistoryMediaBody != e.Local) {
 			continue
 		}
 		current, err := f.store.Entry(ctx, e.ID)
@@ -152,12 +168,33 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 		if current.Remote != e.Remote || current.Token != e.Token || current.RemoteCheckpoint != e.RemoteCheckpoint {
 			continue
 		}
+		cached, err := f.store.CachedDocMedia(ctx, sn.Token, sn.Revision)
+		if err != nil {
+			return nil, err
+		}
 		for _, asset := range sidecar.Assets {
 			if !originalAssets[asset] || asset.Token == "" || strings.ContainsAny(asset.Token, "/\\:\x00 \t\n\r") || asset.Path != markdown.AssetPath(asset.Token, asset.Name, asset.MIME) {
 				continue
 			}
 			remote := path.Join(parent, asset.Path)
-			result[remote] = docAssetReference{asset: asset, owner: e, modTime: metadata.ModTime}
+			ref := docAssetReference{asset: asset, owner: e, modTime: metadata.ModTime, size: -1}
+			if b := cached[asset.Path]; b != "" {
+				r, readErr := f.store.ReadBlob(ctx, b)
+				if readErr == nil {
+					info, statErr := r.(interface{ Stat() (os.FileInfo, error) }).Stat()
+					closeErr := r.Close()
+					if statErr != nil {
+						return nil, statErr
+					}
+					if closeErr != nil {
+						return nil, closeErr
+					}
+					ref.blob, ref.size = b, info.Size()
+				} else if !errors.Is(readErr, os.ErrNotExist) {
+					return nil, readErr
+				}
+			}
+			result[remote] = ref
 		}
 	}
 	return result, nil
@@ -179,7 +216,7 @@ func (f *Fs) listDocAssets(ctx context.Context, remote string) (fs.DirEntries, e
 	}
 	result := make(fs.DirEntries, 0, len(assets))
 	for name, ref := range assets {
-		result = append(result, &docAssetObject{f: f, remote: name, ref: ref, size: -1})
+		result = append(result, &docAssetObject{f: f, remote: name, ref: ref, size: ref.size})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Remote() < result[j].Remote() })
 	return result, nil
@@ -206,7 +243,7 @@ func (f *Fs) newDocAsset(ctx context.Context, remote string) (*docAssetObject, e
 	if !ok {
 		return nil, fs.ErrorObjectNotFound
 	}
-	return &docAssetObject{f: f, remote: remote, ref: ref, size: -1}, nil
+	return &docAssetObject{f: f, remote: remote, ref: ref, size: ref.size}, nil
 }
 
 type docAssetObject struct {
@@ -247,21 +284,25 @@ func (o *docAssetObject) Open(ctx context.Context, opts ...fs.OpenOption) (io.Re
 	if current.ref.asset.Token != o.ref.asset.Token {
 		return nil, fs.ErrorObjectNotFound
 	}
-	source, ok := o.f.source.(DocMediaSource)
-	if !ok {
-		return nil, model.ErrUnsupportedContent
+	if current.ref.blob == "" {
+		// Upgrade pre-existing caches as one document bundle, not a standalone
+		// image download. New documents always arrive with complete bodies.
+		if err := o.f.ensureDocImages(ctx, current.ref.owner); err != nil {
+			return nil, err
+		}
+		current, err = o.f.newDocAsset(ctx, o.remote)
+		if err != nil {
+			return nil, err
+		}
 	}
-	r, err := source.OpenDocMedia(ctx, o.ref.asset.Token)
+	if current.ref.blob == "" {
+		return nil, store.ErrNotFound
+	}
+	r, err := o.f.store.ReadBlob(ctx, current.ref.blob)
 	if err != nil {
 		return nil, err
 	}
-	if r == nil {
-		return nil, errors.New("media source returned no body")
-	}
-	r, size, err := sizedDocMedia(ctx, r)
-	if err != nil {
-		return nil, err
-	}
+	size := current.ref.size
 	o.mu.Lock()
 	o.size = size
 	o.mu.Unlock()

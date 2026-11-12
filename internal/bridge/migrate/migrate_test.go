@@ -431,7 +431,7 @@ func TestFutureDatabaseBackupIsReadOnlyRefused(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = db.Update(func(tx *bolt.Tx) error { return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("2")) }); e != nil {
+	if e = db.Update(func(tx *bolt.Tx) error { return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("999999")) }); e != nil {
 		t.Fatal(e)
 	}
 	db.Close()

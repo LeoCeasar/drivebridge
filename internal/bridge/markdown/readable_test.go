@@ -234,3 +234,19 @@ func TestReadableRepeatedMediaTokenDifferentExtensions(t *testing.T) {
 		t.Fatalf("first metadata per path was not retained: %#v", d.Assets)
 	}
 }
+
+func TestManagedImageDotPrefixIsEquivalentButReplacementIsRejected(t *testing.T) {
+	for _, xml := range []string{readableFixture, `<p id="p">before</p><img id="image" src="media-token" mime="image/png"/>`} {
+		base := readable(t, xml)
+		local := bytes.ReplaceAll(base.Markdown, []byte(`src=".drivebridge-assets/`), []byte(`src="./.drivebridge-assets/`))
+		result, err := PlanStepWithBase(base.Markdown, local, base, base)
+		if err != nil || result.ConflictReason != "" || len(result.Operations) != 0 {
+			t.Fatal("equivalent local image path blocked safe save", result.ConflictReason, err)
+		}
+		changed := bytes.ReplaceAll(local, []byte(`./.drivebridge-assets/`), []byte(`../.drivebridge-assets/`))
+		result, err = PlanStepWithBase(base.Markdown, changed, base, base)
+		if err == nil && result.ConflictReason == "" {
+			t.Fatal("external image path mutation accepted")
+		}
+	}
+}

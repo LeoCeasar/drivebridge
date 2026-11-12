@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rclone/rclone/backend/crypt"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/hash"
@@ -87,12 +86,17 @@ type ListJSONOpt struct {
 }
 
 // state for ListJson
+type filenameCipher interface {
+	EncryptDirName(string) string
+	EncryptFileName(string) string
+}
+
 type listJSON struct {
 	fsrc       fs.Fs
 	remote     string
 	format     string
 	opt        *ListJSONOpt
-	cipher     *crypt.Cipher
+	cipher     filenameCipher
 	hashTypes  []hash.Type
 	dirs       bool
 	files      bool
@@ -127,7 +131,7 @@ func newListJSON(ctx context.Context, fsrc fs.Fs, remote string, opt *ListJSONOp
 		if fsInfo.Name != "crypt" {
 			return nil, errors.New("the remote needs to be of type \"crypt\"")
 		}
-		lj.cipher, err = crypt.NewCipher(config)
+		lj.cipher, err = newListJSONCipher(config)
 		if err != nil {
 			return nil, fmt.Errorf("ListJSON failed to make new crypt remote: %w", err)
 		}

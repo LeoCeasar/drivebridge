@@ -14,6 +14,7 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/internal/bridge/doccache"
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -433,6 +434,10 @@ func (f *Fs) materialize(ctx context.Context, e model.Entry) (fs.Object, error) 
 			return nil, err
 		}
 		sn = model.Snapshot{Token: e.Token, Revision: doc.Revision, XML: xml, Markdown: md, BlockMap: blockMap, Size: int64(len(view.Markdown))}
+		sn, err = doccache.Prepare(ctx, f.store, f.source, sn, view.Assets)
+		if err != nil {
+			return nil, err
+		}
 		candidate, err := f.store.OfferRemote(ctx, e.ID, e.Generation, sn, md)
 		if err != nil {
 			return f.racedMaterialization(ctx, e, err)

@@ -251,6 +251,7 @@ func TestDocAssetsMaterializationPersistsAcrossStoreReopen(t *testing.T) {
 	if sidecar.ProjectionVersion != 2 || len(sidecar.Assets) != 1 {
 		t.Fatal(sidecar)
 	}
+	source.err = errors.New("offline after caching document")
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -270,8 +271,8 @@ func TestDocAssetsMaterializationPersistsAcrossStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.opens != 0 {
-		t.Fatal("reopen fetched media")
+	if source.opens != 1 {
+		t.Fatal("reopen performed an additional media download")
 	}
 	if body(t, asset) != "image content" {
 		t.Fatal("reopened asset missing")

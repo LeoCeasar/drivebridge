@@ -48,7 +48,19 @@ func namespaceReserved(tx *bolt.Tx, p string) bool {
 	})
 	return yes
 }
-func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out model.NamespaceOp, err error) {
+func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (model.NamespaceOp, error) {
+	return s.prepareNamespace(ctx, op, false)
+}
+
+// PrepareEditorBackup never queues a cloud rename. Existing upload journals are
+// retained while the editor temporarily parks the stable document identity.
+func (s *Store) PrepareEditorBackup(ctx context.Context, src, dst string) (model.NamespaceOp, error) {
+	if !model.EditorTildeBackup(src, dst) {
+		return model.NamespaceOp{}, ErrInvalidState
+	}
+	return s.prepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: src, Dst: dst}, true)
+}
+func (s *Store) prepareNamespace(ctx context.Context, op model.NamespaceOp, editorBackup bool) (out model.NamespaceOp, err error) {
 	if op.Kind != "rename" && op.Kind != "replace" && op.Kind != "delete" && op.Kind != "mkdir" {
 		return out, errors.New("unsupported namespace operation")
 	}
@@ -91,8 +103,17 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 			if er != nil {
 				return er
 			}
-			if inflight(tx, src.ID, "") {
+			if !editorBackup && inflight(tx, src.ID, "") {
 				return ErrBusy
+			}
+			if editorBackup {
+				safe, err := editorBackupSource(tx, src, "")
+				if err != nil {
+					return err
+				}
+				if !safe {
+					return ErrBusy
+				}
 			}
 			op.SrcID = src.ID
 		}
@@ -117,7 +138,16 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 			} else if !errors.Is(er, ErrNotFound) {
 				return er
 			}
-			if op.DstExists && (op.Kind != "replace") {
+			if editorBackup && op.DstExists {
+				var metadata Metadata
+				if err := get(tx, "metadata", string(dst.ID), &metadata); err != nil {
+					return err
+				}
+				if dst.Token != "" || metadata.SafeSaveOriginal != src.ID {
+					return ErrBusy
+				}
+			}
+			if op.DstExists && (op.Kind != "replace") && !editorBackup {
 				return errors.New("namespace destination exists")
 			}
 			if op.Kind == "replace" && !op.DstExists {
@@ -141,7 +171,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 		if er != nil {
 			return er
 		}
-		r := namespaceRecord{Op: op, Ordinal: sequence, SafeSaveRestore: restoreParked}
+		r := namespaceRecord{Op: op, Ordinal: sequence, SafeSaveRestore: restoreParked, SafeSaveBackup: editorBackup}
 		if op.Kind == "mkdir" {
 			r.TemporaryName = "DriveBridge-pending-" + op.ID
 		}
@@ -157,7 +187,7 @@ func (s *Store) PrepareNamespace(ctx context.Context, op model.NamespaceOp) (out
 				if e.FrozenBy != "" {
 					return ErrFrozen
 				}
-				if op.Src != "" && under(e.Remote, op.Src) && inflight(tx, e.ID, "") {
+				if !editorBackup && op.Src != "" && under(e.Remote, op.Src) && inflight(tx, e.ID, "") {
 					return ErrBusy
 				}
 				r.Before = append(r.Before, e)

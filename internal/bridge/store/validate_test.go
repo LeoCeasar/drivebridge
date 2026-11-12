@@ -1,12 +1,53 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"github.com/rclone/rclone/internal/bridge/model"
 	bolt "go.etcd.io/bbolt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestValidateLegacyDirectoryBeforeUpgradeIsReadOnly(t *testing.T) {
+	s, dir, scope := openTest(t)
+	e, _ := stage(t, s, entry(t, s, "upgrade.md"), "pending local edit")
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		for _, name := range buckets {
+			if strings.HasPrefix(name, "history_") {
+				if err := tx.DeleteBucket([]byte(name)); err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("1"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(dir, "store.db")
+	before, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDirectory(ctx, dir, scope); err != nil {
+		t.Fatalf("valid schema1 cannot reach installation: %v", err)
+	}
+	after, err := os.ReadFile(name)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("pre-install audit rewrote schema1: %v", err)
+	}
+	if err := os.Remove(s.blobPath(e.Local)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDirectory(ctx, dir, scope); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("legacy missing body accepted: %v", err)
+	}
+}
 
 func TestValidatePreservesUnknownJournal(t *testing.T) {
 	s, _, _ := openTest(t)

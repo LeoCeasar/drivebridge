@@ -30,6 +30,7 @@ var (
 
 type Options struct {
 	ConfigFile, CLIExecutable, Executable string
+	GitExecutable                         string
 	ReadyTimeout                          time.Duration
 }
 type mountSpec struct {
@@ -47,31 +48,32 @@ type dependencies struct {
 	lifecycleLease func(context.Context) (func(), error)
 }
 type Manager struct {
-	options           Options
-	domain            string
-	factory           workerFactory
-	spawn             func(context.Context, []string, string) (int, error)
-	startLease        func(context.Context) (func(), error)
-	lifecycleLease    func(context.Context) (func(), error)
-	mu                sync.Mutex
-	workers           map[model.MountID]*worker
-	auth              *auth.Service
-	ctx               context.Context
-	cancel            context.CancelFunc
-	discoveryMu       sync.Mutex
-	discoverySessions map[model.ProfileID]discoverySession
-	discoveryFactory  discoverySessionFactory
-	discoveryClosing  bool
-	discoveryLogins   map[model.ProfileID]context.CancelFunc
-	discoveryWG       sync.WaitGroup
-	automaticMu       sync.Mutex
-	automaticClosing  bool
-	automaticWG       sync.WaitGroup
-	automaticProfiles map[model.ProfileID]*automaticLogin
-	automaticFlows    map[string]*automaticLogin
-	automaticDeps     *automaticLoginDependencies
-	closeOnce         sync.Once
-	closeErr          error
+	historyRepositories map[model.ProfileID]historyRepositoryCache
+	options             Options
+	domain              string
+	factory             workerFactory
+	spawn               func(context.Context, []string, string) (int, error)
+	startLease          func(context.Context) (func(), error)
+	lifecycleLease      func(context.Context) (func(), error)
+	mu                  sync.Mutex
+	workers             map[model.MountID]*worker
+	auth                *auth.Service
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	discoveryMu         sync.Mutex
+	discoverySessions   map[model.ProfileID]discoverySession
+	discoveryFactory    discoverySessionFactory
+	discoveryClosing    bool
+	discoveryLogins     map[model.ProfileID]context.CancelFunc
+	discoveryWG         sync.WaitGroup
+	automaticMu         sync.Mutex
+	automaticClosing    bool
+	automaticWG         sync.WaitGroup
+	automaticProfiles   map[model.ProfileID]*automaticLogin
+	automaticFlows      map[string]*automaticLogin
+	automaticDeps       *automaticLoginDependencies
+	closeOnce           sync.Once
+	closeErr            error
 }
 
 func New(o Options) (*Manager, error) { return newManager(o, dependencies{}) }

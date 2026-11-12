@@ -124,6 +124,10 @@ func TestCancelUnsentLocalFileSafetyMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 			default:
+				var protectedSnapshot model.Snapshot
+				if caseName == "remote-checkpoint" {
+					protectedSnapshot = fileSnapshot(t, s, "remote-token", "remote evidence")
+				}
 				if err := s.update(ctx, func(tx *bolt.Tx) error {
 					current, err := entryTx(tx, e.ID)
 					if err != nil {
@@ -137,7 +141,7 @@ func TestCancelUnsentLocalFileSafetyMatrix(t *testing.T) {
 					case "token":
 						current.Token = "remote-token"
 					case "remote-checkpoint":
-						current.RemoteCheckpoint = "remote-evidence"
+						current.RemoteCheckpoint = protectedSnapshot.ID
 					case "local-checkpoint":
 						current.LocalCheckpoint = current.Local
 					case "plan":

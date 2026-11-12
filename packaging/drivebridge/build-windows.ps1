@@ -6,6 +6,8 @@ param(
     [Parameter(Mandatory)][string]$LarkNativeArchive,
     [Parameter(Mandatory)][string]$NodeArchive,
     [string]$OutputDir = '',
+    [string]$GitRuntime = '',
+    [ValidateSet('feishu','full')][string]$Edition = 'feishu',
     [switch]$Unsigned,
     [switch]$CliOnly,
     [switch]$Desktop
@@ -43,6 +45,7 @@ if (-not $Unsigned) {
     }
 }
 $name = "drivebridge-$Version-windows-$Arch"
+if ($Edition -eq 'feishu') { $name += '-feishu' }
 if ($Desktop) { $name += '-desktop' }
 if ($Unsigned) { $name += '-unsigned-test' }
 if (-not $OutputDir) { $OutputDir = Join-Path $repo "dist/$name" }
@@ -56,6 +59,7 @@ try {
     $env:GOOS = 'windows'; $env:GOARCH = $Arch; $env:CGO_ENABLED = '0'
     $tags = 'cmount'
     if ($CliOnly) { $tags = '' }
+    if ($Edition -eq 'feishu') { $tags = (@($tags,'drivebridge_feishu') | Where-Object { $_ }) -join ',' }
     Push-Location $repo
     try { Invoke-Native go @('build', '-trimpath', '-tags', $tags, '-ldflags', '-s -w', '-o', "$work/drivebridge.exe", '.') }
     finally { Pop-Location }
@@ -73,13 +77,15 @@ try {
     $desktopStage = @()
     if ($Desktop) {
         Push-Location $repo
-        try { Invoke-Native go @('build', '-trimpath', '-tags', 'cmount,desktop', '-ldflags', '-s -w -H=windowsgui', '-o', "$work/drivebridge-desktop.exe", '.') }
+        try { Invoke-Native go @('build', '-trimpath', '-tags', "$tags,desktop", '-ldflags', '-s -w -H=windowsgui', '-o', "$work/drivebridge-desktop.exe", '.') }
         finally { Pop-Location }
         $desktopStage = @('--desktop-binary', "$work/drivebridge-desktop.exe", '--version', $Version)
     }
+    $gitStage = @()
+    if ($GitRuntime) { $gitStage = @('--git-runtime', $GitRuntime) }
     Invoke-Native python (@("$here/package.py", 'stage', '--platform', 'windows', '--arch', $Arch,
-        '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--consume-binary', '--lark-package', $LarkPackage,
-        '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode + $desktopStage + $sessionStage)
+        '--root', $payload, '--repo', $repo, '--binary', "$work/drivebridge.exe", '--consume-binary', '--edition', $Edition, '--lark-package', $LarkPackage,
+        '--lark-native-archive', $LarkNativeArchive, '--node-archive', $NodeArchive) + $mode + $desktopStage + $sessionStage + $gitStage)
     $innoVersion = (& ISCC '/?' 2>&1 | Out-String).Trim().Split("`n")[0]
     if ($LASTEXITCODE -ne 0) { throw 'Cannot determine Inno Setup version' }
     $versions = @{ wix = $wixVersion; inno = $innoVersion; powershell = $PSVersionTable.PSVersion.ToString(); dotnet = $dotnetVersion }
@@ -98,6 +104,7 @@ try {
         }
     }
     Invoke-Native python (@("$here/package.py", 'manifest', '--platform', 'windows', '--arch', $Arch,
+	    '--edition', $Edition,
         '--root', $payload, '--version', $Version, '--tools', "$work/tools.json", '--signature', $signature) + $mode)
     Invoke-Native python @("$here/package.py", 'verify', '--root', $payload)
     Invoke-Native python @("$here/package.py", 'render', '--template', 'windows.wxs', '--version', $Version,
