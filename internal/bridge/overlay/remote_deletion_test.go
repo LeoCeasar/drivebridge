@@ -53,3 +53,35 @@ func TestCompleteDirectoryRefreshProtectsPendingFileAndDoesNotReadBodies(t *test
 		t.Fatal("repeat refresh duplicated conflict", conflicts)
 	}
 }
+
+func TestRemoteCleanDeletionDoesNotPermanentlyHideReappearedFile(t *testing.T) {
+	f, st, source := fixture(t)
+	items := []larkcli.DriveItem{{Token: "returning-token", Name: "note.md", Type: "file"}}
+	source.items = items
+	source.bodies["returning-token"] = "before deletion"
+	listed(t, f)
+	prior, err := st.EntryByToken(ctx, "returning-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.items = nil
+	if err = f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	source.items = items
+	source.bodies["returning-token"] = "restored and changed content"
+	if err = f.RefreshDirectory(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.EntryByRemote(ctx, "note.md")
+	if err != nil || current.ID == prior.ID || current.Token != "returning-token" {
+		t.Fatal(current, err)
+	}
+	o, err := f.NewObject(ctx, "note.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := body(t, o); got != "restored and changed content" {
+		t.Fatal(got)
+	}
+}

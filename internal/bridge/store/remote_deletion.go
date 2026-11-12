@@ -165,6 +165,10 @@ func (s *Store) ObserveRemoteDeletion(ctx context.Context, expected model.Entry)
 			}
 			e.Generation++
 			e.Status = model.StatusSynced
+			// Remote absence is not a persistent local-delete intent. The
+			// protected entry retains this binding; a later positive cloud
+			// listing may admit the same token as a fresh local placeholder.
+			e.Token = ""
 			if er = tombstone(tx, e); er != nil {
 				return er
 			}
@@ -274,6 +278,9 @@ func (s *Store) ResolveRemoteDeletion(ctx context.Context, r model.ResolveReques
 		if r.Action == model.ResolveAcceptDelete {
 			e.Generation++
 			e.Status = model.StatusSynced
+			// Preserve the old binding in recovery without suppressing a
+			// future real restoration of this resource in the cloud.
+			e.Token = ""
 			return tombstone(tx, e)
 		}
 		if content == "" {

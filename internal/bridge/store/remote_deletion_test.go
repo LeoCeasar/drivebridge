@@ -33,7 +33,7 @@ func TestRemoteDeletionCleanAndStaleCAS(t *testing.T) {
 		t.Fatal(c, removed, err)
 	}
 	got, err := s.Entry(ctx, e.ID)
-	if err != nil || got.Generation != e.Generation+1 || got.Status != model.StatusSynced || got.Token != e.Token {
+	if err != nil || got.Generation != e.Generation+1 || got.Status != model.StatusSynced || got.Token != "" {
 		t.Fatal(got, err)
 	}
 	if _, err = s.EntryByRemote(ctx, e.Remote); !errors.Is(err, ErrNotFound) {
@@ -159,7 +159,7 @@ func TestRemoteDeletionAcceptSettlesAllConflictsAndQueues(t *testing.T) {
 	}
 	request.ExpectedGeneration = edited.Generation
 	result, job, err := s.ResolveRemoteDeletion(ctx, request)
-	if err != nil || job.ID != "" || result.Generation != edited.Generation+1 || result.Token != e.Token {
+	if err != nil || job.ID != "" || result.Generation != edited.Generation+1 || result.Token != "" {
 		t.Fatal(result, job, err)
 	}
 	pending, err := s.Pending(ctx)
@@ -683,6 +683,69 @@ func TestPrepareCreateWaitsForOverlappingDeleteAcknowledgment(t *testing.T) {
 			created, err := s.PrepareCreate(ctx, job.ID, "parent", "deleted.bin")
 			if err != nil || created.EntryID != local.ID || created.Input != local.Local {
 				t.Fatal(created, err)
+			}
+		})
+	}
+}
+
+func TestRemoteDeletionReappearanceAdmitsNewIdentityAndRetainsRecovery(t *testing.T) {
+	for _, dirty := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clean", true: "accepted"}[dirty], func(t *testing.T) {
+			s, _, _ := openTest(t)
+			old := deletionCleanEntry(t, s)
+			if dirty {
+				old, _ = stage(t, s, old, "dirty recovery body")
+			}
+			conflict, removed, err := s.ObserveRemoteDeletion(ctx, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dirty {
+				if removed {
+					t.Fatal("dirty file removed without decision")
+				}
+				if _, _, err = s.ResolveRemoteDeletion(ctx, model.ResolveRequest{ConflictID: conflict.ID, ExpectedGeneration: old.Generation, ExpectedRemoteRevision: conflict.RemoteRevision, Action: model.ResolveAcceptDelete}); err != nil {
+					t.Fatal(err)
+				}
+			} else if !removed {
+				t.Fatal("clean file was not removed")
+			}
+			if _, err = s.EntryByToken(ctx, old.Token); !errors.Is(err, ErrNotFound) {
+				t.Fatal(err)
+			}
+			tombstoned, err := s.Entry(ctx, old.ID)
+			if err != nil || tombstoned.Token != "" {
+				t.Fatal(tombstoned, err)
+			}
+			if err = s.Validate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			reappeared, err := s.ObserveEntry(ctx, Observation{Remote: old.Remote, Kind: old.Kind, Token: old.Token})
+			if err != nil || reappeared.ID == old.ID || reappeared.Token != old.Token || reappeared.Local != "" {
+				t.Fatal(reappeared, err)
+			}
+			bound, err := s.EntryByToken(ctx, old.Token)
+			if err != nil || bound.ID != reappeared.ID {
+				t.Fatal(bound, err)
+			}
+			protected := false
+			if err = s.view(ctx, func(tx *bolt.Tx) error {
+				return each[recoveryRecord](tx, "recovery", func(r recoveryRecord) error {
+					for _, e := range r.Entries {
+						if e.ID == old.ID && e.Token == old.Token && e.Local == old.Local && e.RemoteCheckpoint == old.RemoteCheckpoint {
+							protected = true
+						}
+					}
+					return nil
+				})
+			}); err != nil || !protected {
+				t.Fatal("original identity and body recovery missing", err)
+			}
+			if read(t, s, tombstoned.Local) != read(t, s, old.Local) {
+				t.Fatal("original local bytes lost")
+			}
+			if err = s.Validate(ctx); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

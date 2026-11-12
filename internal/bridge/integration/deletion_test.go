@@ -39,6 +39,7 @@ func TestDeletionActualVFSRemoteCleanWaitsForReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.cloud.mu.Lock()
+	returned := h.cloud.resources[h.fileToken]
 	delete(h.cloud.resources, h.fileToken)
 	h.cloud.mu.Unlock()
 	if err = h.overlay.RefreshDirectory(h.ctx, ""); !errors.Is(err, vfs.ErrExternalUpdateBusy) {
@@ -58,6 +59,19 @@ func TestDeletionActualVFSRemoteCleanWaitsForReader(t *testing.T) {
 	}
 	if _, err = h.vfs.Stat("data.bin"); err == nil {
 		t.Fatal("removed inode remained visible")
+	}
+	returned.data = []byte("restored cloud file with a different length")
+	h.cloud.mu.Lock()
+	h.cloud.resources[h.fileToken] = returned
+	h.cloud.mu.Unlock()
+	if err = h.overlay.RefreshDirectory(h.ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	// The production metadata indexer emits this after its local refresh.
+	// A bare Overlay refresh deliberately owns no VFS directory cache.
+	h.vfs.NotifyManagedDirectoryChanged("")
+	if got := h.read("data.bin"); got != string(returned.data) {
+		t.Fatal("reappeared file reused old body", got)
 	}
 }
 
