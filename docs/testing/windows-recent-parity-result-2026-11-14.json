@@ -1,0 +1,126 @@
+{
+  "workflow_url": "https://github.com/LeoCeasar/drivebridge/actions/runs/43473795684",
+  "native_scope": "headless real Windows and WinFsp, synthetic provider; no GUI or real account acceptance",
+  "unit": {
+    "packages_passed": 18,
+    "test_pass_events": 2312,
+    "test_skip_events": 156,
+    "failures": 0
+  },
+  "recent_regressions": {
+    "test_pass_events": 55,
+    "skips": 0,
+    "failures": 0
+  },
+  "ui": {
+    "tests_passed": 25,
+    "failures": 0
+  },
+  "native_reports": [
+    {
+      "completed_at": "2026-11-13T17:45:52.4121674Z",
+      "delete_admission_observations": [
+        {
+          "path": "data.bin",
+          "readers_at_namespace_commit": 1,
+          "writers_at_namespace_commit": 0,
+          "namespace_reservations": 1
+        },
+        {
+          "path": "empty-directory",
+          "readers_at_namespace_commit": 1,
+          "writers_at_namespace_commit": 0,
+          "namespace_reservations": 1
+        }
+      ],
+      "deleted_path_absent_before_recreate": true,
+      "driver": "WinFsp kernel / production cmount",
+      "empty_directory_before_driver_release": true,
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "goarch": "amd64",
+      "goos": "windows",
+      "old_reader_preserved_after_unlink": true,
+      "ordinary_deletefile_before_driver_release": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "recreated_path_has_new_content": true,
+      "schema_version": 1,
+      "writable_handle_protected_with_delete_sharing": true
+    },
+    {
+      "attr_timeout_seconds": 60,
+      "completed_at": "2026-11-13T17:45:53.3719915Z",
+      "driver": "WinFsp kernel / production cmount",
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "goarch": "amd64",
+      "goos": "windows",
+      "growing_refresh": true,
+      "native_size_and_content_checked": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "same_size_refresh": true,
+      "schema_version": 1,
+      "shrinking_refresh": true
+    },
+    {
+      "background_archive_held_seconds": 46.1273598,
+      "completed_at": "2026-11-13T17:45:50.4115766Z",
+      "direct_and_safe_saves": 200,
+      "driver": "WinFsp kernel / production cmount",
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "fault_scope": "background Store archive paused; local journal and physical disk available; orderly VFS stop/reopen, not power loss",
+      "final_sha256": "6be601f90602aee32444d19045fd010ee69d452150aafcd27ee89daffd35f9eb",
+      "goarch": "amd64",
+      "goos": "windows",
+      "iterations": 100,
+      "max_save_ms": 478.8957,
+      "ntfs_legacy_and_posix_control_passed": true,
+      "open_reader_replacement_api": "FileRenameInfoEx REPLACE_IF_EXISTS|POSIX_SEMANTICS",
+      "open_reader_retained_old_content_after_replacement": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "restart_replayed_unarchived_checkpoint": true,
+      "schema_version": 1,
+      "token_preserved": true
+    }
+  ],
+  "environment": {
+    "runner_image": "20261112.366.7",
+    "schema_version": 1,
+    "go_version": "go version go1.25.0 windows/amd64",
+    "commit": "b480e306faac2321f8ee789c3cb17259d2a704d5",
+    "winfsp_install_exit": 0,
+    "ref": "refs/heads/fix/windows-recent-parity",
+    "runner_os": "Windows",
+    "winfsp_dll_version": "2.1.25156.ddca7bd",
+    "native_scope": "headless Windows OS API tests with synthetic provider; no credentials or GUI acceptance",
+    "git_version": "git version 2.56.1.windows.1",
+    "winfsp_msi_sha256": "073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a"
+  },
+  "native_source_revision": "b480e306faac2321f8ee789c3cb17259d2a704d5",
+  "package_source_revision": "9dd7774e5eebf1ea0120c7a7ba2c5049ac963b77",
+  "package_workflow_url": "https://github.com/LeoCeasar/drivebridge/actions/runs/43476968614",
+  "stable_dotnet_sdk": "10.0.404",
+  "package_verification": {
+    "version": "0.2.21",
+    "source_revision": "9dd7774e5",
+    "artifacts_verified": 3,
+    "payload_files_verified": 64,
+    "platform": "windows",
+    "signed": false
+  },
+  "artifacts": [
+    {
+      "path": "drivebridge-0.2.21-windows-amd64-feishu-desktop-unsigned-test.exe",
+      "sha256": "6a70ab8482373db66d4854c7a0a12469c6db1992dd26d0189ea0608209e9da51",
+      "size": 106178073
+    },
+    {
+      "path": "drivebridge-0.2.21-windows-amd64-feishu-desktop-unsigned-test.msi",
+      "sha256": "ed74091aa722a502b873f367e9978b30fafefffe88fef7d9fae61a543af9418c",
+      "size": 142434304
+    },
+    {
+      "path": "drivebridge-0.2.21-windows-amd64-feishu-desktop-unsigned-test.zip",
+      "sha256": "ebebb002a0928e776c4e327f194a72d692718122de2c6d39af9039b80bd42327",
+      "size": 136192160
+    }
+  ]
+}
