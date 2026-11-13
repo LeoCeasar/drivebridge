@@ -77,6 +77,7 @@ type admission struct {
 	path      string
 	write     bool
 	directory bool
+	ready     bool // cache handle construction has completed under this admission
 	retired   bool // an unlinked immutable generation no longer reserves its old name
 }
 type reservation struct {
@@ -142,6 +143,18 @@ func (m *managedState) admit(name string, write, directory bool) (*admission, er
 		return a, nil
 	}
 }
+
+// finishOpen publishes a pinned handle before namespace operations may detach
+// its generation. Admission alone cannot keep a not-yet-created cache item safe.
+func (a *admission) finishOpen() {
+	if a == nil {
+		return
+	}
+	a.m.mu.Lock()
+	a.ready = true
+	a.m.mu.Unlock()
+}
+
 func (a *admission) release() {
 	if a == nil {
 		return

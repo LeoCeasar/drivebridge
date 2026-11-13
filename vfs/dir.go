@@ -1046,7 +1046,9 @@ func (d *Dir) Open(flags int) (fd Handle, err error) {
 		if e != nil {
 			return nil, e
 		}
-		return &managedHandle{Handle: newDirHandle(d), token: a}, nil
+		handle := newDirHandle(d)
+		a.finishOpen()
+		return &managedHandle{Handle: handle, token: a}, nil
 	}
 	d.vfs.nativeAccess.Store(true)
 	return newDirHandle(d), nil

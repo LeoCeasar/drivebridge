@@ -3,8 +3,15 @@
 package integration
 
 import (
+	"context"
+	"github.com/rclone/rclone/internal/bridge/overlay"
+	"github.com/rclone/rclone/vfs"
+	"io"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rclone/rclone/cmd/cmount"
 	"github.com/rclone/rclone/cmd/mountlib"
@@ -89,4 +96,64 @@ func TestManagedDeleteAccessProtectsReadonlyAssetsWithoutMutation(t *testing.T) 
 	require.Empty(t, actions, "delete permission checks must not prepare a real deletion")
 	_, _, reservations := h.vfs.ManagedActivity()
 	require.Zero(t, reservations)
+}
+
+// Admission precedes materialization/cache-handle construction. An unbound
+// reader cannot survive unlink yet: it could recreate the deleted cache path.
+type managedOpenGate struct {
+	*overlay.Fs
+	enabled          atomic.Bool
+	entered, release chan struct{}
+}
+
+func (g *managedOpenGate) TouchManagedAccess(ctx context.Context, name string) error {
+	err := g.Fs.TouchManagedAccess(ctx, name)
+	if g.enabled.Swap(false) {
+		close(g.entered)
+		<-g.release
+	}
+	return err
+}
+func TestManagedDeleteWaitsForReaderConstruction(t *testing.T) {
+	h := newHarness(t)
+	options := h.vfs.Opt
+	h.vfs.Shutdown()
+	g := &managedOpenGate{Fs: h.overlay, entered: make(chan struct{}), release: make(chan struct{})}
+	var err error
+	h.vfs, err = vfs.NewManaged(h.ctx, g, &options)
+	require.NoError(t, err)
+	require.Equal(t, "\x00\xffinitial bytes", h.read("data.bin"))
+	var once sync.Once
+	resume := func() { once.Do(func() { close(g.release) }) }
+	defer resume()
+	type result struct {
+		handle vfs.Handle
+		err    error
+	}
+	done := make(chan result, 1)
+	g.enabled.Store(true)
+	go func() { f, e := h.vfs.Open("data.bin"); done <- result{f, e} }()
+	select {
+	case <-g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("open did not reach construction gate")
+	}
+	a := cmount.NewFS(h.vfs, &mountlib.Opt)
+	require.Equal(t, -fuse.EBUSY, a.Access("/data.bin", fuse.DELETE_OK))
+	require.Equal(t, -fuse.EBUSY, a.Unlink("/data.bin"), "pending reader has no pinned generation yet")
+	resume()
+	var opened result
+	select {
+	case opened = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("open did not resume")
+	}
+	require.NoError(t, opened.err)
+	defer opened.handle.Close()
+	require.Zero(t, a.Unlink("/data.bin"), "a constructed reader may survive unlink")
+	body, err := io.ReadAll(opened.handle)
+	require.NoError(t, err)
+	require.Equal(t, "\x00\xffinitial bytes", string(body))
+	_, err = h.vfs.Stat("data.bin")
+	require.Error(t, err, "a surviving reader must never resurrect the removed path")
 }

@@ -172,6 +172,9 @@ jobs:
           if (!($events | Where-Object { $_.Action -eq 'fail' -and $_.Test -eq 'TestHistoryGitCommandSuppressesConsoleWithoutDetaching' })) {
             throw 'Missing intended RED test failure; build errors are not regression proof'
           }
+          # The assertion failure above was required; do not leak its native
+          # exit code into the GitHub PowerShell wrapper's final exit.
+          $global:LASTEXITCODE = 0
       - name: Run Windows Store Overlay Sync History and VFS suites with packaged Git
         run: |
           $ErrorActionPreference = 'Stop'

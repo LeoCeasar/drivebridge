@@ -873,6 +873,7 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 			if err != nil || fd == nil {
 				a.release()
 			} else {
+				a.finishOpen()
 				fd = &managedHandle{Handle: fd, token: a}
 			}
 		}()
