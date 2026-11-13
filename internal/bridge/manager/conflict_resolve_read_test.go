@@ -52,3 +52,11 @@ func TestConflictForResolveDoesNotRefreshCloud(t *testing.T) {
 		t.Fatalf("opening a conflict must still refresh the cloud once: refreshes=%d err=%v", refreshes.Load(), err)
 	}
 }
+
+func TestStoppedConflictForResolveUsesDurableCapturesWithoutAuth(t *testing.T) {
+	m, _, _, conflict := stoppedConflictFixture(t, true, []byte("captured local"))
+	view, err := m.ConflictForResolve(context.Background(), conflict.ID)
+	if err != nil || view.Stale || view.RefreshWarning != "" || string(view.Local) != "captured local" {
+		t.Fatalf("local conflict read attempted a cloud/auth refresh: %+v %v", view, err)
+	}
+}

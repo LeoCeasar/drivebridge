@@ -24,3 +24,8 @@ context.renderIssues([{id:'mount',state:{running:true,cloud_state:'blocked',last
 assert.equal(el('sync-issues').hidden,false,'legacy backend errors cannot disappear when no detail is available');
 context.renderIssues([{id:'mount',state:{running:true,issues:[]}}],true);assert.equal(el('sync-issues').hidden,true);
 console.log('blocked upload visibility, advice, safe copy, retry and stale fallback verified');
+
+context.renderIssues([{id:'mount',state:{running:true,issues:[{...issue,code:'history_git_unavailable'}]}}],true);
+assert.match(texts(el('sync-issue-list')),/内置 Git/);
+assert.match(texts(el('sync-issue-list')),/重新安装应用/);
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'),'missing Git requires repairing the app before retrying');

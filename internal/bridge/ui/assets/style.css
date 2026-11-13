@@ -354,3 +354,22 @@ nav{grid-template-columns:repeat(3,1fr)}.nav-button{flex-direction:column;gap:2p
 .sync-issues{margin:0 0 24px;padding:20px;border:1px solid var(--red-line);border-left:4px solid var(--red);border-radius:12px;background:var(--red-soft)}.sync-issues h2{margin-top:0}.sync-issue{padding:16px 0;border-top:1px solid var(--red-line)}.sync-issue h3{margin:0 0 8px;overflow-wrap:anywhere}.sync-issue p,.sync-issue li{line-height:1.6}.sync-issue ol{padding-left:24px}.sync-issue .issue-preservation{color:var(--red);font-weight:600}.sync-issue details{margin-top:14px}.sync-issue details summary{cursor:pointer}.sync-issue .merge-actions{flex-wrap:wrap}
 
 .history-filters{display:flex;gap:16px;align-items:end;flex-wrap:wrap;margin:20px 0}.history-filters label{display:grid;gap:7px;min-width:180px;flex:1}.history-filters input,.history-filters select{width:100%;padding:10px 12px;border:1px solid var(--border,#dce2e9);border-radius:8px;background:var(--surface);color:inherit}.history-detail{margin-top:28px;padding:22px;background:var(--surface);border:1px solid var(--border,#dce2e9);border-radius:12px}.history-code{max-height:560px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:18px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}.history-media{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}.history-media figure{margin:0}.history-media img{display:block;max-width:100%;max-height:360px;object-fit:contain}.history-detail details>summary{cursor:pointer;padding:10px 0}
+
+/* Status text stays inside fixed regions; scans never resize table columns. */
+@media(min-width:761px){
+ #mount-panel>.mount-table,.queue-table{table-layout:fixed}
+ #mount-panel>.mount-table th:first-child{width:32%}
+ #mount-panel>.mount-table th:nth-child(2),#mount-panel>.mount-table th:nth-child(3){width:16%}
+ #mount-panel>.mount-table th:nth-child(4){width:16%}
+ #mount-panel>.mount-table th:last-child{width:20%}
+ .queue-table th:first-child{width:56px}.queue-table th:nth-child(2){width:30%}.queue-table th:nth-child(3){width:25%}
+ .queue-table td{height:100px;max-height:100px;overflow-wrap:anywhere}
+ .queue-details{height:3.4em;overflow:auto}.queue-details .queue-detail{max-height:none}
+}
+#message{position:fixed;z-index:20;right:24px;top:64px;max-width:min(600px,calc(100vw - 48px));max-height:30vh;overflow:auto;box-shadow:0 8px 32px #0002}
+#sync-issues{max-height:300px;overflow:auto}
+#source-warning{min-height:3.2em;max-height:5em;overflow:auto}
+
+#source-warning[hidden]{display:block;visibility:hidden}
+#review-sources[hidden]{display:inline-flex;visibility:hidden}
+#conflict-queue>.table-wrap{max-height:300px;overflow:auto}

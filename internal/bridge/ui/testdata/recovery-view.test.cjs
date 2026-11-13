@@ -32,3 +32,6 @@ console.log('recovery controls preserve offline editing and gate unavailable act
   assert.equal(retentionLabel('168h'),'7 天未使用后释放'); assert.equal(retentionLabel('720h0m0s'),'30 天未使用后释放'); assert.equal(retentionLabel('0h'),'仅按容量释放'); assert.equal(retentionLabel('12h'),'12 小时未使用后释放'); assert.equal(retentionLabel('garbage'),'');
   console.log('retry gating, status chips, cache size and retention wording verified');
 }
+
+assert.match(require('../assets/recovery-view.js').errorLabels.history_git_unavailable,/合并.*不可用/);
+assert.match(require('../assets/recovery-view.js').errorLabels.remote_drift,/云端仍在更新.*稍后重试/);

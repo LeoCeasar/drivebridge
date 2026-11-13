@@ -173,7 +173,14 @@ func (m *Manager) conflictView(ctx context.Context, id model.ConflictID, refresh
 		ID        model.ConflictID `json:"id"`
 		NoRefresh bool             `json:"no_refresh,omitempty"`
 	}{id, !refresh}, &out, func(s *store.Store) error {
-		out, err = m.stoppedConflict(ctx, s, id, m.buildConflictEngine)
+		if !refresh {
+			out, err = findSummary(ctx, s, id)
+			if err == nil {
+				out, err = materializeConflict(ctx, s, out)
+			}
+		} else {
+			out, err = m.stoppedConflict(ctx, s, id, m.buildConflictEngine)
+		}
 		return err
 	})
 	return out, err

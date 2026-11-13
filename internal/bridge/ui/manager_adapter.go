@@ -108,6 +108,9 @@ func (b *ManagerBackend) AuthComplete(ctx context.Context, id string) error {
 	return err
 }
 func (b *ManagerBackend) Conflict(ctx context.Context, id model.ConflictID) (ConflictInputs, error) {
+	return b.ConflictForResolve(ctx, id)
+}
+func (b *ManagerBackend) RefreshConflict(ctx context.Context, id model.ConflictID) (ConflictInputs, error) {
 	v, err := b.manager.Conflict(ctx, id)
 	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL, Stale: v.Stale, RefreshWarning: v.RefreshWarning}, err
 }

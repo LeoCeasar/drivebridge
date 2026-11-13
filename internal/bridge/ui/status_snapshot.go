@@ -46,7 +46,7 @@ func (s *statusSnapshots) read(ctx context.Context, mounts []MountView, reader s
 				if err == nil {
 					next = mountSnapshot{state: state, updatedAt: time.Now().UTC().Format(time.RFC3339), conflicts: []ConflictSummary{}}
 					for _, c := range conflicts {
-						next.conflicts = append(next.conflicts, ConflictSummary{ID: c.Conflict.ID, MountID: mount.ID, Name: c.Entry.Remote})
+						next.conflicts = append(next.conflicts, ConflictSummary{SourceRevision: conflictSourceRevision(ConflictInputs{Conflict: c.Conflict, Entry: c.Entry, SourceURL: c.SourceURL}), Revision: conflictRevision(ConflictInputs{Conflict: c.Conflict, Entry: c.Entry, SourceURL: c.SourceURL}), ID: c.Conflict.ID, MountID: mount.ID, Name: c.Entry.Remote})
 					}
 				}
 			}

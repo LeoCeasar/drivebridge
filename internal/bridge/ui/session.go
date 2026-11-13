@@ -41,6 +41,7 @@ type notification struct {
 	Opened   bool
 }
 type Host struct {
+	prepared                                       preparedConflicts
 	backend                                        Backend
 	notifier                                       Notifier
 	runtimeDir, configKey, base, instance, control string
@@ -141,6 +142,7 @@ func (h *Host) URL() string { return h.base }
 func (h *Host) Close(ctx context.Context) error {
 	h.closeOnce.Do(func() {
 		close(h.done)
+		h.prepared.close()
 		shutdown, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		h.closeErr = h.server.Shutdown(shutdown)

@@ -188,6 +188,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			respondError(w, 503, "status_unavailable")
 			return
 		}
+		h.prepareConflicts(v.Conflicts, v.Partial)
 		for i := range v.Mounts {
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
 			for j := range v.Mounts[i].State.Issues {
@@ -369,7 +370,7 @@ func method(w http.ResponseWriter, allow string) {
 }
 func safeCode(s string) string {
 	switch s {
-	case "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
+	case "remote_drift", "history_git_unavailable", "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
 		return s
 	}
 	return "operation_failed"
@@ -410,34 +411,10 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 			method(w, "GET")
 			return
 		}
-		in, err := h.backend.Conflict(r.Context(), cid)
+		v, err := h.preparedConflict(r.Context(), cid, r.URL.Query().Get("refresh") == "1")
 		if err != nil {
 			apiError(w, err)
 			return
-		}
-		if in.Conflict.EntryID != in.Entry.ID || in.Conflict.ID != cid {
-			respondError(w, 409, "version_changed")
-			return
-		}
-		v := ConflictView{Hunks: []DiffHunk{}, Stale: in.Stale, RefreshWarning: safeCode(in.RefreshWarning), HasDraft: in.Conflict.Draft != "" || in.Draft != nil, ID: cid, EntryID: in.Entry.ID, Generation: in.Conflict.Generation, RemoteRevision: in.Conflict.RemoteRevision, Name: in.Entry.Remote, Text: in.Text}
-		v.Reason = in.Conflict.Reason
-		v.RemoteDeleted = in.Conflict.Reason == model.ConflictRemoteDeleted
-		v.LocalDeletePending = in.Conflict.Reason == model.ConflictLocalDeletePending
-		_, v.CanExportCopies = h.backend.(ConflictExporter)
-		if in.Text && utf8.Valid(in.Base) && utf8.Valid(in.Local) && utf8.Valid(in.Remote) && utf8.Valid(in.Draft) {
-			v.Base = string(in.Base)
-			v.Local = string(in.Local)
-			v.Remote = string(in.Remote)
-			v.Draft = string(in.Draft)
-			v.Hunks = diffHunks(v.Base, v.Local, v.Remote)
-			if v.Hunks == nil {
-				v.Hunks = []DiffHunk{}
-			}
-		} else {
-			v.Text = false
-		}
-		if safeHTTPS(in.SourceURL) {
-			v.SourceURL = in.SourceURL
 		}
 		respond(w, 200, v)
 		return
@@ -469,6 +446,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		}
 		respond(w, 200, copies)
 	case "draft":
+		defer h.prepared.invalidate(cid)
 		if r.Method != "PUT" {
 			method(w, "PUT")
 			return
@@ -486,6 +464,7 @@ func (h *Host) conflict(w http.ResponseWriter, r *http.Request, id string, tail 
 		}
 		respond(w, 200, map[string]bool{"saved": true})
 	case "resolve":
+		defer h.prepared.invalidate(cid)
 		if r.Method != "POST" {
 			method(w, "POST")
 			return
@@ -568,6 +547,7 @@ func (h *Host) PollConflicts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	h.prepareConflicts(status.Conflicts, status.Partial)
 	for _, c := range status.Conflicts {
 		if err = h.NotifyConflict(ctx, c.ID); err != nil {
 			return err

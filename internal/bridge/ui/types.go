@@ -49,9 +49,11 @@ type ConfigView struct {
 	Mounts          []MountView   `json:"mounts"`
 }
 type ConflictSummary struct {
-	ID      model.ConflictID `json:"id"`
-	Name    string           `json:"name"`
-	MountID model.MountID    `json:"mount_id"`
+	SourceRevision string           `json:"source_revision,omitempty"`
+	Revision       string           `json:"revision,omitempty"`
+	ID             model.ConflictID `json:"id"`
+	Name           string           `json:"name"`
+	MountID        model.MountID    `json:"mount_id"`
 }
 type StatusView struct {
 	Platform        string            `json:"platform,omitempty"`
@@ -105,6 +107,8 @@ type DiffHunk struct {
 }
 
 type ConflictView struct {
+	Revision                   string           `json:"revision,omitempty"`
+	SourceRevision             string           `json:"source_revision,omitempty"`
 	Reason                     string           `json:"reason"`
 	RemoteDeleted              bool             `json:"remote_deleted"`
 	LocalDeletePending         bool             `json:"local_delete_pending"`
@@ -139,10 +143,14 @@ type ConflictExporter interface {
 	ExportConflict(context.Context, model.ConflictID) (ConflictCopies, error)
 }
 
-// ResolveVersionReader lets the accept-merge endpoint check the stored
-// generation and remote revision without re-reading the cloud. The authoritative
-// cloud recheck is part of Backend.Resolve; reading it twice only serializes two
-// more Feishu round trips per file in a batch.
+// ConflictRefresher is an explicit cloud check. Ordinary Conflict reads durable
+// local captures; preparation and ordinary opening never require cloud access.
+type ConflictRefresher interface {
+	RefreshConflict(context.Context, model.ConflictID) (ConflictInputs, error)
+}
+
+// ResolveVersionReader checks stored versions before Backend.Resolve performs
+// the authoritative cloud recheck.
 type ResolveVersionReader interface {
 	ConflictForResolve(context.Context, model.ConflictID) (ConflictInputs, error)
 }

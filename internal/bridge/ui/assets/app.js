@@ -116,6 +116,7 @@
     document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
     $('page-label').textContent = titles[name]; document.title = `${titles[name]} · DriveBridge`;
     $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '本机保存立即生效；后台每5分钟同步各文件的最新保存版本，上传期间的新修改留待下一轮。';
+    $('sync-issues').hidden = conflicts || !$('sync-issue-list').children.length;
     $('mount-panel').hidden = conflicts; $('conflict-summary').hidden = conflicts; $('setup-shortcut').hidden = conflicts; $('conflict-area').hidden = !conflicts;
   }
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
@@ -178,18 +179,34 @@
     panel.append(copyPath,copyID,remove,confirm); menu.append(make('summary','更多'),panel);
     return menu;
   }
-  // Status polls re-render every few seconds. Rebuilding identical rows drops focus, hover and
-  // half-finished clicks, and closes an open "更多" menu, so skip unchanged renders.
-  const renderMemo = new Map();
-  function unchanged(key, ...parts) { const sig = JSON.stringify(parts); const same = renderMemo.get(key) === sig; renderMemo.set(key,sig); return same; }
+  const rowCaches = new Map();
+  // Keep existing positions; sort only new arrivals. Unchanged rows remain the
+  // same DOM objects, including their menus, focus, selections and scroll state.
+  function reconcileRows(id,items,build,signature = item => JSON.stringify(item)) {
+    let cache = rowCaches.get(id); if (!cache) { cache = new Map(); rowCaches.set(id,cache); }
+    const incoming = new Map(items.map(item => [item.id,item]));
+    for (const key of cache.keys()) if (!incoming.has(key)) cache.delete(key);
+    for (const item of [...items].sort((a,b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id))) if (!cache.has(item.id)) cache.set(item.id,{});
+    const rows = [];
+    for (const [key,entry] of cache) {
+      const item = incoming.get(key), sig = signature(item);
+      const occupied = entry.row?.contains?.(document.activeElement) || entry.row?.querySelector?.('details[open]')?.open === true;
+      if (!entry.row || (entry.sig !== sig && !occupied)) { entry.row = build(item); entry.sig = sig; }
+      rows.push(entry.row);
+    }
+    const parent = $(id), currentRows = [...parent.children];
+    if (rows.length === currentRows.length && rows.every((row,index) => row === currentRows[index])) return;
+    if (!parent.insertBefore) { parent.replaceChildren(...rows); return; }
+    // Remove obsolete rows first so replacing an earlier row never detaches a
+    // later unchanged row (which may own the keyboard focus).
+    const keep = new Set(rows);
+    for (const row of currentRows) if (!keep.has(row)) row.remove();
+    rows.forEach((row,index) => { if (parent.children[index] !== row) parent.insertBefore(row,parent.children[index] || null); });
+  }
   function renderMounts(mounts = [], canRetry = false) {
-    const same = unchanged('mounts',mounts,canRetry);
-    // An open menu or removal confirmation is user state; the next poll renders once it closes.
-    if (same || document.querySelector?.('#mount-panel details.more-menu[open], #archived-mount-panel details.more-menu[open]')) { if (!same) renderMemo.delete('mounts'); return; }
-    $('mount-rows').replaceChildren(); $('archived-mount-rows').replaceChildren();
     $('mount-empty').hidden = mounts.some(m => !m.archived); $('mount-panel').classList.toggle('is-empty',!$('mount-empty').hidden);
     $('archived-mount-panel').hidden = !mounts.some(m => m.archived);
-    for (const mount of mounts) {
+    const renderMount = mount => {
       const stale = Boolean(mount.status_warning), known = !stale || Boolean(mount.status_updated_at);
       const state = mount.state || {}, row = make('tr'), prefix = stale ? '上次：' : '';
       const name = make('td'), head = make('div',undefined,'mount-head'), icon = make('span',undefined,'mount-icon'), id = make('div',undefined,'mount-id');
@@ -217,8 +234,11 @@
       const counters = make('td',!known ? '暂不可读' : `${prefix}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`,'counters'); // NBSP: wrap only after "，"
       const action = make('td'); action.append(mountActions(mount,state,stale,canRetry));
       for (const [cell,label] of [[local,'本机保存'],[cloud,mount.archived ? '状态' : '云端状态'],[counters,mount.archived ? '保留数据' : '待处理']]) cell.setAttribute('data-label',label);
-      row.append(name, local, cloud, counters, action); $(mount.archived ? 'archived-mount-rows' : 'mount-rows').append(row);
-    }
+      row.append(name, local, cloud, counters, action); return row;
+    };
+    const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry]);
+    reconcileRows('mount-rows',mounts.filter(m => !m.archived),renderMount,signature);
+    reconcileRows('archived-mount-rows',mounts.filter(m => m.archived),renderMount,signature);
   }
   function renderGlobalStatus(status) {
     const mounts = (status.mounts || []).filter(m => !m.archived), conflicts = (status.conflicts || []).length;
@@ -233,6 +253,10 @@
         return {title:'本机保存尚未确认',reason:'本机磁盘未能确认此次保存，当前修改仍在本机缓存中，尚不能视为持久保存。',retry:true,steps:['保留编辑器中的内容，必要时另存到其他可用磁盘；不要删除挂载或缓存。','检查磁盘剩余空间、磁盘状态，以及应用缓存目录是否可写。','恢复条件后关闭文件，保持应用运行，后台会自动重试本机保存；也可点击“重试同步”。']};
       case 'local_archive_failed':
         return {title:'本地修改等待后台整理',reason:'修改仍保留在本机，后台暂时无法生成待同步版本。',steps:['检查磁盘剩余空间，以及应用缓存目录是否可写。','保持应用运行，恢复条件后后台会自动重试；不要删除挂载或缓存。','若持续出现，请保留文件并查看应用日志。']};
+      case 'remote_drift':
+        return {title:'云端仍在更新，后台稍后重试',reason:'本次合并期间云端版本再次变化，已有修改保留在本机。',steps:['保持应用运行，后台将读取稳定版本后重新合并。','可以继续保存本地修改，无需手工处理合并或反复重试。']};
+      case 'history_git_unavailable':
+        return {title:'自动合并组件暂不可用',reason:'应用内置 Git 无法执行，当前修改已保留，同步已暂停。',steps:['保留本地文件与草稿，检查应用安装是否完整，以及安全软件是否拦截内置 Git。','修复或重新安装应用后再重试同步；无需手工安装 Git。']};
       case 'unsupported_content':
         return issue.new_document ? {title:'文档关联或格式需要处理',reason:'当前保存被识别为新文档，其中的图片、表格等结构不能直接作为新文档安全上传。',steps:['先下载本地副本，保留此次修改。','如果这是原有飞书文档，请在飞书中找到原文档，对照副本补回修改，或等待文档关联修复后同步。','如果这是全新文档，请先使用标准 Markdown 创建；不要删除现有副本。重试不会自动修复文档关联。']} : {title:'文档结构暂不支持安全写回',reason:'此次保存包含无法安全转换回飞书的结构变化，系统已停止上传。',steps:['先下载本地副本。','在飞书原文档中应用复杂表格、图片或其他结构变化；本地可编辑已支持的段落和代码块。','修正内容后重新保存；格式问题未解决前，重复重试不会生效。']};
       case 'permission_denied': case 'auth_required': case 'unauthorized': case 'identity_changed':
@@ -250,12 +274,16 @@
     }
   }
   function renderIssues(mounts = [], canRetry = false) {
-    $('sync-issue-list').replaceChildren(); let count = 0;
+    const items = [];
     for (const mount of mounts) {
       const state = mount.state || {}, stale = Boolean(mount.status_warning);
       const issues = state.issues?.length ? state.issues : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
       for (const issue of issues) {
-        count++; const advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
+        items.push({id:`${mount.id}:${issue.job_id || issue.name || issue.code}`,name:issue.name || mount.name,mount,issue,stale});
+      }
+    }
+    reconcileRows('sync-issue-list',items,({mount,issue,stale}) => {
+        const state = mount.state || {}, advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
         card.append(make('h3',issue.name || mount.name),make('strong',advice.title),make('p',advice.reason));
         if (mount.archived) card.append(make('p','此任务属于以前移除的挂载。先恢复并启动同步，处理完未同步内容后可彻底删除挂载与缓存。','quiet'));
         card.append(make('p',issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
@@ -278,32 +306,33 @@
         }
         if (issue.job_id && issue.local_saved && !issue.can_download) details.append(make('p','此文件超过页面直接下载上限，请从上述本机位置复制到挂载盘之外保存副本。','quiet'));
         if (issue.job_id) details.append(make('p',`任务：${issue.job_id}`,'quiet'));
-        card.append(details);$('sync-issue-list').append(card);
-      }
-    }
-    $('sync-issues').hidden=!count;$('sync-issue-count').textContent=`需要处理（${count}）`;$('sync-attention').hidden=!count;$('sync-attention').textContent=`需要处理（${count}）`;
+        card.append(details); return card;
+    },item => JSON.stringify([item.issue,item.stale,item.mount.archived,item.mount.state?.running,canRetry,currentPlatform]));
+    const count = items.length;
+    $('sync-issues').hidden=activeView === 'conflicts' || !count;$('sync-issue-count').textContent=`需要处理（${count}）`;$('sync-attention').hidden=!count;$('sync-attention').textContent=`需要处理（${count}）`;
   }
   const outcomeLabels = {unreviewed:'请先打开复核',draft:'待提交',submitting:'正在提交',queued:'已接受，等待同步',resolved:'已处理，草稿保留',needs_refresh:'需要刷新并复核',failed:'提交失败，可重试',blocked:'无法自动合并，请保存副本'};
   function renderQueue() {
     const records = [...queue.records.values()];
-    if (unchanged('queue',queue.running,records.map(r => [r.id,r.name,r.selected,r.status,r.slow,r.outcomeUnknown,r.error,r.newerDraft,r.decision,r.seq,r.savedSeq,Boolean(r.input),Boolean(r.input?.remote_deleted),Boolean(r.input?.local_delete_pending),Boolean(r.input?.text),Boolean(r.input?.has_draft),queue.canSubmit(r)]))) return;
-    $('queue-rows').replaceChildren(); $('queue-empty').hidden = records.length > 0; $('conflict-queue').classList.toggle('is-empty',records.length === 0);
-    for (const r of records) {
+    $('queue-empty').hidden = records.length > 0; $('conflict-queue').classList.toggle('is-empty',records.length === 0);
+    const renderRecord = r => {
       const row = make('tr'), select = make('td'), checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.id = `queue-select-${r.id}`; checkbox.checked = r.selected; checkbox.disabled = queue.running || (!r.selected && !queue.canSubmit(r)); checkbox.setAttribute('aria-label',`选择 ${r.name || '待合并文件'}`);
       checkbox.addEventListener('change',() => { queue.select(r.id,checkbox.checked); renderQueue(); $(checkbox.id)?.focus(); }); select.append(checkbox);
       const file = make('td'), open = make('button',r.name || '待合并文件','text-button queue-file'); open.disabled = r.status === 'resolved'; open.addEventListener('click',() => openConflict(r.id)); file.append(open);
       const draft = make('td',!r.input ? '未打开' : !r.input.text ? '非文本，保留副本' : r.seq !== r.savedSeq ? '页面草稿已保留' : r.savedSeq || r.input.has_draft ? '本机草稿已保存' : '来源已载入，尚未修改');
       const unknown = r.status === 'failed' && r.outcomeUnknown;
       const label = unknown ? '结果未知，可重试' : r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status];
-      const result = make('td'); result.append(make('span',label,'queue-outcome ' + r.status + (unknown ? ' unknown' : '')));
-      if (r.status === 'submitting' && r.slow) result.append(make('small','云端复核较慢，仍在等待结果…','queue-detail slow'));
-      if (deletionDecision(r.input) && !['queued','resolved'].includes(r.status)) result.append(make('small',r.input.local_delete_pending ? '本地删除尚未完成，请打开文件单独决定。' : '云端已删除，请打开文件单独决定。','queue-detail'));
-      if (r.status === 'failed') result.append(make('small',r.error || '请检查本机连接后重试。','queue-detail'));
-      if (r.status === 'needs_refresh') result.append(make('small','草稿已保留；打开后刷新差异，再核对来源。','queue-detail'));
-      if (r.newerDraft) result.append(make('small','本次提交后的新编辑仍保留在页面中，尚未提交。请复制保存。','queue-detail'));
+      const result = make('td'), details = make('div',undefined,'queue-details'); result.append(make('span',label,'queue-outcome ' + r.status + (unknown ? ' unknown' : '')));
+      if (r.status === 'submitting' && r.slow) details.append(make('small','云端复核较慢，仍在等待结果…','queue-detail slow'));
+      if (deletionDecision(r.input) && !['queued','resolved'].includes(r.status)) details.append(make('small',r.input.local_delete_pending ? '本地删除尚未完成，请打开文件单独决定。' : '云端已删除，请打开文件单独决定。','queue-detail'));
+      if (r.status === 'failed') details.append(make('small',r.error || '请检查本机连接后重试。','queue-detail'));
+      if (r.status === 'needs_refresh') details.append(make('small','草稿已保留；打开后刷新差异，再核对来源。','queue-detail'));
+      if (r.newerDraft) details.append(make('small','本次提交后的新编辑仍保留在页面中，尚未提交。请复制保存。','queue-detail'));
+      result.append(details);
       for (const [cell,label] of [[file,'文件'],[draft,'草稿'],[result,'提交结果']]) cell.setAttribute('data-label',label);
-      row.append(select,file,draft,result); $('queue-rows').append(row);
-    }
+      row.append(select,file,draft,result); return row;
+    };
+    reconcileRows('queue-rows',records,renderRecord,r => JSON.stringify([queue.running,r.id,r.name,r.selected,r.status,r.slow,r.outcomeUnknown,r.error,r.newerDraft,r.decision,r.seq,r.savedSeq,Boolean(r.input),Boolean(r.input?.remote_deleted),Boolean(r.input?.local_delete_pending),Boolean(r.input?.text),Boolean(r.input?.has_draft),queue.canSubmit(r)]));
     const count = status => records.filter(r => r.status === status).length;
     const selected = records.filter(r => r.selected && queue.canSubmit(r)).length;
     $('submit-selected').textContent = queue.running ? '正在逐个提交…' : `提交已选文件（${selected}）`;
@@ -315,8 +344,7 @@
     if (conflicts) queue.sync(conflicts,partial);
     const records = [...queue.records.values()];
     const count = records.filter(r => r.present && r.status !== 'queued').length;
-    const listSame = unchanged('conflict-list',current?.id,records.map(r => [r.id,r.name,r.status]));
-    $('conflict-count').textContent = statusPartial ? (count ? `${count}（待更新）` : '待更新') : count; if (!listSame) $('conflict-list').replaceChildren(); $('conflict-empty').hidden = records.length > 0;
+    $('conflict-count').textContent = statusPartial ? (count ? `${count}（待更新）` : '待更新') : count; $('conflict-empty').hidden = records.length > 0;
     $('conflict-nav').hidden = records.length === 0 && !statusPartial;
     $('nav-conflict-badge').textContent = count; $('nav-conflict-badge').hidden = !count;
     // The workspace shows only a summary; the full queue lives on the conflicts page.
@@ -325,8 +353,39 @@
     $('conflict-summary-title').textContent = count ? `${count} 个文件需要合并` : statusPartial ? '冲突状态待更新' : '没有待合并的冲突';
     $('conflict-summary-text').textContent = count ? '本机与云端对同一文件各有修改，逐个核对后提交。' : statusPartial ? '部分挂载的状态暂未读取完整，稍后会自动更新。' : '本机与云端内容出现不同修改时，会在这里提示。';
     $('conflict-summary-go').hidden = !count;
-    if (!listSame) for (const r of records) { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.disabled = r.status === 'resolved'; button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); $('conflict-list').append(button); }
+    reconcileRows('conflict-list',records,r => { const button = make('button',r.name || '待合并文件','conflict-item' + (current?.id === r.id ? ' selected' : '')); button.disabled = r.status === 'resolved'; button.title = r.name || ''; button.append(make('small',outcomeLabels[r.status])); button.addEventListener('click',() => openConflict(r.id)); return button; },r => JSON.stringify([r.id,r.name,r.status,current?.id === r.id]));
     renderQueue();
+  }
+  const preparedInputs = new Map(), desiredInputs = new Map(), inputFlights = new Map();
+  let preparedBytes = 0, preparationRunning = false;
+  function rememberInput(id,data,revision) {
+    if (desiredInputs.get(id) !== revision || data.revision !== revision) return;
+    const size = JSON.stringify(data).length * 2;
+    if (size > 16 * 1024 * 1024) return;
+    if (preparedInputs.has(id)) { preparedBytes -= preparedInputs.get(id).size; preparedInputs.delete(id); }
+    while (preparedInputs.size >= 24 || preparedBytes + size > 16 * 1024 * 1024) { const key = preparedInputs.keys().next().value; preparedBytes -= preparedInputs.get(key).size; preparedInputs.delete(key); }
+    preparedInputs.set(id,{data,size}); preparedBytes += size;
+  }
+  function capturedInput(id,refresh = false) {
+    const revision = desiredInputs.get(id), cached = preparedInputs.get(id);
+    if (!refresh && cached && cached.data.revision === revision) return Promise.resolve(cached.data);
+    if (!refresh && inputFlights.has(id) && inputFlights.get(id).revision === revision) return inputFlights.get(id).promise;
+    const promise = api(`/api/conflicts/${encodeURIComponent(id)}${refresh ? '?refresh=1' : ''}`);
+    const flight = {revision,promise}; inputFlights.set(id,flight);
+    promise.then(data => rememberInput(id,data,revision),() => {}).finally(() => { if (inputFlights.get(id) === flight) inputFlights.delete(id); });
+    return promise;
+  }
+  function prefetchConflicts(summaries = [],partial = false) {
+    const ids = new Set(summaries.map(c => c.id));
+    if (!partial) for (const id of desiredInputs.keys()) if (!ids.has(id)) desiredInputs.delete(id);
+    for (const c of summaries) if (c.revision) desiredInputs.set(c.id,c.revision);
+    for (const [id,item] of preparedInputs) if (item.data.revision !== desiredInputs.get(id)) { preparedBytes -= item.size; preparedInputs.delete(id); }
+    if (preparationRunning) return;
+    const pending = summaries.filter(c => c.revision && !preparedInputs.has(c.id)).slice(0,24);
+    if (!pending.length) return;
+    preparationRunning = true;
+    const worker = async () => { while (pending.length && !sessionLost) { const item = pending.shift(); try { await capturedInput(item.id); } catch (_) { /* Opening remains retryable; polling never changes the editor. */ } } };
+    Promise.all([worker(),worker()]).finally(() => { preparationRunning = false; });
   }
   function refresh(interactive = false) {
     if (statusFlight) return statusFlight;
@@ -335,7 +394,7 @@
         const status = await api('/api/status');
         networkFailures = 0; statusPartial = Boolean(status.partial);
         if (status.open_folder_label) { openLabel = status.open_folder_label; canOpen = status.can_open_folder === true; }
-        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
+        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); prefetchConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
         statusDelay = 5000;
         $('connection').textContent = status.partial ? '已连接本机服务，部分状态稍后更新' : '已连接本机服务';
         if (messageOwner === 'status_refresh') message('');
@@ -429,11 +488,11 @@
     $('accept-delete').textContent = current?.local_delete_pending ? '确认本地删除（取消上传）' : '跟随云端删除';
     $('restore-local').disabled = $('accept-delete').disabled = queue.running || !queue.canDecide(r);
     $('review-sources').hidden = !r?.reviewRequired || current?.stale || (!current?.text && !deletionDecision(current)) || complete;
-    $('review-sources').disabled = queue.running;
+    $('review-sources').disabled = queue.running || r?.sourcesChanged;
     $('later').disabled = queue.running;
     $('export-copies').hidden = !current?.can_export_copies;
     $('export-copies').disabled = !state.canExport;
-    const warning = state.warning || (r?.reviewRequired ? '草稿保持原样。请对照当前来源核对已恢复的草稿，再点击“已核对新来源”允许提交。' : '');
+    const warning = state.warning || (r?.sourcesChanged ? '来源已有更新，草稿保持原样。请先刷新差异，再核对新来源。' : r?.reviewRequired ? '草稿保持原样。请对照当前来源核对已恢复的草稿，再点击“已核对新来源”允许提交。' : '');
     $('source-warning').textContent = warning; $('source-warning').hidden = !warning;
   }
   const draftIO = {save:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/draft`,'PUT',{content:bytes(s.text)}),resolve:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/resolve`,'POST',{conflict_id:s.id,expected_generation:s.intent.generation,expected_remote_revision:s.intent.remote_revision,...(s.action ? {action:s.action} : {}),...(s.text === undefined ? {} : {content:bytes(s.text)})})};
@@ -529,9 +588,9 @@
     clearTimeout(draftTimer);
     if (record()?.seq !== record()?.savedSeq && !queue.running) saveDraft();
     const existing = queue.records.get(id);
-    if (existing?.input && (!reload || existing.status === 'queued')) { showConflict(existing); return; }
+    if (existing?.input && ((!reload && (!existing.revision || existing.revision === existing.input.revision)) || existing.status === 'queued')) { showConflict(existing); return; }
     try {
-      const data = await api(`/api/conflicts/${encodeURIComponent(id)}`);
+      const data = await capturedInput(id,reload);
       let cached; try { cached = JSON.parse(localStorage.getItem(`draft:${id}`)); } catch (_) {}
       const r = queue.load(data,cached); stash(r);
       if (requestSeq !== openSeq) return;

@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {createQueue}=require('../assets/batch-view.js');
+const q=createQueue();
+q.sync([{id:'b',name:'B'},{id:'a',name:'A'}]);
+assert.deepEqual([...q.records.keys()],['a','b'],'new discoveries must use deterministic order');
+q.sync([{id:'c',name:'0'},{id:'b',name:'B'},{id:'a',name:'A'}]);
+assert.deepEqual([...q.records.keys()],['a','b','c'],'existing files must keep their positions');
+const input={id:'a',name:'A',text:true,generation:1,remote_revision:'r',revision:'one',source_revision:'source-one',Local:'local'};
+const r=q.load(input);q.edit('a','my draft');q.select('a',true);
+q.sync([{id:'b',name:'B'},{id:'a',name:'A',revision:'two',source_revision:'source-two'}]);
+assert.equal(r.text,'my draft');
+assert.equal(r.reviewRequired,true,'a changed captured fingerprint must require source review');
+assert.equal(q.canSubmit(r),false);
+assert.equal(q.review('a'),false,'reviewing the old displayed inputs must not clear a newly observed source change');
+assert.equal(r.selected,true,'scanning preserves the user selection');
+console.log('deterministic sticky order and source change draft safety verified');

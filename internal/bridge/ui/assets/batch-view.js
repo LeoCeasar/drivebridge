@@ -15,11 +15,16 @@
     const serial = (task, detach) => { const result = chain.catch(() => {}).then(task); chain = (detach ? Promise.race([result,detach]) : result).catch(() => {}); return result; };
     function sync(summaries = [], partial = false) {
       if (!partial) for (const r of records.values()) r.present = false;
-      for (const summary of summaries) {
+      for (const summary of [...summaries].sort((a,b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id))) {
         let r = records.get(summary.id);
         if (!r) { r = {id:summary.id,name:summary.name,selected:false,status:'unreviewed',present:true}; records.set(r.id,r); }
         if (r.status === 'resolved') { r.status = r.input ? 'needs_refresh' : 'unreviewed'; r.reviewRequired = Boolean(r.input); }
         r.name = summary.name; r.present = true;
+        r.revision = summary.revision; r.sourceRevision = summary.source_revision;
+        if (r.input?.source_revision && summary.source_revision) {
+          r.sourcesChanged = r.input.source_revision !== summary.source_revision;
+          if (r.sourcesChanged && !['queued','submitting'].includes(r.status)) { r.reviewRequired = true; r.status = 'needs_refresh'; }
+        }
         // The list showed it again, so the earlier inferred acceptance was wrong.
         if (r.inferred && r.status === 'queued') { r.status = 'failed'; r.inferred = false; r.selected = false; r.error = '云端列表中仍有此文件，上次提交没有被确认，草稿已保留，可重试。'; }
       }
@@ -48,17 +53,18 @@
         r.input = input; r.name = input.name;
         if (changed) { r.manual = true; r.choices = new Map(); }
       }
+      r.sourcesChanged = Boolean(r.sourceRevision && input.source_revision !== r.sourceRevision);
       if (r.reviewRequired) r.status = 'needs_refresh';
       if ((!input.text && !deletionDecision(input)) || input.blocked) r.status = 'blocked';
       if (deletionDecision(input)) r.selected = false;
       return r;
     }
-    function actionable(r) { return Boolean(r?.present && r.input && !r.input.stale && !r.input.blocked && !r.reviewRequired && !['queued','submitting','resolved'].includes(r.status)); }
+    function actionable(r) { return Boolean(r?.present && r.input && !r.input.stale && !r.input.blocked && !r.sourcesChanged && !r.reviewRequired && !['queued','submitting','resolved'].includes(r.status)); }
     function canSubmit(r) { return Boolean(actionable(r) && r.input.text && !deletionDecision(r.input)); }
     function canDecide(r) { return Boolean(actionable(r) && deletionDecision(r.input)); }
     function select(id, selected) { const r = records.get(id); if (!r || running || (selected && !canSubmit(r))) return false; r.selected = selected; return true; }
     function edit(id,text) { const r = records.get(id); if (!r?.input?.text || r.status === 'resolved') return; r.text = text; r.seq++; if (!['queued','submitting','needs_refresh'].includes(r.status)) r.status = 'draft'; }
-    function review(id) { const r = records.get(id); if (!r?.present || (!r.input?.text && !deletionDecision(r.input)) || r.input.stale || r.input.blocked || running || ['queued','resolved'].includes(r.status)) return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
+    function review(id) { const r = records.get(id); if (!r?.present || r.sourcesChanged || (!r.input?.text && !deletionDecision(r.input)) || r.input.stale || r.input.blocked || running || ['queued','resolved'].includes(r.status)) return false; r.intent = version(r.input); r.reviewRequired = false; r.status = 'draft'; return true; }
     function snapshot(r) { return {id:r.id,text:r.text,seq:r.seq,intent:{...r.intent}}; }
     function saved(r,s) { if (r.seq === s.seq) r.savedSeq = s.seq; }
     async function save(id,io) {
