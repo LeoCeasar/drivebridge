@@ -96,3 +96,81 @@ func (s *Store) RetryCompatibilityConflict(ctx context.Context, expected model.C
 	})
 	return changed, err
 }
+
+// retireObsoleteFormatConflicts runs only in a background sync transaction.
+// Local saves do not perform this scan. A wholly undispatched format failure
+// can yield to a newer local save, but edited drafts and uncertain journals
+// keep their original exclusion and immutable inputs.
+func retireObsoleteFormatConflicts(tx *bolt.Tx, en model.Entry) error {
+	if en.Kind != model.KindDocx {
+		return nil
+	}
+	var metadata Metadata
+	if err := get(tx, "metadata", string(en.ID), &metadata); err != nil {
+		return err
+	}
+	if metadata.Tombstone {
+		return nil
+	}
+	groups := map[uint64][]model.Conflict{}
+	if err := each[model.Conflict](tx, "conflicts", func(c model.Conflict) error {
+		if c.EntryID == en.ID && !c.Resolved && c.Generation < en.Generation {
+			groups[c.Generation] = append(groups[c.Generation], c)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for generation, conflicts := range groups {
+		safe := true
+		for _, c := range conflicts {
+			safe = safe && c.Reason == "unsupported_content" && (c.Draft == "" || c.Draft == c.Local)
+		}
+		if !safe {
+			continue
+		}
+		var records []jobRecord
+		if err := each[jobRecord](tx, "jobs", func(r jobRecord) error {
+			if r.Job.EntryID != en.ID || r.Job.Generation != generation || r.Superseded {
+				return nil
+			}
+			if r.Job.State != model.StatusConflict || r.Job.Plan != "" || len(r.Job.OperationIDs) != 0 || len(r.Operations) != 0 || len(r.Results) != 0 || r.Desired != "" || r.PreparationRestart {
+				safe = false
+			}
+			records = append(records, r)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !safe || len(records) == 0 {
+			continue
+		}
+		creates := false
+		if err := each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
+			for _, r := range records {
+				if op.JobID == r.Job.ID {
+					creates = true
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if creates {
+			continue
+		}
+		for _, r := range records {
+			r.Superseded = true
+			if err := saveJob(tx, r); err != nil {
+				return err
+			}
+		}
+		for _, c := range conflicts {
+			c.Resolved = true
+			if err := put(tx, "conflicts", string(c.ID), c); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

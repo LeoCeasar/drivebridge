@@ -163,6 +163,9 @@ func (s *Store) SupersedeUnsentPredecessors(ctx context.Context, id model.EntryI
 		if e.FrozenBy != "" {
 			return ErrFrozen
 		}
+		if err := retireObsoleteFormatConflicts(tx, e); err != nil {
+			return err
+		}
 		return supersedeUnsentBefore(tx, id, e.Generation)
 	})
 }

@@ -96,3 +96,21 @@ func TestLegacyFormatRetryRechecksCloudChanges(t *testing.T) {
 		t.Fatal("true conflict overwritten", cs, source.writes)
 	}
 }
+
+func TestNewestSaveSupersedesUndispatchedFormatConflict(t *testing.T) {
+	s, e, source, en, oldJob, _ := legacyFormatFixture(t, "alpha old draft\n\nbeta two\n")
+	latest := stageContent(t, s, en, "alpha newest\n\nbeta two\n")
+	if err := e.SyncEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.Entry(bg, en.ID)
+	cs, _ := s.Conflicts(bg)
+	old, _ := s.Job(bg, oldJob.ID)
+	pending, _ := s.Pending(bg)
+	if current.Status != model.StatusSynced || len(cs) != 0 || source.writes == 0 || current.Generation != latest.Generation || len(pending) != 0 || old.State != model.StatusConflict {
+		t.Fatalf("obsolete format conflict blocked latest save: entry=%+v conflicts=%d writes=%d old=%+v", current, len(cs), source.writes, old)
+	}
+	if blobText(t, s, en.Local) != "alpha old draft\n\nbeta two\n" {
+		t.Fatal("older captured local bytes lost")
+	}
+}

@@ -112,3 +112,58 @@ func TestFormatRetryRetainsCapturesWithoutHumanAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestObsoleteFormatConflictYieldsToNewestSave(t *testing.T) {
+	s, en, old, c := formatConflict(t, false)
+	latest, newJob := stage(t, s, en, "latest local content")
+	if err := s.SupersedeUnsentPredecessors(ctx, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.Pending(ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID != newJob.ID {
+		t.Fatal("old format job still blocks latest", pending, err)
+	}
+	conflicts, _ := s.Conflicts(ctx)
+	current, _ := s.Entry(ctx, en.ID)
+	r, _ := s.Journal(ctx, old.ID)
+	if len(conflicts) != 0 || current.Local != latest.Local || current.Generation != latest.Generation || r.Job.State != model.StatusConflict || read(t, s, c.Local) != "local body" {
+		t.Fatal("obsolete capture lost or falsely synced", conflicts, current, r)
+	}
+}
+func TestObsoleteFormatRetirementKeepsDraftsAndUncertainWork(t *testing.T) {
+	for _, name := range []string{"edited draft", "uncertain operation", "genuine conflict", "creation evidence"} {
+		t.Run(name, func(t *testing.T) {
+			s, en, j, c := formatConflict(t, name == "uncertain operation")
+			switch name {
+			case "edited draft":
+				if err := s.SaveDraft(ctx, c.ID, strings.NewReader("manual work")); err != nil {
+					t.Fatal(err)
+				}
+			case "genuine conflict":
+				c.Reason = "overlapping_edits"
+				if err := s.SaveConflict(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+			case "creation evidence":
+				if err := s.update(ctx, func(tx *bolt.Tx) error {
+					return put(tx, "createops", "legacy-create", model.CreateOp{ID: "legacy-create", JobID: j.ID, EntryID: en.ID, Generation: en.Generation, Kind: model.KindDocx, State: "prepared"})
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			latest, _ := stage(t, s, en, "newer local content")
+			if err := s.SupersedeUnsentPredecessors(ctx, en.ID); err != nil {
+				t.Fatal(err)
+			}
+			cs, _ := s.Conflicts(ctx)
+			pending, _ := s.Pending(ctx)
+			current, _ := s.Entry(ctx, en.ID)
+			if len(cs) != 1 || len(pending) != 2 || current.Local != latest.Local {
+				t.Fatal("protected work retired", cs, pending, current)
+			}
+			if name == "edited draft" && read(t, s, cs[0].Draft) != "manual work" {
+				t.Fatal("draft overwritten")
+			}
+		})
+	}
+}
