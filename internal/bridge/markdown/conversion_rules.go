@@ -46,6 +46,7 @@ type ConversionRules struct {
 	exact       map[string]compiledConversion
 	breaks      map[string]compiledConversion
 	fingerprint string
+	document    []byte
 	literals    map[string]*strings.Replacer
 }
 
@@ -113,9 +114,22 @@ func LoadConversionRules(path string) (*ConversionRules, error) {
 	if len(b) > maxConversionRulesBytes {
 		return nil, fmt.Errorf("conversion rules %s: exceeds 8 MiB", path)
 	}
-	doc, err := readConversionRuleDocument(b)
+	rules, err := PureParseConversionRules(b)
 	if err != nil {
 		return nil, fmt.Errorf("conversion rules %s: %w", path, err)
+	}
+	return rules, nil
+}
+
+// PureParseConversionRules validates and compiles defaults plus user overrides
+// without installing or changing the process's active conversion snapshot.
+func PureParseConversionRules(b []byte) (*ConversionRules, error) {
+	if len(b) > maxConversionRulesBytes {
+		return nil, errors.New("conversion rules exceeds 8 MiB")
+	}
+	doc, err := readConversionRuleDocument(b)
+	if err != nil {
+		return nil, err
 	}
 	defaults, _ := readConversionRuleDocument(defaultConversionRulesJSON)
 	positions := map[string]int{}
@@ -125,13 +139,13 @@ func LoadConversionRules(path string) (*ConversionRules, error) {
 	seen := map[string]bool{}
 	for _, r := range doc.Rules {
 		if seen[r.ID] {
-			return nil, fmt.Errorf("conversion rules %s: duplicate id %q", path, r.ID)
+			return nil, fmt.Errorf("duplicate id %q", r.ID)
 		}
 		seen[r.ID] = true
 		if i, ok := positions[r.ID]; ok {
 			old := defaults.Rules[i]
 			if r.Source != old.Source || r.Context != old.Context || r.Match != old.Match {
-				return nil, fmt.Errorf("conversion rules %s: rule %q changes a default match boundary", path, r.ID)
+				return nil, fmt.Errorf("rule %q changes a default match boundary", r.ID)
 			}
 			defaults.Rules[i] = r
 		} else {
@@ -140,7 +154,7 @@ func LoadConversionRules(path string) (*ConversionRules, error) {
 	}
 	result, err := compileConversionRules(defaults)
 	if err != nil {
-		return nil, fmt.Errorf("conversion rules %s: %w", path, err)
+		return nil, err
 	}
 	return result, nil
 }
@@ -306,8 +320,29 @@ func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) 
 	}
 	b, _ := json.Marshal(d)
 	out.fingerprint = digest(string(b))
+	out.document = b
 	return out, nil
 }
+
+// EffectiveDocumentJSON returns a fresh JSON copy of all defaults and overrides.
+func (r *ConversionRules) EffectiveDocumentJSON() json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	return bytes.Clone(r.document)
+}
+
+// Fingerprint identifies the complete validated effective rule document.
+func (r *ConversionRules) Fingerprint() string {
+	if r == nil {
+		return ""
+	}
+	return r.fingerprint
+}
+
+// ActiveConversionRulesFingerprint identifies the process's immutable snapshot.
+func ActiveConversionRulesFingerprint() string { return currentConversionRules().Fingerprint() }
+
 func rawHTMLToken(s string) bool {
 	if s == "" || strings.TrimSpace(s) != s || strings.ContainsAny(s, "\r\n") {
 		return false
