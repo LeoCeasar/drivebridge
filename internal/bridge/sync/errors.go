@@ -7,11 +7,14 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/rclone/rclone/internal/bridge/history"
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 )
+
+var errRemoteDrift = errors.New("remote_drift")
 
 func classify(err error) string {
 	var content *markdown.ContentError
@@ -19,6 +22,12 @@ func classify(err error) string {
 		return "unsupported_content"
 	}
 	switch {
+	case errors.Is(err, errRemoteDrift):
+		return "remote_drift"
+	case errors.Is(err, history.ErrGitUnavailable):
+		return "history_git_unavailable"
+	case errors.Is(err, history.ErrIntegrity) || errors.Is(err, history.ErrLimit):
+		return "unsupported_content"
 	case errors.Is(err, model.ErrIdentityChanged):
 		return "identity_changed"
 	case errors.Is(err, model.ErrUnknownResult):
@@ -50,7 +59,7 @@ func (e *Engine) pause(ctx context.Context, j model.Job, err error) error {
 	e.deferRetry(j.ID, err)
 	code := classify(err)
 	state := model.StatusPaused
-	if code == "unsupported_content" || code == "permission_denied" || code == "identity_changed" {
+	if code == "unsupported_content" || code == "permission_denied" || code == "identity_changed" || code == "history_git_unavailable" {
 		state = model.StatusBlocked
 	}
 	saveErr := e.store.PauseJob(context.WithoutCancel(ctx), j.ID, state, code)

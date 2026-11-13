@@ -829,16 +829,7 @@ func TestNewSaveSupersedesUnsentUnsupportedContent(t *testing.T) {
 }
 
 func TestExplicitManualResolutionCanReplaceAmbiguousSupportedBody(t *testing.T) {
-	s, e, _, entry := setup(t, model.KindDocx)
-	entry = stageContent(t, s, entry, "replacement\n")
-	if err := e.SyncEntry(bg, entry.ID); err == nil {
-		t.Fatal("ambiguous automatic replacement accepted")
-	}
-	conflicts, _ := s.Conflicts(bg)
-	if len(conflicts) != 1 {
-		t.Fatal(conflicts)
-	}
-	conflict := conflicts[0]
+	s, e, _, entry, _, conflict := legacyFormatFixture(t, "replacement\n")
 	if _, _, err := e.Resolve(bg, model.ResolveRequest{ConflictID: conflict.ID, ExpectedGeneration: entry.Generation, ExpectedRemoteRevision: conflict.RemoteRevision, Content: []byte("replacement\n")}); err != nil {
 		t.Fatal(err)
 	}

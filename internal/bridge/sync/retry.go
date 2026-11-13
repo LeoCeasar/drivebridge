@@ -22,7 +22,7 @@ func (e *Engine) now() time.Time {
 }
 func (e *Engine) deferRetry(id model.JobID, err error) {
 	code := classify(err)
-	if code != "network_or_protocol" && code != "rate_limited" && code != "canceled" {
+	if !transient(code) {
 		return
 	}
 	e.retryMu.Lock()
@@ -50,7 +50,7 @@ func (e *Engine) retryReady(id model.JobID) bool {
 	return !exists || !e.now().Before(state.Due)
 }
 func transient(code string) bool {
-	return code == "network_or_protocol" || code == "rate_limited" || code == "canceled"
+	return code == "network_or_protocol" || code == "rate_limited" || code == "canceled" || code == "remote_drift"
 }
 
 // Retry reconciles unknown work; it never changes an unknown mutation to queued.

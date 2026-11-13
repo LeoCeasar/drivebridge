@@ -111,18 +111,33 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			}
 			return e.pause(ctx, j, checked)
 		}
-		merge, err := markdown.PlanStepWithBase(base, local, baseRemote, current)
+		var merge model.MergeResult
 		if journal.HumanResolution {
 			merge, err = markdown.PlanResolvedStepWithBase(base, local, baseRemote, current)
+		} else {
+			var desired []byte
+			var reason string
+			desired, reason, err = e.mergeText(ctx, base, local, current.Markdown)
+			if err != nil {
+				return e.pause(ctx, j, err)
+			}
+			if reason != "" {
+				return e.conflict(ctx, j, sn, reason)
+			}
+			// Git has merged both sides. The captured current snapshot now owns
+			// block identity; the planner only needs to apply this merged intent.
+			merge, err = markdown.PlanMergedStep(desired, current)
 		}
 		if err != nil {
 			return e.pause(ctx, j, err)
 		}
-		if merge.ConflictReason == "unsupported_content" {
-			return e.pause(ctx, j, model.ErrUnsupportedContent)
-		}
 		if merge.ConflictReason != "" {
-			return e.conflict(ctx, j, sn, merge.ConflictReason)
+			if journal.HumanResolution && merge.ConflictReason != "unsupported_content" {
+				return e.conflict(ctx, j, sn, merge.ConflictReason)
+			}
+			// A clean text merge that cannot map to safe cloud operations is a
+			// conversion problem, never a request to manually merge the text.
+			return e.pause(ctx, j, model.ErrUnsupportedContent)
 		}
 		// A fresh recheck still is not CAS. It narrows the last check/write window.
 		check, checked, err := e.fetchDocProjection(ctx, en.Token, current.ProjectionVersion)
@@ -132,7 +147,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		if current.Revision != checked.Revision || !bytes.Equal(current.XML, checked.XML) {
 			drift++
 			if drift >= 3 {
-				return e.conflict(ctx, j, check, "remote_drift")
+				return e.pause(ctx, j, errRemoteDrift)
 			}
 			continue
 		}

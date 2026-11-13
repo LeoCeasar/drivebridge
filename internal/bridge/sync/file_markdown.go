@@ -3,9 +3,10 @@ package syncer
 import (
 	"bytes"
 	"context"
+	"errors"
+	"github.com/rclone/rclone/internal/bridge/history"
 	"io"
 
-	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
 )
@@ -62,7 +63,13 @@ func (e *Engine) planMarkdownFile(ctx context.Context, j model.Job, en model.Ent
 		if !ok {
 			return fail("merge_complexity")
 		}
-		merged, reason := markdown.MergePlain(base, local, remote)
+		merged, reason, err := e.mergeText(ctx, base, local, remote)
+		if errors.Is(err, history.ErrIntegrity) {
+			return fail("unsupported_content")
+		}
+		if err != nil {
+			return "", actual, e.pause(ctx, j, err)
+		}
 		if reason != "" {
 			return fail(reason)
 		}
@@ -85,5 +92,5 @@ func (e *Engine) planMarkdownFile(ctx context.Context, j model.Job, en model.Ent
 		}
 		return desired, checked, nil
 	}
-	return fail("remote_drift")
+	return "", actual, e.pause(ctx, j, errRemoteDrift)
 }

@@ -129,12 +129,17 @@ func TestPlainMarkdownRepeatedRemoteDriftDoesNotUpload(t *testing.T) {
 	s, e, c, en := plainFileSetup(t, "note.md", "alpha one\nbeta two\n")
 	en = stageContent(t, s, en, "alpha local\nbeta two\n")
 	c.beforeObserve = func(n int) { c.file = []byte("alpha one\nbeta drift " + strconv.Itoa(n) + "\n") }
-	if err := e.SyncEntry(bg, en.ID); !errors.Is(err, model.ErrVersionChanged) {
-		t.Fatal(err)
+	if err := e.SyncEntry(bg, en.ID); err == nil {
+		t.Fatal("drift not reported")
 	}
 	conflicts, _ := s.Conflicts(bg)
-	if c.writes != 0 || len(conflicts) != 1 || conflicts[0].Reason != "remote_drift" {
-		t.Fatalf("writes=%d conflicts=%+v", c.writes, conflicts)
+	jobs, _ := s.Pending(bg)
+	if c.writes != 0 || len(conflicts) != 0 || len(jobs) != 1 || jobs[0].State != model.StatusPaused {
+		t.Fatalf("clean remote drift became human conflict: writes=%d conflicts=%d jobs=%+v", c.writes, len(conflicts), jobs)
+	}
+	journal, _ := s.Journal(bg, jobs[0].ID)
+	if journal.ErrorCode != "remote_drift" || !transient(journal.ErrorCode) {
+		t.Fatalf("drift is not retryable %s", journal.ErrorCode)
 	}
 }
 func TestPlainMarkdownMergedUploadRecoveryUsesDesired(t *testing.T) {

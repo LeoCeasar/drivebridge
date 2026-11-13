@@ -10,20 +10,36 @@ import (
 // RetryCompatibilityConflict requeues only a captured converter failure whose
 // draft is still the exact local input. It grants no human-resolution authority,
 // retains all immutable inputs and never erases an uncertain operation journal.
-func (s *Store) RetryCompatibilityConflict(ctx context.Context, expected model.Conflict) (changed bool, err error) {
+func (s *Store) RetryCompatibilityConflict(ctx context.Context, expected model.Conflict) (bool, error) {
+	if expected.Reason != "unsupported_content" {
+		return false, nil
+	}
+	return s.retryTextConflict(ctx, expected, false)
+}
+
+// RetryCleanTextConflict is invoked only after a clean Git merge of the captured
+// inputs. The transaction still owns the generation, draft and journal guards.
+func (s *Store) RetryCleanTextConflict(ctx context.Context, expected model.Conflict) (bool, error) {
+	switch expected.Reason {
+	case "overlapping_edits", "ambiguous_mapping", "same_insertion", "table_both_changed", "delete_vs_edit", "merge_complexity", "remote_drift", "unsupported_content":
+		return s.retryTextConflict(ctx, expected, true)
+	}
+	return false, nil
+}
+func (s *Store) retryTextConflict(ctx context.Context, expected model.Conflict, plain bool) (changed bool, err error) {
 	err = s.update(ctx, func(tx *bolt.Tx) error {
 		var c model.Conflict
 		if err := get(tx, "conflicts", string(expected.ID), &c); err != nil {
 			return err
 		}
-		if c != expected || c.Resolved || c.Reason != "unsupported_content" || c.Local == "" || c.Draft != "" && c.Draft != c.Local {
+		if c != expected || c.Resolved || c.Local == "" || c.Draft != "" && c.Draft != c.Local {
 			return nil
 		}
 		en, err := entryTx(tx, c.EntryID)
 		if err != nil {
 			return err
 		}
-		if en.Kind != model.KindDocx || en.Generation != c.Generation || en.Local != c.Local || en.FrozenBy != "" {
+		if (en.Kind != model.KindDocx && !(plain && model.IsMarkdownFile(en))) || en.Generation != c.Generation || en.Local != c.Local || en.FrozenBy != "" {
 			return nil
 		}
 		var metadata Metadata

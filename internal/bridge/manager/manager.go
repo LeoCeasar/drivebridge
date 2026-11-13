@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/config"
+	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
 )
@@ -87,6 +88,13 @@ func newManager(o Options, d dependencies) (*Manager, error) {
 	}
 	o.ConfigFile, err = filepath.Abs(o.ConfigFile)
 	if err != nil {
+		return nil, err
+	}
+	rules, err := markdown.LoadConversionRules(markdown.ConversionRulesPath(o.ConfigFile))
+	if err != nil {
+		return nil, err
+	}
+	if err = markdown.ConfigureConversionRules(rules); err != nil {
 		return nil, err
 	}
 	if o.Executable == "" {
