@@ -24,7 +24,7 @@
 - [x] `SyncDiagnostic`、原子持久化、状态传递与 UI：只在可证明来源时显示行号；原文通过 textContent 渲染；重启后仍可显示。
 - [x] YAML 元信息：默认结构化规则映射到带识别标记的 YAML 代码块；新 projection 3 还原，旧快照维持原义。保留键值、换行及所有正文。
 - [x] collection 文档：先在本地逐步规划模拟定位真实失败；不把业务正文写入公共测试，不添加无依据的替换规则。
-- [ ] 合跑 markdown/store/sync/manager/ui、并发回归、Windows 编译；更新安装包与本机后检查实际两项记录。
+- [x] 合跑 markdown/store/sync/manager/ui、并发回归、Windows 编译；更新安装包与本机后检查实际两项记录。
 
 ## 重点边界
 

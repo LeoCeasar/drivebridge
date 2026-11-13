@@ -25,3 +25,14 @@
 云端中的 YAML 以代码块展示；保留第一行 DriveBridge 识别标记即可还原为本地 YAML 头。尚无唯一来源的云端结构错误只显示结构类型与原因；有证据的文本错误才显示行号。人工版本冲突仍通过已有差异块定位双方文本。TOML 元信息继续保持原有拒绝写回保护，不会因为 YAML 支持而被当成普通段落展平。此版本没有宣称任意富文本都可以无损转换。
 
 本机安装后验收记录追加在本文件末尾。
+
+## 本机安装后验收
+
+- 已安装 macOS arm64 0.2.18，产物源 revision `4025484af`，Go VCS modified=false；安装前校验 23 个清单文件 SHA256，维护租约安装返回 0。
+- 已运行账号盘恢复，最终 `running=true`、queued=0、conflicts=0、last_error 为空。
+- `SKILL.md` 第 2 代与 `collection.md` 第 4 代均回读确认 synced，并从待上传队列消失。SKILL 本机可见正文保留原 YAML 头部。collection 原人工任务已按普通表格安全转换完成，无新增人工冲突。
+- 另有一条此前就存在的第 4 代 awaiting_verification 记录继续保留。未清空其原始 journal、未重放未知结果；它没有阻止上述两个文件完成。
+- 当前用户的 conversion-rules.json 升级前后 SHA256 一致。Chrome 实际管理页面显示四条有效默认规则，含 YAML 与表格两个结构策略；新版本管理页面已连接本机服务。
+- 最后的 TOML 保护修订：Markdown 包全量与 Windows Markdown 交叉编译通过；没有重复云端业务内容测试。安装后状态保留，挂载与后台服务正常。
+
+开发版安装包：`.superpowers/installers-0.2.18/macos-arm64/`，为 unsigned-test 产物，未宣称签名公证发布。
