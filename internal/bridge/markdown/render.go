@@ -14,10 +14,13 @@ import (
 
 func esc(s string) string { var b bytes.Buffer; _ = xml.EscapeText(&b, []byte(s)); return b.String() }
 func nodeXML(n ast.Node, src []byte) (string, error) {
+	return nodeXMLWithRules(n, src, currentConversionRules())
+}
+func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (string, error) {
 	children := func() (string, error) {
 		var b strings.Builder
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-			s, e := nodeXML(c, src)
+			s, e := nodeXMLWithRules(c, src, rules)
 			if e != nil {
 				return "", e
 			}
@@ -51,20 +54,27 @@ func nodeXML(n ast.Node, src []byte) (string, error) {
 		}
 		return b.String(), nil
 	case *ast.RawHTML:
-		if !isSimpleHTMLBreak(v.Segments.Value(src)) {
-			return "", unsupported("RawHTML")
-		}
+		context := "paragraph"
 		for parent := n.Parent(); parent != nil; parent = parent.Parent() {
 			if _, ok := parent.(*east.TableCell); ok {
-				return "; ", nil
+				context = "table"
+				break
 			}
 		}
-		return "<br/>", nil
+		converted, ok := rules.lookup(v.Segments.Value(src), context)
+		if !ok {
+			return "", unsupported("RawHTML")
+		}
+		return converted.xml, nil
 	case *ast.HTMLBlock:
-		if !isSimpleHTMLBreak(v.Lines().Value(src)) || v.HasClosure() {
+		converted, ok := rules.lookup(bytes.TrimSpace(v.Lines().Value(src)), "paragraph")
+		if !ok || v.HasClosure() {
 			return "", unsupported("HTMLBlock")
 		}
-		return "", nil
+		if converted.spacing {
+			return "", nil
+		}
+		return "<p>" + converted.xml + "</p>", nil
 	case *ast.String:
 		return esc(string(v.Value)), nil
 	case *ast.Paragraph:
@@ -147,7 +157,7 @@ func nodeXML(n ast.Node, src []byte) (string, error) {
 			if _, ok := c.(*east.TableHeader); !ok && c == v.FirstChild().NextSibling() {
 				b.WriteString("</thead><tbody>")
 			}
-			s, e := nodeXML(c, src)
+			s, e := nodeXMLWithRules(c, src, rules)
 			if e != nil {
 				return "", e
 			}

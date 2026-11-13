@@ -29,11 +29,16 @@ func readableRelativeURL(s string) bool {
 
 func spacingBreak(n ast.Node, source []byte) bool {
 	h, ok := n.(*ast.HTMLBlock)
-	return ok && !h.HasClosure() && isSimpleHTMLBreak(h.Lines().Value(source))
+	if !ok || h.HasClosure() {
+		return false
+	}
+	converted, matched := currentConversionRules().lookup(bytes.TrimSpace(h.Lines().Value(source)), "paragraph")
+	return matched && converted.spacing
 }
 func compatibleSpacing(source []byte) bool {
 	for _, line := range bytes.Split(source, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) != 0 && !isSimpleHTMLBreak(line) {
+		converted, matched := currentConversionRules().lookup(bytes.TrimSpace(line), "paragraph")
+		if len(bytes.TrimSpace(line)) != 0 && (!matched || !converted.spacing) {
 			return false
 		}
 	}

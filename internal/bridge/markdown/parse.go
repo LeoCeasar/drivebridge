@@ -187,7 +187,7 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 				break
 			}
 		}
-		if !covered && len(line) > 0 && !isSimpleHTMLBreak(line) {
+		if !covered && len(line) > 0 && !compatibleSpacing(line) {
 			return nil, unsupported("unmapped source (reference definition or unsupported syntax)")
 		}
 		i += j

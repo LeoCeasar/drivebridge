@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "rules": [
+    {"id":"simple-break-paragraph","source":"<br>","target":"\n","context":"paragraph","match":"simple_html_break"},
+    {"id":"simple-break-table","source":"<br>","target":"; ","context":"table","match":"simple_html_break"}
+  ]
+}

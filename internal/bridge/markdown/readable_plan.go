@@ -91,7 +91,8 @@ func projectedAtoms(b []byte) ([]atom, error) {
 		}
 		out[i].End = end
 		source := b[out[i].Start:end]
-		if _, ok := out[i].node.(*ast.HTMLBlock); ok && !isSimpleHTMLBreak(source) {
+		_, convertedHTML := currentConversionRules().lookup(bytes.TrimSpace(source), "paragraph")
+		if _, ok := out[i].node.(*ast.HTMLBlock); ok && !convertedHTML {
 			nodes, e := parseXML(source)
 			if e != nil || len(nodes) != 1 {
 				return nil, unsupported("readable HTML shape")
