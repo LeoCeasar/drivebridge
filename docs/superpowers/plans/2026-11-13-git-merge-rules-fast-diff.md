@@ -30,4 +30,6 @@
 ## D. 集成
 
 - [x] 各模块先 RED 再 GREEN；完成 Markdown/History/Sync/Store/Manager/UI 全部相关包、必要 race、Windows 编译。
-- [ ] 核对当前实际队列，记录已完成与仍需保护项目；更新本机安装，验证版本与挂载；提交并推送 main。
+- [x] 核对当前实际队列，记录已完成与仍需保护项目；更新本机安装，验证版本与挂载；提交并推送 main。
+
+验收明细：docs/testing/2026-11-13-git-merge-rules-fast-diff.md。独立草稿与不支持结构继续保护，不能将代码交付完成表述为全账号零待处理。
