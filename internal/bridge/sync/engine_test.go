@@ -316,16 +316,21 @@ func TestOrdinaryReadbackMismatchNotConfirmed(t *testing.T) {
 		t.Fatal(got)
 	}
 }
-func TestRemoteDriftThreeTimesConflicts(t *testing.T) {
+func TestRemoteDriftThreeTimesDefersWithoutHumanMerge(t *testing.T) {
 	s, e, c, entry := setup(t, model.KindDocx)
 	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n")
 	c.drift = true
-	if err := e.SyncEntry(bg, entry.ID); err == nil {
-		t.Fatal("drift accepted")
+	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, errRemoteDrift) {
+		t.Fatal(err)
 	}
 	conflicts, _ := s.Conflicts(bg)
-	if len(conflicts) != 1 || c.writes != 0 {
-		t.Fatal(conflicts, c.writes)
+	jobs, _ := s.Pending(bg)
+	if len(conflicts) != 0 || c.writes != 0 || len(jobs) != 1 || jobs[0].State != model.StatusPaused {
+		t.Fatal(conflicts, c.writes, jobs)
+	}
+	journal, _ := s.Journal(bg, jobs[0].ID)
+	if journal.ErrorCode != "remote_drift" || !transient(journal.ErrorCode) {
+		t.Fatal(journal.ErrorCode)
 	}
 }
 func TestUnverifiedRouteNeverDispatches(t *testing.T) {
