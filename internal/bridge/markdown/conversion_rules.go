@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
+	"github.com/rclone/rclone/lib/file"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 )
@@ -101,7 +102,7 @@ const maxConversionRulesBytes = 8 * 1024 * 1024
 // A missing file uses the defaults; malformed or unreadable files return errors.
 // Rules with default IDs may update their targets but not their match boundary.
 func LoadConversionRules(path string) (*ConversionRules, error) {
-	f, err := os.Open(path)
+	f, err := file.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return defaultConversionRules, nil
 	}

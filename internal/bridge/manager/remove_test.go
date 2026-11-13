@@ -160,6 +160,10 @@ func TestDeleteUnusedMountPreservesUserMountpointContents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows leaves the WinFsp target absent; create the user-owned directory.
+	if err := os.MkdirAll(spec.Mount.Mountpoint, 0700); err != nil {
+		t.Fatal(err)
+	}
 	marker := filepath.Join(spec.Mount.Mountpoint, "user-data")
 	if err := os.WriteFile(marker, []byte("preserve"), 0600); err != nil {
 		t.Fatal(err)

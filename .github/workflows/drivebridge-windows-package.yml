@@ -5,7 +5,7 @@ on:
       version:
         description: Installer version X.Y.Z (unsigned test build)
         required: true
-        default: '0.2.20'
+        default: '0.2.21'
         type: string
       tests_only:
         description: Run native Windows save gates without building installers
@@ -179,6 +179,12 @@ jobs:
           # The assertion failure above was required; do not leak its native
           # exit code into the GitHub PowerShell wrapper's final exit.
           $global:LASTEXITCODE = 0
+      - name: Check recent Windows regression cases first
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-recent-regressions.jsonl'
+          go test -json -count=1 -timeout 5m -tags cmount -run 'TestConcurrentSaveAtomicJSON|TestSavePreservesOpenConfigReader|TestWindowsLoadWhileDeleteHandleOpen|TestWindowsDeniedReplacementPreservesConfig|TestConversionRulesSavePreservesOpenReaderAndRevision|TestWindowsConversionRulesReadWhileDeleteHandleOpen|TestOpenDocMedia|TestDeleteUnusedMountPreservesUserMountpointContents|TestInteractiveResolveDeadlinePreservesDraft|TestBackgroundCycleIsolatesBlockedConflictedAndSlowFiles|TestLocalWholeReplacementUploadsWithoutManualConflict|TestConflictingWholeReplacementKeepsConflictCopiesWithoutCloudOverwrite' ./internal/bridge/config ./internal/bridge/markdown ./internal/bridge/manager ./internal/bridge/sync ./internal/bridge/integration ./lib/larkcli 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE) { throw 'Recent Windows regression cases failed' }
       - name: Run Windows shared behavior and platform suites with packaged Git
         run: |
           $ErrorActionPreference = 'Stop'

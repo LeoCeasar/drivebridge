@@ -17,6 +17,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
+	"github.com/rclone/rclone/lib/file"
 )
 
 const SchemaVersion = 1
@@ -81,6 +82,17 @@ func Save(path string, c Config) error {
 	return SaveWithPaths(p, c)
 }
 
+// readConfigFile permits a concurrent atomic replacement on Windows. os.ReadFile
+// omits FILE_SHARE_DELETE and can itself fail while a rename handle is open.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := file.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
 // LoadWithPaths returns an empty schema-1 configuration for a missing file.
 // Unknown schemas are returned for inspection with ErrUnknownSchema and cannot be saved.
 func LoadWithPaths(p Paths) (Config, error) {
@@ -90,7 +102,7 @@ func LoadWithPaths(p Paths) (Config, error) {
 	if err := platform.CheckNoSymlinks(p.ConfigFile); err != nil {
 		return Config{}, err
 	}
-	data, err := os.ReadFile(p.ConfigFile)
+	data, err := readConfigFile(p.ConfigFile)
 	if os.IsNotExist(err) {
 		return Default(), nil
 	}
@@ -122,6 +134,8 @@ func LoadWithPaths(p Paths) (Config, error) {
 // SaveWithPaths serializes concurrent writers with a file lock, checks disk schema
 // under that lock, fsyncs a private temporary file, replaces, then syncs its directory.
 // A directory-sync error may mean the replacement is visible but durability is uncertain.
+// Windows has no portable directory-sync primitive; rename metadata durability is
+// not guaranteed even though the temporary file's contents have been synced.
 func SaveWithPaths(p Paths, c Config) error {
 	if err := Validate(c, p); err != nil {
 		return err
@@ -183,7 +197,7 @@ func SaveWithPaths(p Paths, c Config) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err = platform.ReplaceFile(temporary, p.ConfigFile); err != nil {
+	if err = platform.ReplaceSharedFile(temporary, p.ConfigFile); err != nil {
 		return err
 	}
 	return platform.SyncDir(dir)

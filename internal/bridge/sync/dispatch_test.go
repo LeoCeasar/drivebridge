@@ -204,7 +204,7 @@ func TestDocQuantumYieldsOnlyAfterVerifiedReadbackAndKeepsDesired(t *testing.T) 
 
 func TestInteractiveResolveDeadlinePreservesDraft(t *testing.T) {
 	p := newConflictPair(t)
-	p.e.opt.InteractiveTimeout = 20 * time.Millisecond
+	p.e.opt.InteractiveTimeout = time.Nanosecond
 	p.e.source = &deadlineDocSource{Source: p.source}
 	_, _, err := p.e.Resolve(bg, p.request(0, "kept user draft\n"))
 	if !errors.Is(err, context.DeadlineExceeded) {

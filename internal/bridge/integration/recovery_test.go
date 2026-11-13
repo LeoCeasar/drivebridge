@@ -194,9 +194,30 @@ func TestDifferentAccountCannotRebindOldAcceptedQueue(t *testing.T) {
 		t.Fatal(jobs, err)
 	}
 }
-func TestUnanchoredWholeReplacementKeepsConflictCopiesWithoutCloudOverwrite(t *testing.T) {
+func TestLocalWholeReplacementUploadsWithoutManualConflict(t *testing.T) {
 	h := newHarness(t)
-	original := h.read("document.md")
+	h.read("document.md")
+	want := "complete local replacement\n"
+	entry := h.save("document.md", want)
+	if err := h.engine.SyncEntry(h.ctx, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := h.entry("document.md")
+	if after.ID != entry.ID || after.Token != entry.Token || after.Status != model.StatusSynced || h.cloud.doc(t, entry.Token) != want {
+		t.Fatal("clean replacement did not retain identity and content")
+	}
+	if conflicts, err := h.store.Conflicts(h.ctx); err != nil || len(conflicts) != 0 {
+		t.Fatal(conflicts, err)
+	}
+}
+
+func TestConflictingWholeReplacementKeepsConflictCopiesWithoutCloudOverwrite(t *testing.T) {
+	h := newHarness(t)
+	h.read("document.md")
+	// A local-only whole rewrite is now a clean Git merge. A simultaneous cloud
+	// rewrite is the actual conflict case whose copies and recovery we protect.
+	h.cloud.setDoc(h.docToken, `<p id="a">concurrent cloud replacement</p><p id="anchor">stable anchor 中文😀</p><p id="b">tail</p>`)
+	original := h.cloud.doc(t, h.docToken)
 	entry := h.save("document.md", "complete unanchored replacement\n")
 	if err := h.engine.SyncEntry(h.ctx, entry.ID); !errors.Is(err, model.ErrVersionChanged) {
 		t.Fatal(err)
@@ -205,7 +226,7 @@ func TestUnanchoredWholeReplacementKeepsConflictCopiesWithoutCloudOverwrite(t *t
 		t.Fatal("ambiguous replacement overwrote cloud")
 	}
 	conflicts, err := h.store.Conflicts(h.ctx)
-	if err != nil || len(conflicts) != 1 || conflicts[0].Reason != "ambiguous_mapping" {
+	if err != nil || len(conflicts) != 1 || conflicts[0].Reason != "overlapping_edits" {
 		t.Fatal(conflicts, err)
 	}
 	copies, err := h.store.ExportConflictCopies(h.ctx, conflicts[0].ID)

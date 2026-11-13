@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/rclone/rclone/internal/bridge/platform"
+	"github.com/rclone/rclone/lib/file"
 )
 
 // ErrConversionRulesChanged means another writer changed the file since reading.
@@ -37,7 +38,7 @@ func ReadConversionRulesFile(path string) ([]byte, error) {
 	if !exists {
 		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrNotExist}
 	}
-	f, err := os.Open(path)
+	f, err := file.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +134,7 @@ func SaveConversionRulesFile(ctx context.Context, path, expectedRevision string,
 	if _, err := existingConversionRulesFile(path); err != nil {
 		return nil, err
 	}
-	if err := platform.ReplaceFile(name, path); err != nil {
+	if err := platform.ReplaceSharedFile(name, path); err != nil {
 		return nil, err
 	}
 	if err := platform.SyncDir(dir); err != nil {

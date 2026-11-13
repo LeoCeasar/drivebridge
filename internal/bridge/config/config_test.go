@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/lib/file"
 )
 
 const profileID = "11111111-1111-4111-8111-111111111111"
@@ -184,14 +187,13 @@ func TestConcurrentSaveAtomicJSON(t *testing.T) {
 				return
 			default:
 			}
-			data, err := os.ReadFile(p.ConfigFile)
+			got, err := LoadWithPaths(p)
 			if err != nil {
 				errs <- err
 				return
 			}
-			var got Config
-			if err := json.Unmarshal(data, &got); err != nil {
-				errs <- err
+			if !reflect.DeepEqual(got, c) {
+				errs <- errors.New("reader observed an incomplete configuration")
 				return
 			}
 		}
@@ -210,6 +212,43 @@ func TestConcurrentSaveAtomicJSON(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+func TestSavePreservesOpenConfigReader(t *testing.T) {
+	p := testPaths(t)
+	c := testConfig(p)
+	if err := SaveWithPaths(p, c); err != nil {
+		t.Fatal(err)
+	}
+	// lib/file opens with FILE_SHARE_DELETE on Windows, allowing a reader to
+	// retain its complete old snapshot while the pathname is replaced.
+	reader, err := file.Open(p.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	c.Profiles[0].Name = "replacement"
+	if err := SaveWithPaths(p, c); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old Config
+	if err := json.Unmarshal(data, &old); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(old, testConfig(p)) {
+		t.Fatalf("existing reader lost its original snapshot: %+v", old)
+	}
+	got, err := LoadWithPaths(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, c) {
+		t.Fatalf("new reader did not see the complete replacement: %+v", got)
 	}
 }
 func TestIdentityRegistryCanonicalRoots(t *testing.T) {

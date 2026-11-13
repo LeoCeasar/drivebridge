@@ -14,8 +14,6 @@ import (
 // Resolve rechecks the captured remote and stages a new local generation. The
 // subsequent upload still has the documented check/write race; this is not CAS.
 func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Entry, model.Job, error) {
-	ctx, cancel := context.WithTimeout(ctx, e.opt.InteractiveTimeout)
-	defer cancel()
 	defer e.beginForeground()()
 	conflicts, err := e.store.Conflicts(ctx)
 	if err != nil {
@@ -41,6 +39,10 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 			return model.Entry{}, model.Job{}, err
 		}
 	}
+	// Checkpoint the user's draft before starting the cloud-check budget. Local
+	// durable I/O may be slower on Windows; a remote timeout must not discard it.
+	ctx, cancel := context.WithTimeout(ctx, e.opt.InteractiveTimeout)
+	defer cancel()
 	if !localDeletion {
 		if err = e.check(ctx); err != nil {
 			return model.Entry{}, model.Job{}, err

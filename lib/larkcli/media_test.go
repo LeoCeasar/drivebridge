@@ -36,8 +36,16 @@ func TestMediaCLIProcess(t *testing.T) {
 	}
 	cwd, err := os.Getwd()
 	info, statErr := os.Stat(cwd)
-	if err != nil || statErr != nil || info.Mode().Perm()&0077 != 0 || os.Getenv("LARKSUITE_CLI_CONFIG_DIR") == "" {
+	// Windows reports synthetic directory permission bits; its directory access
+	// is governed by ACLs rather than the Unix mode supplied to MkdirTemp.
+	if err != nil || statErr != nil || !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) || os.Getenv("LARKSUITE_CLI_CONFIG_DIR") == "" {
 		os.Exit(92)
+	}
+	check := func(err error) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "media fixture setup:", err)
+			os.Exit(93)
+		}
 	}
 	body := mediaPNG
 	saved := "media"
@@ -90,21 +98,21 @@ func TestMediaCLIProcess(t *testing.T) {
 		result = "success"
 	}
 	if scenario == "symlink" {
-		_ = os.WriteFile("other", body, 0600)
-		_ = os.Symlink("other", "media")
+		check(os.WriteFile("other", body, 0600))
+		check(os.Symlink("other", "media"))
 	} else if scenario == "directory" {
-		_ = os.Mkdir("media", 0700)
+		check(os.Mkdir("media", 0700))
 	} else if scenario != "missing" {
-		_ = os.WriteFile("media", body, 0600)
+		check(os.WriteFile("media", body, 0600))
 	}
 	if strings.HasPrefix(scenario, "auto-") && scenario != "auto-traversal" {
-		_ = os.Rename("media", saved)
+		check(os.Rename("media", saved))
 	}
 	if scenario == "large-file" {
-		_ = os.Truncate("media", 64*1024*1024+1)
+		check(os.Truncate("media", 64*1024*1024+1))
 	}
 	if scenario == "public-directory" {
-		_ = os.Chmod(cwd, 0755)
+		check(os.Chmod(cwd, 0755))
 	}
 	if scenario == "cancel" {
 		time.Sleep(time.Minute)
@@ -178,7 +186,13 @@ func assertMediaClean(t *testing.T, root string) {
 	}
 }
 func TestOpenDocMediaPrivateRelativeDownloadAndCleanup(t *testing.T) {
-	for _, scenario := range []string{"normal", "absolute", "success", "auto-png", "auto-absolute-png", "auto-uppercase-png"} {
+	scenarios := []string{"normal", "absolute", "success", "auto-png", "auto-absolute-png", "auto-uppercase-png"}
+	if runtime.GOOS == "windows" {
+		// Directory Chmod does not alter Windows ACLs. Exercise the download
+		// after it too, rather than treating synthetic POSIX bits as access.
+		scenarios = append(scenarios, "public-directory")
+	}
+	for _, scenario := range scenarios {
 		t.Run(scenario, func(t *testing.T) {
 			d, temp, coord := mediaDrive(t, scenario)
 			rc, err := d.OpenDocMedia(context.Background(), "imageToken")
@@ -226,7 +240,12 @@ func TestOpenDocMediaPrivateRelativeDownloadAndCleanup(t *testing.T) {
 	}
 }
 func TestOpenDocMediaRejectsIncompleteUnownedOrNonImageOutput(t *testing.T) {
-	for _, scenario := range []string{"text", "empty", "mismatch", "oversize", "large-file", "quoted", "negative", "escape", "different", "symlink", "directory", "missing", "failed", "pending", "null-result", "no-size", "null-size", "no-path", "null-path", "public-directory", "auto-wrong-extension", "auto-unknown-extension", "auto-sibling", "auto-traversal", "auto-double-extension", "identity", "exit", "error"} {
+	scenarios := []string{"text", "empty", "mismatch", "oversize", "large-file", "quoted", "negative", "escape", "different", "symlink", "directory", "missing", "failed", "pending", "null-result", "no-size", "null-size", "no-path", "null-path", "auto-wrong-extension", "auto-unknown-extension", "auto-sibling", "auto-traversal", "auto-double-extension", "identity", "exit", "error"}
+	if runtime.GOOS != "windows" {
+		// Only Unix directory permission bits can be made public by Chmod.
+		scenarios = append(scenarios, "public-directory")
+	}
+	for _, scenario := range scenarios {
 		t.Run(scenario, func(t *testing.T) {
 			d, temp, _ := mediaDrive(t, scenario)
 			rc, err := d.OpenDocMedia(context.Background(), "imageToken")
@@ -239,8 +258,36 @@ func TestOpenDocMediaRejectsIncompleteUnownedOrNonImageOutput(t *testing.T) {
 			if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "imageToken") {
 				t.Fatal("sensitive data leaked")
 			}
-			if scenario == "identity" && !errors.Is(err, ErrIdentity) {
-				t.Fatal("identity lost", err)
+			// A fixture launch/setup failure must not masquerade as validation of
+			// malformed media or a provider error envelope.
+			switch scenario {
+			case "identity":
+				if !errors.Is(err, ErrIdentity) {
+					t.Fatal("identity lost", err)
+				}
+			case "text":
+				if !errors.Is(err, ErrUnsupportedCapability) {
+					t.Fatal("non-image rejection lost", err)
+				}
+			case "failed", "pending", "exit", "error":
+				wantType := "operation"
+				if scenario == "exit" {
+					wantType = "process"
+				} else if scenario == "error" {
+					wantType = "api"
+				}
+				var cliErr *Error
+				if !errors.As(err, &cliErr) || cliErr.Type != wantType {
+					t.Fatalf("wrong CLI error: %#v", err)
+				}
+				if scenario == "error" && cliErr.Code != "403" {
+					t.Fatalf("provider code lost: %#v", cliErr)
+				}
+			default:
+				var cliErr *Error
+				if errors.As(err, &cliErr) || !errors.Is(err, ErrProtocol) {
+					t.Fatalf("wrong media validation error: %#v", err)
+				}
 			}
 			assertMediaClean(t, temp)
 		})
@@ -290,6 +337,58 @@ func TestOpenDocMediaCancellationCleansPartialAndReturnedLease(t *testing.T) {
 	}
 	if err := rc.Close(); err != nil {
 		t.Fatal(err)
+	}
+	assertMediaClean(t, temp)
+}
+
+func TestOpenDocMediaCancellationAfterPartialFileCreated(t *testing.T) {
+	d, temp, _ := mediaDrive(t, "cancel")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		rc, err := d.OpenDocMedia(ctx, "imageToken")
+		if rc != nil {
+			_ = rc.Close()
+		}
+		done <- err
+	}()
+	defer cancel()
+	// Synchronize on the actual download file so this cannot pass merely by
+	// canceling before Windows has started the helper process.
+	deadline := time.Now().Add(5 * time.Second)
+	partialCreated := false
+	for !partialCreated {
+		entries, err := os.ReadDir(temp)
+		if err != nil {
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			body, err := os.ReadFile(filepath.Join(temp, entry.Name(), "media"))
+			if err == nil && bytes.Equal(body, mediaPNG) {
+				partialCreated = true
+				break
+			}
+		}
+		if partialCreated {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("download ended before partial file was created: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("download did not create a partial file")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("partial download cancellation lost", err)
 	}
 	assertMediaClean(t, temp)
 }

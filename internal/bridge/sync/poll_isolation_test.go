@@ -92,20 +92,22 @@ func TestBackgroundCycleIsolatesBlockedConflictedAndSlowFiles(t *testing.T) {
 				t.Fatal("background upload bypassed five-minute schedule")
 			}
 			now = now.Add(5 * time.Minute)
-			ctx, cancel := context.WithCancel(bg)
+			// Independence is established by the held-entry barrier, not a one
+			// second disk-speed assertion. Bound the whole observation instead.
+			ctx, cancel := context.WithTimeout(bg, 15*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- engine.backgroundCycle(ctx) }()
 			if state == "slow" {
 				select {
 				case <-held.started:
-				case <-time.After(time.Second):
+				case <-ctx.Done():
 					t.Fatal("slow entry never reached cloud observation")
 				}
 			}
 			select {
 			case <-published:
-			case <-time.After(time.Second):
+			case <-ctx.Done():
 				cancel()
 				release.Do(func() { close(held.release) })
 				<-done
