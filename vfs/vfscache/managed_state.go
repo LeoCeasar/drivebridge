@@ -36,7 +36,7 @@ func (c *Cache) ManagedLocalSaveStatus() (saved bool, preparing int, failed []st
 	defer c.mu.Unlock()
 	for name, item := range c.item {
 		item.mu.Lock()
-		if item.info.MutationSeq > item.info.DurableSeq || item.journal == nil && item.info.Dirty {
+		if item.managedCheckpointError != nil || item.info.MutationSeq > item.info.DurableSeq || item.journal == nil && item.info.Dirty {
 			saved = false
 		}
 		if item.info.MutationSeq > item.info.StagedSeq {
@@ -54,7 +54,7 @@ func (c *Cache) ManagedPending() bool {
 	defer c.mu.Unlock()
 	for _, i := range c.item {
 		i.mu.Lock()
-		pending := i.info.Dirty || i.info.MutationSeq > i.info.StagedSeq || i.pendingAccesses != 0 || i.beingReset || i.closing != nil || i.managedStaging || i.managedStageError != nil
+		pending := i.info.Dirty || i.info.MutationSeq > i.info.StagedSeq || i.pendingAccesses != 0 || i.beingReset || i.closing != nil || i.managedStaging || i.managedStageError != nil || i.managedCheckpointError != nil
 		i.mu.Unlock()
 		if pending {
 			return true

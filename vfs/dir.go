@@ -1139,16 +1139,22 @@ func (d *Dir) Mkdir(name string) (*Dir, error) {
 }
 
 // Remove the directory
-func (d *Dir) Remove() error {
+func (d *Dir) Remove() (err error) {
 	if m := d.vfs.managed.Load(); m != nil {
 		if d.parent == nil {
 			return EPERM
 		}
-		r, e := m.reserve([]string{d.Path()}, true)
+		r, e := m.reserveRemove(d.Path(), d.vfs.canDetachManagedRemoval())
 		if e != nil {
 			return e
 		}
-		defer r.release()
+		defer func() {
+			if !committed(err) {
+				r.release()
+			} else {
+				r.failNamespaceWaiters()
+			}
+		}()
 	}
 	if d.vfs.Opt.ReadOnly {
 		return EROFS
@@ -1168,6 +1174,9 @@ func (d *Dir) Remove() error {
 	if err != nil {
 		fs.Errorf(d, "Dir.Remove failed to remove directory: %v", err)
 		return err
+	}
+	if m := d.vfs.managed.Load(); m != nil && d.vfs.canDetachManagedRemoval() {
+		m.retireRemovedReaders(d.Path())
 	}
 	// Remove the item from the parent directory listing
 	if d.parent != nil {

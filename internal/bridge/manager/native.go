@@ -120,6 +120,7 @@ func (n *nativeRuntime) Activity() (int, int, int)              { return n.v.Man
 func (n *nativeRuntime) StopActivity() (int, int, int)          { return n.v.ManagedStopActivity() }
 func (n *nativeRuntime) CachePending() bool                     { return n.v.ManagedCachePending() }
 func (n *nativeRuntime) LocalSaveStatus() (bool, int, []string) { return n.v.ManagedLocalSaveStatus() }
+func (n *nativeRuntime) LocalSaveFailures() []string            { return n.v.ManagedLocalSaveFailures() }
 func (n *nativeRuntime) Pause() (func(), error)                 { return n.v.PauseManagedAdmission() }
 func (n *nativeRuntime) Unmount() error {
 	n.unmountOnce.Do(func() {
@@ -409,6 +410,9 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		_, _, err := engine.Resolve(ctx, r)
 		return err
 	}, retry: func(ctx context.Context) error {
+		if err := v.RetryManagedLocalSaves(ctx); err != nil {
+			return err
+		}
 		jobs, err := s.Pending(ctx)
 		if err != nil {
 			return err

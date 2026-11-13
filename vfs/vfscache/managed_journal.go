@@ -53,15 +53,16 @@ type journalCheckpoint struct {
 	view []journalExtent
 }
 type managedJournal struct {
-	file        *os.File
-	base        journalBase
-	baseLease   io.ReadCloser
-	view        []journalExtent
-	checkpoints []journalCheckpoint
-	err         error
-	retired     bool
-	scanEnd     int64
-	uncommitted bool
+	file              *os.File
+	base              journalBase
+	baseLease         io.ReadCloser
+	view              []journalExtent
+	checkpoints       []journalCheckpoint
+	err               error
+	retired           bool
+	scanEnd           int64
+	uncommitted       bool
+	pendingCheckpoint *journalCheckpoint // appended but not yet confirmed by fsync
 }
 
 func journalRoot(meta string) string { return meta + ".journal" }
@@ -275,34 +276,43 @@ func (item *Item) journalTruncate(size int64) error {
 
 // The WAL itself is the durability authority for changed bytes. There is no
 // second full-body fsync, copy, hash, download or Git command on this path.
-func (item *Item) checkpointManagedLocked() error {
+func (item *Item) checkpointManagedLocked() (err error) {
 	j := item.journal
 	if j == nil || item.info.MutationSeq == item.info.DurableSeq {
 		return nil
 	}
+	defer func() { item.managedCheckpointError = err }()
 	if j.err != nil {
 		return j.err
 	}
-	info := item.info
-	info.DurableSeq = info.MutationSeq
-	info.JournalEnd = 0
-	data, err := json.Marshal(info)
-	if err != nil {
+	cp := j.pendingCheckpoint
+	if cp == nil || cp.info.MutationSeq != item.info.MutationSeq {
+		info := item.info
+		info.DurableSeq = info.MutationSeq
+		info.JournalEnd = 0
+		data, e := json.Marshal(info)
+		if e != nil {
+			return e
+		}
+		_, end, e := j.append(journalCheckpointRecord, info.MutationSeq, 0, data)
+		if e != nil {
+			return e
+		}
+		info.JournalEnd = end
+		cp = &journalCheckpoint{info: info, view: append([]journalExtent(nil), j.view...)}
+		j.pendingCheckpoint = cp
+	}
+	// Retry the same complete record after fsync failure without growing the WAL.
+	if err = item.c.managedIO.syncFile(j.file); err != nil {
 		return err
 	}
-	_, end, err := j.append(journalCheckpointRecord, info.MutationSeq, 0, data)
-	if err == nil {
-		err = item.c.managedIO.syncFile(j.file)
-	}
-	if err != nil {
-		return err
-	}
-	info.JournalEnd = end
-	item.info = info
+	item.info.DurableSeq = cp.info.DurableSeq
+	item.info.JournalEnd = cp.info.JournalEnd
 	// startManagedJournal durably linked this UUID before accepting a write.
 	// Recovery scans its checksummed WAL checkpoints, including those newer
 	// than the derived metadata. A second metadata replace adds no durability.
-	j.checkpoints = append(j.checkpoints, journalCheckpoint{info: info, view: append([]journalExtent(nil), j.view...)})
+	j.checkpoints = append(j.checkpoints, *cp)
+	j.pendingCheckpoint = nil
 	return nil
 }
 

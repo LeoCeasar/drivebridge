@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rclone/rclone/internal/bridge/platform"
 )
 
 var ErrGitUnavailable = errors.New("history_git_unavailable")
@@ -50,7 +52,7 @@ func (r *Repository) git(ctx context.Context, input io.Reader, args ...string) (
 // streaming blob reads; hooks, external diff and the user's Git config stay out.
 func (r *Repository) gitCommand(ctx context.Context, input io.Reader, args ...string) *exec.Cmd {
 	options := []string{"--no-pager", "--git-dir=" + r.gitDir, "-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.useReplaceRefs=false"}
-	cmd := exec.CommandContext(ctx, r.executable, append(options, args...)...)
+	cmd := platform.BackgroundCommand(ctx, r.executable, append(options, args...)...)
 	env := []string{}
 	for _, v := range os.Environ() {
 		k, _, _ := strings.Cut(v, "=")

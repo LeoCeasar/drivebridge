@@ -145,7 +145,8 @@ func mount(VFS *vfs.VFS, mountPath string, opt *mountlib.Options) (<-chan error,
 			}
 		})
 	}
-	host.SetCapReaddirPlus(true) // only works on Windows
+	host.SetCapReaddirPlus(true)                      // only works on Windows
+	host.SetCapDeleteAccess(VFS.ManagedSyncEnabled()) // Windows must reject before void Cleanup
 	if opt.CaseInsensitive.Valid {
 		host.SetCapCaseInsensitive(opt.CaseInsensitive.Value)
 	} else {

@@ -62,11 +62,18 @@ func (c *Cache) managedJournalWorker(ctx context.Context) {
 			if !identityArchive {
 				c.archiveMu.RLock()
 			}
-			err := i.stageManagedJournal(ctx, nil)
+			_, err := i.retryManagedLocalSave(ctx)
+			checkpointFailed := err != nil
+			if err != nil && ctx.Err() == nil {
+				fs.Errorf(i.GetName(), "local save is not confirmed durable; WAL checkpoint will retry: %v", err)
+			}
+			if err == nil {
+				err = i.stageManagedJournal(ctx, nil)
+			}
 			if !identityArchive {
 				c.archiveMu.RUnlock()
 			}
-			if err != nil && ctx.Err() == nil && !managedArchiveTemporary(err) {
+			if err != nil && !checkpointFailed && ctx.Err() == nil && !managedArchiveTemporary(err) {
 				fs.Errorf(i.GetName(), "local save is preserved; background archive will retry: %v", err)
 			}
 		}

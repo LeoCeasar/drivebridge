@@ -206,7 +206,8 @@
         name.append(make('small',known ? `${reason}；保留上次结果（${new Date(mount.status_updated_at).toLocaleTimeString()}）` : `${reason}；尚未取得完整状态`,'mount-path'));
       }
       const local = make('td'), saved = state.local_saved;
-      local.append(!known ? chip('等待核对','info') : chip(prefix + (saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), saved ? 'ok' : state.running ? 'pending' : 'stopped'));
+      const saveFailed = state.last_error === 'local_save_failed';
+      local.append(!known ? chip('等待核对','info') : chip(prefix + (saveFailed ? '本机保存尚未确认' : saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), saveFailed ? 'error' : saved ? 'ok' : state.running ? 'pending' : 'stopped'));
       const cloud = make('td');
       if (!known) cloud.append(chip('等待核对','info'));
       else {
@@ -228,6 +229,8 @@
   }
   function issueAdvice(issue) {
     switch (issue.code) {
+      case 'local_save_failed':
+        return {title:'本机保存尚未确认',reason:'本机磁盘未能确认此次保存，当前修改仍在本机缓存中，尚不能视为持久保存。',retry:true,steps:['保留编辑器中的内容，必要时另存到其他可用磁盘；不要删除挂载或缓存。','检查磁盘剩余空间、磁盘状态，以及应用缓存目录是否可写。','恢复条件后关闭文件，保持应用运行，后台会自动重试本机保存；也可点击“重试同步”。']};
       case 'local_archive_failed':
         return {title:'本地修改等待后台整理',reason:'修改仍保留在本机，后台暂时无法生成待同步版本。',steps:['检查磁盘剩余空间，以及应用缓存目录是否可写。','保持应用运行，恢复条件后后台会自动重试；不要删除挂载或缓存。','若持续出现，请保留文件并查看应用日志。']};
       case 'unsupported_content':

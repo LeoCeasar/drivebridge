@@ -249,6 +249,17 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 			out.CloudState = "blocked"
 		}
 	}
+	if local, ok := services.runtime.(interface{ LocalSaveFailures() []string }); ok {
+		failed := local.LocalSaveFailures()
+		for _, name := range failed {
+			out.Issues = append(out.Issues, model.SyncIssue{Name: name, Code: "local_save_failed", State: model.StatusBlocked, LocalSaved: false})
+		}
+		if len(failed) > 0 {
+			out.LocalSaved = false
+			out.LastError = "local_save_failed"
+			out.CloudState = "blocked"
+		}
+	}
 	if services.cacheBytes != nil {
 		if bytes, ok := services.cacheBytes(); ok {
 			out.CacheBytes = &bytes

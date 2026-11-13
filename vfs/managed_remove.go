@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/rclone/rclone/fs"
+	"strings"
 )
 
 type managedRemover interface {
@@ -14,15 +15,72 @@ type managedRemover interface {
 	AbortManagedRename(context.Context, string) error
 }
 
-func (f *File) removeManaged() error {
+type managedRemoveValidator interface {
+	ValidateManagedRemove(context.Context, string) error
+}
+
+// CheckManagedDelete is a side-effect-free preflight for native adapters whose
+// eventual deletion callback cannot return an error (WinFsp Cleanup). The actual
+// removal still repeats admission and durable namespace validation.
+func (v *VFS) CheckManagedDelete(remote string) error {
+	m := v.managed.Load()
+	if m == nil {
+		return nil
+	}
+	if v.Opt.ReadOnly {
+		return EROFS
+	}
+	name := managedPath(remote)
+	if name == "" {
+		return EPERM
+	}
+	r, err := m.reserveRemove(name, true)
+	if err != nil {
+		return err
+	}
+	defer r.release()
+	if validator, ok := v.f.(managedRemoveValidator); ok {
+		return validator.ValidateManagedRemove(v.ctx, name)
+	}
+	return v.validateManagedOpen(v.ctx, name, true)
+}
+
+// A checkpoint-backed unlink detaches the old cache generation. Existing
+// readers can therefore finish after the name is removed, including WinFsp's
+// own deletion handle, which is released after its Unlink callback.
+func (v *VFS) canDetachManagedRemoval() bool {
+	_, ok := v.f.(managedRemover)
+	return ok && v.cache != nil && v.cache.UsesManagedCheckpointArchive()
+}
+
+// The open handle still owns its cache generation and participates in shutdown,
+// but must not exclude a newly created file with the same visible name.
+func (m *managedState) retireRemovedReaders(name string) {
+	name = managedPath(name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for a := range m.handles {
+		if !a.write && (a.path == name || strings.HasPrefix(a.path, name+"/")) {
+			a.retired = true
+		}
+	}
+}
+
+func (f *File) removeManaged() (err error) {
 	f.mu.RLock()
 	v := f.d.vfs
 	f.mu.RUnlock()
-	r, e := v.managed.Load().reserve([]string{f.Path()}, true)
+	r, e := v.managed.Load().reserveRemove(f.Path(), v.canDetachManagedRemoval())
 	if e != nil {
 		return e
 	}
-	defer r.release()
+	defer func() {
+		if !committed(err) {
+			r.release()
+		} else {
+			r.failNamespaceWaiters()
+		}
+	}()
 	return f.removeManagedReserved()
 }
 func (f *File) removeManagedReserved() error {
@@ -90,6 +148,7 @@ func (f *File) removeCheckpointManaged(remover managedRemover, name string) (err
 	if err = v.cache.DetachManagedTree(name); err != nil {
 		return &managedCommittedError{err}
 	}
+	v.managed.Load().retireRemovedReaders(name)
 	d.delObject(f.Name())
 	if err = remover.FinishManagedRename(f.ctx, id); err != nil {
 		return &managedCommittedError{err}

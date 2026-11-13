@@ -595,6 +595,9 @@ func (fsys *FS) Chown(path string, uid uint32, gid uint32) (errc int) {
 // Access checks file access permissions.
 func (fsys *FS) Access(path string, mask uint32) (errc int) {
 	defer log.Trace(path, "mask=0%o", mask)("errc=%d", &errc)
+	if mask&fuse.DELETE_OK != 0 && fsys.VFS.ManagedSyncEnabled() {
+		return fsys.translateError(fsys.VFS.CheckManagedDelete(path))
+	}
 	// This is a no-op for rclone
 	return 0
 }

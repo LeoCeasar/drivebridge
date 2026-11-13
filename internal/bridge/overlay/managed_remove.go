@@ -2,9 +2,33 @@ package overlay
 
 import (
 	"context"
+	"errors"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/store"
 )
+
+// Native delete permission checks must stay local and must not prepare a
+// deletion: Windows can ask before a FILE_DELETE_ON_CLOSE creation exists.
+func (f *Fs) ValidateManagedRemove(ctx context.Context, remote string) error {
+	if err := validPath(remote, false); err != nil {
+		return err
+	}
+	if isDocAssetPath(remote) {
+		return fs.ErrorPermissionDenied
+	}
+	e, err := f.store.EntryByRemote(ctx, remote)
+	if errors.Is(err, store.ErrNotFound) {
+		return f.requireParent(ctx, parentPath(remote))
+	}
+	if err != nil {
+		return err
+	}
+	if e.FrozenBy != "" {
+		return store.ErrFrozen
+	}
+	return f.requireWritable(ctx, e)
+}
 
 func (f *Fs) BeginManagedRemove(ctx context.Context, remote string) (string, error) {
 	if err := validPath(remote, false); err != nil {

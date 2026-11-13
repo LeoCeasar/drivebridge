@@ -7,10 +7,16 @@ on:
         required: true
         default: '0.2.8'
         type: string
+      tests_only:
+        description: Run native Windows save gates without building installers
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
   windows-package:
+    if: ${{ !inputs.tests_only }}
     runs-on: windows-2022
     timeout-minutes: 40
     defaults:
@@ -82,5 +88,118 @@ jobs:
         with:
           name: drivebridge-${{ inputs.version }}-windows-amd64-feishu
           path: dist/windows-test-package/*
+          if-no-files-found: error
+          retention-days: 14
+  windows-save-tests:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install checksum-pinned WinFsp and private Git runtime
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP 'windows-save-evidence'
+          New-Item -ItemType Directory $evidence | Out-Null
+          "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR=$evidence" | Out-File $env:GITHUB_ENV -Append
+          $driver = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          $digest = '073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a'
+          Invoke-WebRequest 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' -OutFile $driver
+          if ((Get-FileHash $driver -Algorithm SHA256).Hash.ToLowerInvariant() -ne $digest) { throw 'WinFsp MSI checksum mismatch' }
+          $installLog = Join-Path $evidence 'winfsp-install.log'
+          $p = Start-Process msiexec.exe -ArgumentList @('/i',$driver,'/qn','/norestart','/l*v',$installLog) -Wait -PassThru
+          if ($p.ExitCode -notin @(0,3010)) { throw "WinFsp installation failed: $($p.ExitCode)" }
+          $winfspDLL = Join-Path ${env:ProgramFiles(x86)} 'WinFsp/bin/winfsp-x64.dll'
+          if (!(Test-Path $winfspDLL)) { throw 'Required installed WinFsp DLL is absent' }
+          $runtime = Join-Path $env:RUNNER_TEMP 'drivebridge-private-git'
+          python packaging/drivebridge/git_runtime.py --platform windows --architecture amd64 --output $runtime
+          if ($LASTEXITCODE) { throw 'Private Git runtime preparation failed' }
+          $git = Join-Path $runtime 'bin/git.exe'
+          $gitVersion = & $git --version
+          if ($LASTEXITCODE) { throw 'Packaged Git cannot execute on Windows' }
+          "DRIVEBRIDGE_TEST_GIT=$git" | Out-File $env:GITHUB_ENV -Append
+          (Join-Path $runtime 'bin') | Out-File $env:GITHUB_PATH -Append
+          Copy-Item (Join-Path $runtime 'runtime.json') (Join-Path $evidence 'git-runtime.json')
+          @{
+            schema_version = 1; commit = $env:GITHUB_SHA; ref = $env:GITHUB_REF
+            runner_os = $env:RUNNER_OS; runner_image = $env:ImageVersion
+            winfsp_msi_sha256 = $digest; winfsp_install_exit = $p.ExitCode
+            winfsp_dll_version = (Get-Item $winfspDLL).VersionInfo.FileVersion
+            git_version = "$gitVersion"; go_version = "$(go version)"
+            native_scope = 'headless Windows OS API tests with synthetic provider; no credentials or GUI acceptance'
+          } | ConvertTo-Json | Set-Content (Join-Path $evidence 'environment.json')
+      - name: Prove Windows Git regression fails against pre-fix commands
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:DRIVEBRIDGE_GIT_RED_OVERLAY = Join-Path $env:RUNNER_TEMP 'windows-git-red'
+          @'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          target = pathlib.Path(os.environ['DRIVEBRIDGE_GIT_RED_OVERLAY'])
+          target.mkdir()
+          replacements = {}
+          for name in ('git.go', 'runtime.go'):
+              relative = 'internal/bridge/history/' + name
+              old = subprocess.check_output(['git', 'show', '4c6fc1c76:' + relative])
+              destination = target / name
+              destination.write_bytes(old)
+              replacements[str(root / relative)] = str(destination)
+          (target / 'overlay.json').write_text(json.dumps({'Replace': replacements}))
+          '@ | python -
+          if ($LASTEXITCODE) { throw 'Could not prepare pre-fix Go overlay' }
+          $overlay = Join-Path $env:DRIVEBRIDGE_GIT_RED_OVERLAY 'overlay.json'
+          $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'git-regression-red.jsonl'
+          $PSNativeCommandUseErrorActionPreference = $false
+          go test -json -count=1 -overlay $overlay -run '^TestHistoryGit(CommandSuppressesConsoleWithoutDetaching|ProcessesKeepPipesWithoutConsole)$' ./internal/bridge/history 2>&1 | Tee-Object -FilePath $log
+          $result = $LASTEXITCODE
+          if ($result -ne 1) { throw "Expected regression assertion exit 1, got $result" }
+          if ((Get-Content $log -Raw) -notmatch 'history Git child must suppress its console without detaching pipes or cancellation') {
+            throw 'Pre-fix run did not fail the intended process-attribute assertion'
+          }
+          $events = Get-Content $log | Where-Object { $_ -match '^\{' } | ForEach-Object { $_ | ConvertFrom-Json }
+          if (!($events | Where-Object { $_.Action -eq 'fail' -and $_.Test -eq 'TestHistoryGitCommandSuppressesConsoleWithoutDetaching' })) {
+            throw 'Missing intended RED test failure; build errors are not regression proof'
+          }
+      - name: Run Windows Store Overlay Sync History and VFS suites with packaged Git
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-unit-tests.jsonl'
+          go test -json -count=1 -timeout 15m -tags cmount ./internal/bridge/store ./internal/bridge/overlay ./internal/bridge/sync ./internal/bridge/history ./internal/bridge/integration ./vfs/... ./cmd/cmount 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE) { throw 'Windows durability/history/VFS suites failed' }
+      - name: Require real WinFsp save delete recovery and cache generation gates
+        env:
+          DRIVEBRIDGE_NATIVE: '1'
+          DRIVEBRIDGE_REQUIRE_NATIVE: '1'
+          DRIVEBRIDGE_NATIVE_ALLOW_MOUNT: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-native-tests.jsonl'
+          go test -json -count=1 -timeout 8m -tags cmount -run '^TestWindowsNative(SaveParity|DeleteParity|RemoteGeneration)$' ./internal/bridge/integration 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE) { throw 'Required WinFsp native save gates failed; missing driver is not a skip' }
+          $events = Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }
+          foreach ($name in @('TestWindowsNativeSaveParity','TestWindowsNativeDeleteParity','TestWindowsNativeRemoteGeneration')) {
+            if (!($events | Where-Object { $_.Action -eq 'pass' -and $_.Test -eq $name })) { throw "Required native test did not pass: $name" }
+            if ($events | Where-Object { $_.Action -eq 'skip' -and $_.Test -eq $name }) { throw "Required native test was skipped: $name" }
+          }
+          $reports = @(Get-ChildItem $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR -Filter 'windows-native-*.json')
+          if ($reports.Count -ne 3) { throw "Expected three native evidence reports, got $($reports.Count)" }
+      - name: Retain Windows runtime and native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivebridge-windows-save-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-save-evidence/
           if-no-files-found: error
           retention-days: 14

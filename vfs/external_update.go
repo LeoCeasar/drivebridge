@@ -77,6 +77,7 @@ type admission struct {
 	path      string
 	write     bool
 	directory bool
+	retired   bool // an unlinked immutable generation no longer reserves its old name
 }
 type reservation struct {
 	m     *managedState
@@ -154,6 +155,9 @@ func (a *admission) release() {
 // A strict ancestor directory reader can coexist with child changes; exact-path
 // and descendant handles retain their original exclusion semantics.
 func (a *admission) blocks(name string, readers bool) bool {
+	if a.retired {
+		return false
+	}
 	if a.directory && !a.write && a.path != name && (a.path == "" || strings.HasPrefix(name, a.path+"/")) {
 		return false
 	}

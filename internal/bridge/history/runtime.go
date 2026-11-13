@@ -119,7 +119,7 @@ func resolveGit(ctx context.Context, override string) (string, error) {
 	}
 	check, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	raw, err := exec.CommandContext(check, path, "--version").Output()
+	raw, err := platform.BackgroundCommand(check, path, "--version").Output()
 	if err != nil {
 		return "", errors.Join(ErrGitUnavailable, err)
 	}

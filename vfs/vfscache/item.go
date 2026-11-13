@@ -55,14 +55,15 @@ import (
 //
 // The Info field is written to the backing store to store status
 type Item struct {
-	namespacePins      int // protects a captured checkpoint through namespace Finish
-	snapshotMu         sync.Mutex
-	stageMu            sync.Mutex
-	journal            *managedJournal
-	managedStoreFn     StoreFn
-	managedStageError  error
-	managedStaging     bool
-	managedDirsDurable bool
+	namespacePins          int // protects a captured checkpoint through namespace Finish
+	snapshotMu             sync.Mutex
+	stageMu                sync.Mutex
+	journal                *managedJournal
+	managedStoreFn         StoreFn
+	managedStageError      error
+	managedCheckpointError error // failed foreground WAL confirmation, independent of archive errors
+	managedStaging         bool
+	managedDirsDurable     bool
 	// read only
 	c               *Cache                   // cache this is part of
 	mu              sync.Mutex               // protect the variables
@@ -191,7 +192,7 @@ func newItem(c *Cache, name string) (item *Item) {
 func (item *Item) inUse() bool {
 	item.mu.Lock()
 	defer item.mu.Unlock()
-	return item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.managedStaging || item.managedStageError != nil
+	return item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.managedStaging || item.managedStageError != nil || item.managedCheckpointError != nil
 }
 
 // getDiskSize returns the size on disk (approximately) of the item
@@ -1092,7 +1093,7 @@ func (item *Item) RemoveNotInUse(maxAge time.Duration, emptyOnly bool) (removed 
 	spaceFreed = 0
 	removed = false
 
-	if item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil {
+	if item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil || item.managedCheckpointError != nil {
 		return
 	}
 
@@ -1126,7 +1127,7 @@ func (item *Item) RemoveNotInUse(maxAge time.Duration, emptyOnly bool) (removed 
 func (item *Item) Reset() (rr ResetResult, spaceFreed int64, err error) {
 	item.mu.Lock()
 	defer item.mu.Unlock()
-	if item.managedStaging || item.managedStageError != nil {
+	if item.managedStaging || item.managedStageError != nil || item.managedCheckpointError != nil {
 		return SkippedDirty, 0, nil
 	}
 

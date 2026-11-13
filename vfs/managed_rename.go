@@ -35,6 +35,14 @@ func committed(err error) bool {
 	var c interface{ Committed() bool }
 	return errors.As(err, &c) && c.Committed()
 }
+
+// Removing one path has the same admission boundary as replacing that path:
+// existing immutable readers may survive, writers remain excluded, and new
+// opens wait until local namespace publication finishes.
+func (m *managedState) reserveRemove(name string, allowReaders bool) (*reservation, error) {
+	return m.reserveRename(name, name, allowReaders)
+}
+
 func (m *managedState) reserveRename(src, dst string, allowReaders bool) (*reservation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
