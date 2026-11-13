@@ -146,16 +146,45 @@ func readConversionRuleDocument(b []byte) (conversionRuleDocument, error) {
 	if !utf8.Valid(b) || !json.Valid(b) {
 		return d, errors.New("invalid JSON document")
 	}
+	// Pointers distinguish a deliberately empty target from an omitted or null
+	// field. A missing default override must never silently erase a line break.
+	var input struct {
+		Version int `json:"version"`
+		Rules   []struct {
+			ID      *string `json:"id"`
+			Source  *string `json:"source"`
+			Target  *string `json:"target"`
+			Context *string `json:"context"`
+			Match   *string `json:"match"`
+		} `json:"rules"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&d); err != nil {
+	if err := decoder.Decode(&input); err != nil {
 		return d, err
 	}
-	if d.Version != 1 || d.Rules == nil {
+	if input.Version != 1 || input.Rules == nil {
 		return d, errors.New("expected version 1 and a rules array")
+	}
+	d.Version = input.Version
+	d.Rules = make([]ConversionRule, 0, len(input.Rules))
+	for i, r := range input.Rules {
+		for _, field := range []struct {
+			name  string
+			value *string
+		}{
+			{"id", r.ID}, {"source", r.Source}, {"target", r.Target},
+			{"context", r.Context}, {"match", r.Match},
+		} {
+			if field.value == nil {
+				return d, fmt.Errorf("rule %d: required field %q must be a non-null string", i+1, field.name)
+			}
+		}
+		d.Rules = append(d.Rules, ConversionRule{ID: *r.ID, Source: *r.Source, Target: *r.Target, Context: *r.Context, Match: *r.Match})
 	}
 	return d, nil
 }
+
 func mustDefaultConversionRules() *ConversionRules {
 	d, err := readConversionRuleDocument(defaultConversionRulesJSON)
 	if err != nil {

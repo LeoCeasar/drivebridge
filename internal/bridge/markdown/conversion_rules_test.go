@@ -251,3 +251,46 @@ func TestConversionRulesInvalidRecords(t *testing.T) {
 		t.Fatal("oversized file accepted")
 	}
 }
+
+func TestConversionRulesRequireEveryFieldButAllowExplicitEmptyTarget(t *testing.T) {
+	const record = `{"id":"simple-break-paragraph","source":"<br>","target":"\n","context":"paragraph","match":"simple_html_break"}`
+	for _, field := range []string{"id", "source", "target", "context", "match"} {
+		for _, null := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/null=%v", field, null), func(t *testing.T) {
+				var r map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(record), &r); err != nil {
+					t.Fatal(err)
+				}
+				if null {
+					r[field] = json.RawMessage(`null`)
+				} else {
+					delete(r, field)
+				}
+				data, err := json.Marshal(map[string]any{"version": 1, "rules": []any{r}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(t.TempDir(), "rules.json")
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := LoadConversionRules(path); err == nil || !strings.Contains(err.Error(), field) {
+					t.Fatalf("expected required field %s error, got %v", field, err)
+				}
+			})
+		}
+	}
+	path := filepath.Join(t.TempDir(), "rules.json")
+	data := `{"version":1,"rules":[{"id":"simple-break-paragraph","source":"<br>","target":"","context":"paragraph","match":"simple_html_break"}]}`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadConversionRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, ok := rules.lookup([]byte("<br>"), "paragraph")
+	if !ok || target.xml != "" || target.spacing {
+		t.Fatalf("explicit empty target: %#v, matched=%v", target, ok)
+	}
+}
