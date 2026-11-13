@@ -10,6 +10,8 @@
 - [x] 实现规则 literal 分支及 NormalizeForMerge；Git 合并和新在线文档写回使用同一规范化输入。
 - [x] 增加安全事务恢复入口，只放行规范化完全相同的草稿，保留捕获和 Git 历史。
 - [x] 桌面初始化生成可编辑 JSON（已存在文件不覆盖，原子发布）；补充字段、初始规则和示例文档。
-- [ ] 相关包测试、必要 race、Windows 编译、一次收尾复核；更新本机应用并验证配置生成和当前队列。
+- [x] 相关包测试、必要 race、Windows 编译、一次收尾复核；更新本机应用并验证配置生成和当前队列。
+
+验收记录：docs/testing/2026-11-13-background-string-normalization.md。本机已安装 0.2.15，默认 JSON 自动生成；实质草稿差异仍保护。
 
 补充：审核复现了连续/尾部 br 转硬换行破坏容器结构的问题，已增加编码等价检查、安全保留及既有投影哈希预测，不迁移旧检查点。真实飞书两份合成文档分别验证连续与尾部换行，逐次读回校验通过且已删除；未修改业务文档。相关五包完整测试、Store/Manager/Sync/Markdown race 和 Windows 编译通过，最终纯函数保护修改后完整 Markdown/Sync 及 Markdown race/Windows 定向复核通过。
