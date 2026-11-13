@@ -314,10 +314,20 @@ func TestRunMetadataRefreshDoesNotHoldFileAdmission(t *testing.T) {
 	now.Store(time.Now().UnixNano())
 	e.opt.Now = func() time.Time { return time.Unix(0, now.Load()) }
 	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
 	var once sync.Once
 	e.opt.DirectoryInterval = 5 * time.Millisecond
-	e.opt.BackgroundTimeout = 2 * time.Second
-	e.deps.RefreshDirectories = func(ctx context.Context) error { once.Do(func() { close(started) }); <-ctx.Done(); return ctx.Err() }
+	e.opt.BackgroundTimeout = time.Minute
+	e.deps.RefreshDirectories = func(ctx context.Context) error {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	published := make(chan struct{}, 1)
 	e.publisher = PublisherFunc(func(ctx context.Context, c model.PublishCandidate) error {
 		_, err := s.CommitPublication(ctx, c)
@@ -326,31 +336,37 @@ func TestRunMetadataRefreshDoesNotHoldFileAdmission(t *testing.T) {
 		}
 		return err
 	})
-	ctx, cancel := context.WithCancel(bg)
+	ctx, cancel := context.WithTimeout(bg, 15*time.Second)
 	done := make(chan error, 1)
-	go func() { done <- e.Run(ctx) }()
+	go func() { done <- e.Run(ctx); close(finished) }()
 	defer func() {
+		close(release)
 		cancel()
 		select {
-		case <-done:
-		case <-time.After(time.Second):
+		case <-finished:
+		case <-time.After(5 * time.Second):
 			t.Error("Run leaked")
 		}
 	}()
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		t.Fatal("metadata not started")
 	}
 	stageContent(t, s, en, "while metadata waits")
 	now.Add(int64(5 * time.Minute))
 	select {
 	case <-published:
-	case <-time.After(1500 * time.Millisecond):
+	case <-ctx.Done():
 		t.Fatal("metadata blocked file upload")
 	}
 	if string(source.file) != "while metadata waits" {
 		t.Fatal("wrong body")
+	}
+	select {
+	case <-finished:
+		t.Fatal("dispatcher ended while metadata was still held")
+	default:
 	}
 }
 

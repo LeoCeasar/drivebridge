@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
+	"github.com/rclone/rclone/lib/larkcli"
 )
 
 type heldPendingFile struct {
@@ -17,6 +19,27 @@ type heldPendingFile struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+// Each token owns independent cloud bytes. A shared fixture body would make a
+// healthy upload appear to edit the conflicted file as well.
+type isolatedPendingFile struct {
+	Source
+	token string
+	other *fixtureCloud
+}
+
+func (s *isolatedPendingFile) ObserveFile(ctx context.Context, token string) (ObservedFile, error) {
+	if token == s.token {
+		return s.other.ObserveFile(ctx, token)
+	}
+	return s.Source.ObserveFile(ctx, token)
+}
+func (s *isolatedPendingFile) UploadFile(ctx context.Context, parent, token, name string, r io.Reader) (larkcli.UploadResult, error) {
+	if token == s.token {
+		return s.other.UploadFile(ctx, parent, token, name, r)
+	}
+	return s.Source.UploadFile(ctx, parent, token, name, r)
 }
 
 func (s *heldPendingFile) ObserveFile(ctx context.Context, token string) (ObservedFile, error) {
@@ -51,6 +74,8 @@ func TestBackgroundCycleIsolatesBlockedConflictedAndSlowFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			other = stageContent(t, s, other, "other local edit")
+			otherCloud := *source
+			engine.source = &isolatedPendingFile{Source: source, token: other.Token, other: &otherCloud}
 			jobs, err := s.Pending(bg)
 			if err != nil {
 				t.Fatal(err)
@@ -64,11 +89,16 @@ func TestBackgroundCycleIsolatesBlockedConflictedAndSlowFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "conflict":
-				if err = s.SaveConflict(bg, model.Conflict{ID: model.ConflictID(uuid.NewString()), EntryID: other.ID, Generation: other.Generation, Base: other.LocalCheckpoint, Local: other.Local, Remote: sn.FileData, RemoteRevision: "reviewed", Reason: "overlapping_edits"}); err != nil {
+				otherCloud.file = []byte("conflicting remote edit")
+				remote, observeErr := engine.observeFile(bg, other.Token)
+				if observeErr != nil {
+					t.Fatal(observeErr)
+				}
+				if err = s.SaveConflict(bg, model.Conflict{ID: model.ConflictID(uuid.NewString()), EntryID: other.ID, Generation: other.Generation, Base: other.LocalCheckpoint, Local: other.Local, Remote: remote.FileData, RemoteRevision: remote.ConflictVersion(), Reason: "overlapping_edits"}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			held := &heldPendingFile{Source: source, token: other.Token, started: make(chan struct{}), release: make(chan struct{})}
+			held := &heldPendingFile{Source: engine.source, token: other.Token, started: make(chan struct{}), release: make(chan struct{})}
 			if state == "slow" {
 				engine.source = held
 			}
@@ -136,6 +166,9 @@ func TestBackgroundCycleIsolatesBlockedConflictedAndSlowFiles(t *testing.T) {
 				}
 				if err != nil || current.Status != want || blobText(t, s, current.Local) != "other local edit" {
 					t.Fatalf("unrelated file was changed: %+v %v", current, err)
+				}
+				if otherCloud.writes != 0 {
+					t.Fatal("unrelated cloud file was overwritten")
 				}
 			}
 		})

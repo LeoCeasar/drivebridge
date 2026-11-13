@@ -62,9 +62,13 @@ func TestSaveDraftFindsLiveTargetAfterLockedOfflineMount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	acquired, err := lock.TryLock()
+	// The live worker's history housekeeping briefly inspects offline stores.
+	// Wait for that read before claiming the lock used to reproduce contention.
+	lockCtx, cancelLock := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelLock()
+	acquired, err := lock.TryLockContext(lockCtx, time.Millisecond)
 	if err != nil || !acquired {
-		t.Fatal(acquired, err)
+		t.Fatalf("could not establish offline contention: acquired=%v err=%v", acquired, err)
 	}
 	defer lock.Unlock()
 	if _, err = m.Conflicts(ctx, offlineID); !errors.Is(err, ErrPending) {
