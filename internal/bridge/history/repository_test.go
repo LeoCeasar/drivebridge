@@ -238,7 +238,14 @@ func TestArchiveBinaryCanStreamAndDetectTampering(t *testing.T) {
 		t.Fatalf("binary %d %v", len(got), err)
 	}
 	ref := v.Bodies["local"]
-	if err = os.WriteFile(filepath.Join(o.Dir, "objects", ref.Asset), []byte(strings.Repeat("!", len(payload))), 0600); err != nil {
+	if ref.OID == "" {
+		t.Fatal("binary archive must live in Git")
+	}
+	object := filepath.Join(o.Dir, "history.git", "objects", ref.OID[:2], ref.OID[2:])
+	if err = os.Chmod(object, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(object, []byte("corrupt git object"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	f, err = r.OpenBody(ctx, v.ID, "local")

@@ -526,7 +526,7 @@ func (s *Store) OfferRemote(ctx context.Context, id model.EntryID, generation ui
 		if e.FrozenBy != "" {
 			return ErrFrozen
 		}
-		if hasPending(tx, id) || e.Local != e.LocalCheckpoint {
+		if hasPending(tx, id) || managedEntryPending(tx, id) || e.Local != e.LocalCheckpoint {
 			return ErrBusy
 		}
 		if er = s.saveSnapshot(tx, actual); er != nil {

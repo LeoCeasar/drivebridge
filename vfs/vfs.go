@@ -431,6 +431,9 @@ func (vfs *VFS) shutdownCache() {
 		vfs.cancelCache()
 		vfs.cancelCache = nil
 	}
+	if vfs.cache != nil {
+		vfs.cache.StopManagedArchives()
+	}
 }
 
 // Shutdown stops any background go-routines and removes the VFS from

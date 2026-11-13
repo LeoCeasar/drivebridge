@@ -42,8 +42,12 @@ import (
 
 // Cache opened files
 type Cache struct {
-	managed   atomic.Bool
-	managedIO managedIOOps
+	managed       atomic.Bool
+	managedIO     managedIOOps
+	managedWake   chan struct{}
+	managedDone   chan struct{}
+	managedCancel context.CancelFunc
+	archiveMu     sync.RWMutex
 	// read only - no locking needed to read these
 	ctx        context.Context      // context for cache lifetime
 	fremote    fs.Fs                // fs for the remote we are caching
@@ -154,6 +158,14 @@ func newCache(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn A
 			return nil, err
 		}
 	}
+	if managed {
+		if _, err := ManagedMetadataPending(c.root, c.metaRoot); err != nil {
+			return nil, fmt.Errorf("unsafe local-save recovery: %w", err)
+		}
+		if err := c.reconcileManagedBasePins(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	// load in the cache and metadata off disk
 	err = c.reload(ctx)
@@ -169,6 +181,16 @@ func newCache(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn A
 	c.cond = sync.Cond{L: &c.mu}
 
 	go c.cleaner(ctx)
+	if managed {
+		if _, ok := fremote.(managedSnapshotBackend); ok {
+			workerCtx, cancel := context.WithCancel(ctx)
+			c.managedCancel = cancel
+			c.managedWake = make(chan struct{}, 1)
+			c.managedDone = make(chan struct{})
+			go c.managedJournalWorker(workerCtx)
+			c.wakeManagedWorker()
+		}
+	}
 
 	return c, nil
 }
@@ -190,6 +212,26 @@ func (c *Cache) Stats() (out rc.Params) {
 
 	out["files"] = len(c.item)
 	out["erroredFiles"] = len(c.errItems)
+	if c.managed.Load() {
+		var pending, staging, failed int
+		for _, i := range c.item {
+			i.mu.Lock()
+			if i.journal != nil && i.info.MutationSeq > i.info.StagedSeq {
+				pending++
+			}
+			if i.managedStaging {
+				staging++
+			}
+			if i.managedStageError != nil {
+				failed++
+			}
+			i.mu.Unlock()
+		}
+		out["localArchivesPending"], out["localArchivesInProgress"] = pending, staging
+		out["erroredFiles"] = len(c.errItems) + failed
+		out["uploadsQueued"] = uploadsQueued + pending
+		out["uploadsInProgress"] = uploadsInProgress + staging
+	}
 	out["bytesUsed"] = c.used
 	out["outOfSpace"] = c.outOfSpace
 
@@ -529,12 +571,17 @@ func (c *Cache) SetModTime(name string, modTime time.Time) {
 
 // CleanUp empties the cache of everything
 func (c *Cache) CleanUp() error {
+	c.StopManagedArchives()
 	err1 := os.RemoveAll(c.root)
 	err2 := os.RemoveAll(c.metaRoot)
+	err3 := os.RemoveAll(journalRoot(c.metaRoot))
 	if err1 != nil {
 		return err1
 	}
-	return err2
+	if err2 != nil {
+		return err2
+	}
+	return err3
 }
 
 // walk walks the cache calling the function

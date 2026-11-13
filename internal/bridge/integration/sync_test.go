@@ -184,7 +184,7 @@ func TestCapturedG1ConfirmationNeverClearsG2(t *testing.T) {
 		t.Fatal("G2 lost")
 	}
 }
-func TestStoreFsyncFailurePropagatesThroughManagedSyncAndRetainsDirtyBytes(t *testing.T) {
+func TestStoreFsyncFailureDoesNotRejectLocalSaveAndRetainsPendingBytes(t *testing.T) {
 	for _, fault := range []struct {
 		name string
 		code int32
@@ -203,10 +203,16 @@ func TestStoreFsyncFailurePropagatesThroughManagedSyncAndRetainsDirtyBytes(t *te
 			}
 			h.io.errno.Store(fault.code)
 			h.io.fail.Store(true)
-			if err = f.Sync(); !errors.Is(err, fault.want) {
+			if err = f.Sync(); err != nil {
 				t.Fatal(err)
 			}
-			unchanged := h.entry("data.bin")
+			if err = h.vfs.DrainManagedArchives(h.ctx); !errors.Is(err, fault.want) {
+				t.Fatal("background acceptance did not report Store failure", err)
+			}
+			unchanged, err := h.store.EntryByRemote(h.ctx, "data.bin")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if unchanged.Generation != before.Generation || unchanged.Local != before.Local {
 				t.Fatal("failed sync changed accepted state")
 			}

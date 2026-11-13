@@ -112,6 +112,9 @@ func protectDeletion(tx *bolt.Tx, e model.Entry) error {
 // The bool is true only when this observation tombstones a clean entry.
 func (s *Store) ObserveRemoteDeletion(ctx context.Context, expected model.Entry) (out model.Conflict, removed bool, err error) {
 	err = s.update(ctx, func(tx *bolt.Tx) error {
+		if managedEntryPending(tx, expected.ID) {
+			return ErrBusy
+		}
 		e, er := entryTx(tx, expected.ID)
 		if er != nil {
 			return er

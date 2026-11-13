@@ -260,22 +260,22 @@ func (r *Repository) importVersion(ctx context.Context, old *Repository, v Versi
 			}
 			seen[key] = true
 			if ref.OID != "" {
-				raw, err := old.git(ctx, nil, "cat-file", "blob", ref.OID)
+				in, err := old.openGitBody(ctx, ref)
 				if err != nil {
 					return err
 				}
-				h := sha256.Sum256(raw)
-				if int64(len(raw)) != ref.Size || hex.EncodeToString(h[:]) != ref.SHA256 {
-					return ErrIntegrity
-				}
 				if r.gitDir != old.gitDir {
-					oid, err := r.blob(ctx, strings.NewReader(string(raw)))
-					if err != nil {
-						return err
+					oid, e := r.blob(ctx, in)
+					err = e
+					if err == nil && oid != ref.OID {
+						err = ErrIntegrity
 					}
-					if oid != ref.OID {
-						return ErrIntegrity
-					}
+				} else {
+					_, err = io.Copy(io.Discard, in)
+				}
+				err = errors.Join(err, in.Close())
+				if err != nil {
+					return err
 				}
 			}
 			if ref.Asset != "" {

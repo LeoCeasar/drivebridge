@@ -67,7 +67,9 @@ func TestEditorTildeSaveDoesNotWaitForDirectoryNetworkRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.refreshing[root.ID] = &directoryRefresh{remote: "", done: make(chan struct{})}
-	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	// The refresh channel is never closed, so waiting on it still fails this
+	// test. Allow local durable transactions to finish under race/CI disk load.
+	short, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	current, err := f.NewObject(short, "manual.md")
 	if err != nil {

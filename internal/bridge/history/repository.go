@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -213,61 +214,62 @@ func (r *Repository) loadLedger(ctx context.Context, head string) (ledger, error
 	}
 	return l, nil
 }
-func (r *Repository) prepare(ctx context.Context, s Source, ev model.HistoryEvent) (map[model.BlobID]string, error) {
-	result := map[model.BlobID]string{}
+
+// prepare runs under the repository lock: objects cannot be collected between
+// import and the commit that makes them reachable. The Source retains ownership
+// until the archive receipt is durable. No second raw-body archive is created.
+func (r *Repository) prepare(ctx context.Context, s Source, ev model.HistoryEvent) (map[model.BlobID]Ref, error) {
+	result := map[model.BlobID]Ref{}
 	for _, b := range ev.Blobs() {
 		if !validHash(string(b)) {
 			return nil, ErrIntegrity
 		}
-		name := filepath.Join(r.dir, "objects", string(b))
-		if err := platform.CheckNoSymlinks(name); err != nil {
+		var cached Ref
+		if err := r.index(func(tx *bolt.Tx) error {
+			if raw := tx.Bucket([]byte("blob_refs")).Get([]byte(b)); raw != nil {
+				return json.Unmarshal(raw, &cached)
+			}
+			return nil
+		}); err != nil {
 			return nil, err
 		}
-		if f, err := os.Open(name); err == nil {
-			h := sha256.New()
-			_, err = io.Copy(h, contextReader{ctx, f})
-			f.Close()
-			if err != nil || hex.EncodeToString(h.Sum(nil)) != string(b) {
+		if cached.OID != "" {
+			if cached.SHA256 != string(b) || cached.Size < 0 {
 				return nil, ErrIntegrity
 			}
-			result[b] = name
+			raw, err := r.git(ctx, nil, "cat-file", "-s", cached.OID)
+			if err != nil {
+				return nil, errors.Join(ErrIntegrity, err)
+			}
+			size, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+			if err != nil || size != cached.Size {
+				return nil, ErrIntegrity
+			}
+			result[b] = cached
 			continue
-		} else if !os.IsNotExist(err) {
-			return nil, err
 		}
-		source, err := s.ReadBlob(ctx, b)
+		in, err := s.ReadBlob(ctx, b)
 		if err != nil {
 			return nil, err
 		}
-		tmp, err := os.CreateTemp(filepath.Dir(name), ".prepare-")
-		if err != nil {
-			source.Close()
-			return nil, err
-		}
-		h := sha256.New()
-		_, err = io.Copy(io.MultiWriter(tmp, h), contextReader{ctx, source})
-		source.Close()
-		if err == nil && hex.EncodeToString(h.Sum(nil)) != string(b) {
-			err = ErrIntegrity
-		}
-		if err == nil {
-			err = tmp.Sync()
-		}
-		err = errors.Join(err, tmp.Close())
-		if err == nil {
-			err = platform.ReplaceFile(tmp.Name(), name)
-		}
-		os.Remove(tmp.Name())
-		if err == nil {
-			err = platform.SyncDir(filepath.Dir(name))
-		}
+		digest := sha256.New()
+		count := &countWriter{}
+		oid, err := r.blob(ctx, io.TeeReader(contextReader{ctx, in}, io.MultiWriter(digest, count)))
+		err = errors.Join(err, in.Close())
 		if err != nil {
 			return nil, err
 		}
-		result[b] = name
+		if hex.EncodeToString(digest.Sum(nil)) != string(b) {
+			return nil, ErrIntegrity
+		}
+		result[b] = Ref{OID: oid, SHA256: string(b), Size: count.n}
 	}
 	return result, nil
 }
+
+type countWriter struct{ n int64 }
+
+func (w *countWriter) Write(p []byte) (int, error) { w.n += int64(len(p)); return len(p), nil }
 
 type contextReader struct {
 	ctx context.Context
@@ -321,10 +323,6 @@ func (r *Repository) Ingest(ctx context.Context, s Source) (result IngestResult,
 			result.Acknowledged++
 			continue
 		}
-		prepared, err := r.prepare(ctx, s, ev)
-		if err != nil {
-			return result, err
-		}
 		err = r.locked(ctx, func() error {
 			head, err := r.head(ctx)
 			if err != nil {
@@ -340,50 +338,23 @@ func (r *Repository) Ingest(ctx context.Context, s Source) (result IngestResult,
 			if ev.Sequence != l.Sources[source]+1 {
 				return ErrIntegrity
 			}
+			prepared, err := r.prepare(ctx, s, ev)
+			if err != nil {
+				return err
+			}
 			v := Version{ID: ev.ID, Order: l.Order + 1, RecordedAt: time.Now().UTC(), Event: ev, Bodies: map[string]Ref{}, Media: map[string]Ref{}}
 			if !v.RecordedAt.After(l.LastRecordedAt) {
 				v.RecordedAt = l.LastRecordedAt.Add(time.Nanosecond)
 			}
 			l.LastRecordedAt = v.RecordedAt
 			v.Event.Archived = true
-			for _, group := range []struct {
-				Refs  map[string]model.BlobID
-				Out   map[string]Ref
-				Media bool
-			}{{ev.Bodies, v.Bodies, false}, {ev.Media, v.Media, true}} {
-				for role, b := range group.Refs {
-					f, err := os.Open(prepared[b])
-					if err != nil {
-						return err
-					}
-					info, err := f.Stat()
-					if err != nil {
-						f.Close()
-						return err
-					}
-					ref := Ref{SHA256: string(b), Size: info.Size()}
-					// Binary/media and large bodies stay in the private content-addressed store.
-					ext := strings.ToLower(filepath.Ext(ev.Entry.Remote))
-					text := ev.Entry.Kind == model.KindDocx || strings.Contains(role, "xml") || strings.Contains(role, "map")
-					for _, x := range []string{".md", ".txt", ".json", ".yaml", ".yml", ".log", ".csv", ".toml", ".ini", ".sh"} {
-						text = text || ext == x
-					}
-					if !group.Media && text && info.Size() <= 10<<20 {
-						ref.OID, err = r.blob(ctx, f)
+			for role, b := range ev.Bodies {
+				v.Bodies[role] = prepared[b]
+			}
+			for role, b := range ev.Media {
+				v.Media[role] = prepared[b]
+			}
 
-					} else {
-						ref.Asset = string(b)
-					}
-					f.Close()
-					if err != nil {
-						return err
-					}
-					group.Out[role] = ref
-				}
-			}
-			if err := r.importVersion(ctx, r, v); err != nil {
-				return err
-			}
 			l.Order = v.Order
 			l.Sources[source] = ev.Sequence
 			if _, err = r.commitVersion(ctx, head, l, v); err != nil {
@@ -416,7 +387,7 @@ func (r *Repository) index(fn func(*bolt.Tx) error) error {
 	}
 	defer db.Close()
 	return db.Update(func(tx *bolt.Tx) error {
-		for _, n := range []string{"meta", "versions", "order"} {
+		for _, n := range []string{"meta", "versions", "order", "blob_refs"} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
@@ -461,6 +432,16 @@ func (r *Repository) syncIndex(ctx context.Context) error {
 			var v Version
 			if json.Unmarshal(raw, &v) != nil || !validVersion(v.ID) || v.Event.ProfileID != r.profile || v.Event.IdentityHash != r.identity {
 				return ErrIntegrity
+			}
+			for _, refs := range []map[string]Ref{v.Bodies, v.Media} {
+				for _, ref := range refs {
+					if ref.OID != "" {
+						raw, _ := json.Marshal(ref)
+						if err := tx.Bucket([]byte("blob_refs")).Put([]byte(ref.SHA256), raw); err != nil {
+							return err
+						}
+					}
+				}
 			}
 			v.Commit = commit
 			encoded, _ := json.Marshal(v)

@@ -482,6 +482,11 @@ func (h *harness) restart() {
 }
 func (h *harness) entry(name string) model.Entry {
 	h.t.Helper()
+	// These integration assertions inspect completed outbox state. Local save
+	// itself now returns before this asynchronous handoff (tested separately).
+	if err := h.vfs.DrainManagedArchives(h.ctx); err != nil {
+		h.t.Fatal(err)
+	}
 	e, err := h.store.EntryByRemote(h.ctx, name)
 	if err != nil {
 		h.t.Fatal(err)

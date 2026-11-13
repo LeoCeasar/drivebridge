@@ -3,6 +3,7 @@ package vfscache
 import (
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 var ErrBusy = errors.New("cache item busy")
@@ -46,11 +47,19 @@ func (c *Cache) InvalidateClean(name string) error {
 	idle, err := c.writeback.WithIdle(id, func() error {
 		item.mu.Lock()
 		defer item.mu.Unlock()
-		if item.info.Dirty || item.opens != 0 || item.pendingAccesses != 0 || item.beingReset || item.closing != nil || item.graceTimer != nil {
+		if item.info.Dirty || item.opens != 0 || item.pendingAccesses != 0 || item.beingReset || item.closing != nil || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil {
 			return ErrBusy
 		}
 		for _, p := range []string{c.toOSPath(name), c.toOSPathMeta(name)} {
 			if e := os.Remove(p); e != nil && !os.IsNotExist(e) {
+				return e
+			}
+		}
+		if item.info.Journal != "" {
+			if e := syncParents(filepath.Dir(c.toOSPathMeta(name))); e != nil {
+				return e
+			}
+			if e := item.removeManagedJournalFiles(); e != nil {
 				return e
 			}
 		}

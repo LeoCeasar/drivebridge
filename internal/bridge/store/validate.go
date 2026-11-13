@@ -61,7 +61,7 @@ func (s *Store) validateSupported(ctx context.Context, allowLegacy bool) error {
 		}
 		version := string(meta.Get([]byte("schema_version")))
 		legacy := allowLegacy && version == "1"
-		if version != "2" && !legacy {
+		if version != "2" && version != "3" && !legacy {
 			return errors.New("unknown store schema")
 		}
 		for _, b := range buckets {
@@ -75,6 +75,15 @@ func (s *Store) validateSupported(ctx context.Context, allowLegacy bool) error {
 		if !legacy {
 			if err := historyProtectedTx(tx, mark); err != nil {
 				return err
+			}
+			pendingSaves, err := managedEntriesTx(tx)
+			if err != nil {
+				return err
+			}
+			for _, id := range pendingSaves {
+				if _, err := entryTx(tx, id); err != nil {
+					return err
+				}
 			}
 		}
 		var bound Scope

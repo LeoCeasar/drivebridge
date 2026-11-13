@@ -185,16 +185,8 @@ func (r *Repository) OpenBody(ctx context.Context, id, role string) (body io.Rea
 			if len(ref.OID) != 40 && len(ref.OID) != 64 {
 				return ErrIntegrity
 			}
-			raw, err := r.git(ctx, nil, "cat-file", "blob", ref.OID)
-			if err != nil {
-				return err
-			}
-			h := sha256.Sum256(raw)
-			if int64(len(raw)) != ref.Size || hex.EncodeToString(h[:]) != ref.SHA256 {
-				return ErrIntegrity
-			}
-			body = io.NopCloser(bytes.NewReader(raw))
-			return nil
+			body, err = r.openGitBody(ctx, ref)
+			return err
 		}
 		if !validHash(ref.Asset) || ref.Asset != ref.SHA256 {
 			return ErrIntegrity
@@ -212,7 +204,7 @@ func (r *Repository) OpenBody(ctx context.Context, id, role string) (body io.Rea
 			f.Close()
 			return ErrIntegrity
 		}
-		body = &verifiedBody{ReadCloser: f, hash: sha256.New(), want: ref.SHA256, ctx: ctx}
+		body = &verifiedBody{ReadCloser: f, hash: sha256.New(), want: ref.SHA256, size: ref.Size, ctx: ctx}
 		return nil
 	})
 	if err != nil {
@@ -230,9 +222,10 @@ type hashWriter interface {
 type verifiedBody struct {
 	ctx context.Context
 	io.ReadCloser
-	hash    hashWriter
-	want    string
-	checked bool
+	hash       hashWriter
+	want       string
+	checked    bool
+	size, read int64
 }
 
 func (v *verifiedBody) Read(p []byte) (int, error) {
@@ -242,10 +235,14 @@ func (v *verifiedBody) Read(p []byte) (int, error) {
 	n, err := v.ReadCloser.Read(p)
 	if n > 0 {
 		v.hash.Write(p[:n])
+		v.read += int64(n)
+		if v.read > v.size {
+			return n, ErrIntegrity
+		}
 	}
 	if err == io.EOF && !v.checked {
 		v.checked = true
-		if hex.EncodeToString(v.hash.Sum(nil)) != v.want {
+		if v.read != v.size || hex.EncodeToString(v.hash.Sum(nil)) != v.want {
 			return n, ErrIntegrity
 		}
 	}

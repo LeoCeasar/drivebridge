@@ -227,6 +227,8 @@
   }
   function issueAdvice(issue) {
     switch (issue.code) {
+      case 'local_archive_failed':
+        return {title:'本地修改等待后台整理',reason:'修改仍保留在本机，后台暂时无法生成待同步版本。',steps:['检查磁盘剩余空间，以及应用缓存目录是否可写。','保持应用运行，恢复条件后后台会自动重试；不要删除挂载或缓存。','若持续出现，请保留文件并查看应用日志。']};
       case 'unsupported_content':
         return issue.new_document ? {title:'文档关联或格式需要处理',reason:'当前保存被识别为新文档，其中的图片、表格等结构不能直接作为新文档安全上传。',steps:['先下载本地副本，保留此次修改。','如果这是原有飞书文档，请在飞书中找到原文档，对照副本补回修改，或等待文档关联修复后同步。','如果这是全新文档，请先使用标准 Markdown 创建；不要删除现有副本。重试不会自动修复文档关联。']} : {title:'文档结构暂不支持安全写回',reason:'此次保存包含无法安全转换回飞书的结构变化，系统已停止上传。',steps:['先下载本地副本。','在飞书原文档中应用复杂表格、图片或其他结构变化；本地可编辑已支持的段落和代码块。','修正内容后重新保存；格式问题未解决前，重复重试不会生效。']};
       case 'permission_denied': case 'auth_required': case 'unauthorized': case 'identity_changed':

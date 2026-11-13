@@ -19,6 +19,10 @@ func (f *File) removeManagedReserved() error {
 	f.mu.RUnlock()
 	name := f.CachePath()
 	if v.cache != nil {
+		release := v.cache.BlockManagedArchives()
+		defer release()
+	}
+	if v.cache != nil {
 		if _, e := v.cache.FlushManagedPath(f.ctx, name, func(o fs.Object) { f.setObject(o); f.setSize(o.Size()) }); e != nil {
 			return e
 		}

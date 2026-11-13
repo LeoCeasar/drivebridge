@@ -16,7 +16,11 @@ import (
 func TestFinderCreateFlushUnlinkRecreateWrite(t *testing.T) {
 	f, s, _ := fixture(t)
 	oldCache := fsconfig.GetCacheDir()
-	if err := fsconfig.SetCacheDir(filepath.Join(t.TempDir(), "cache")); err != nil {
+	cacheRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fsconfig.SetCacheDir(filepath.Join(cacheRoot, "cache")); err != nil {
 		t.Fatal(err)
 	}
 	defer fsconfig.SetCacheDir(oldCache)
@@ -40,6 +44,9 @@ func TestFinderCreateFlushUnlinkRecreateWrite(t *testing.T) {
 	if err = placeholder.Release(); err != nil {
 		t.Fatal(err)
 	}
+	if err = managed.DrainManagedArchives(ctx); err != nil {
+		t.Fatal(err)
+	}
 	original, err := s.EntryByRemote(ctx, name)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +65,9 @@ func TestFinderCreateFlushUnlinkRecreateWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = saved.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = managed.DrainManagedArchives(ctx); err != nil {
 		t.Fatal(err)
 	}
 	reader, err := managed.Open(name)

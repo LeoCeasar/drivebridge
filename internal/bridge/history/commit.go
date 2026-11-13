@@ -12,12 +12,18 @@ func (r *Repository) commitVersion(ctx context.Context, head string, l ledger, v
 	v.Commit = ""
 	v.Pinned = false
 	var items []treeItem
-	for role, ref := range v.Bodies {
-		if ref.OID != "" {
-			h := sha256.Sum256([]byte(role))
-			items = append(items, treeItem{"100644", "blob", ref.OID, "body-" + hex.EncodeToString(h[:])})
+	for _, group := range []struct {
+		prefix string
+		refs   map[string]Ref
+	}{{"body-", v.Bodies}, {"media-", v.Media}} {
+		for role, ref := range group.refs {
+			if ref.OID != "" {
+				h := sha256.Sum256([]byte(role))
+				items = append(items, treeItem{"100644", "blob", ref.OID, group.prefix + hex.EncodeToString(h[:])})
+			}
 		}
 	}
+
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return "", err

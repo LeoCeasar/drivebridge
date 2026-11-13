@@ -286,6 +286,7 @@ func TestManagedDirtyCacheRejectsEvictionAfterFailedDurableAcceptance(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	candidate := integrationCandidate(t, st, before.ID)
 	writer, err := managed.OpenFile(integrationCacheName, os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -295,14 +296,16 @@ func TestManagedDirtyCacheRejectsEvictionAfterFailedDurableAcceptance(t *testing
 		t.Fatal(n, err)
 	}
 	rejectWrites.Store(true)
-	if err := writer.Close(); !errors.Is(err, store.ErrSpace) {
-		t.Fatal("real Store acceptance did not fail", err)
+	if err := writer.Close(); err != nil {
+		t.Fatal("a background Store failure must not reject a durable local save", err)
+	}
+	if err := managed.DrainManagedArchives(ctx); !errors.Is(err, store.ErrSpace) {
+		t.Fatal("background Store acceptance did not report failure", err)
 	}
 	reads, writes, namespaces := managed.ManagedActivity()
 	if reads+writes+namespaces != 0 {
 		t.Fatal("closed handle still holds admission", reads, writes, namespaces)
 	}
-	candidate := integrationCandidate(t, st, before.ID)
 	if called, evicted, err := integrationEvict(t, f, st, managed, candidate); !errors.Is(err, vfs.ErrExternalUpdateBusy) || called || evicted {
 		t.Fatal("closed dirty VFS cache allowed Store eviction", called, evicted, err)
 	}
@@ -329,6 +332,9 @@ func TestManagedDirtyCacheRejectsEvictionAfterFailedDurableAcceptance(t *testing
 		t.Fatal("dirty cached bytes were lost", len(data))
 	}
 	if err := recovery.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := managed.DrainManagedArchives(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if jobs, err := st.Pending(ctx); err != nil || len(jobs) != 1 || jobs[0].EntryID != before.ID {

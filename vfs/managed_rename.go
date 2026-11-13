@@ -93,6 +93,12 @@ func (d *Dir) managedRename(oldName, newName string, dest *Dir) (err error) {
 		}
 	}()
 	cache := d.vfs.cache
+	// Exclude background imports through the complete namespace transaction,
+	// including Finish and cache publication, not merely the snapshot drain.
+	if cache != nil {
+		release := cache.BlockManagedArchives()
+		defer release()
+	}
 	if cache != nil {
 		for _, p := range []string{src, dst} {
 			e = cache.FlushManagedTree(d.vfs.ctx, p, func(name string, o fs.Object) {

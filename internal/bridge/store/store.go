@@ -152,7 +152,7 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 	if err = db.Update(func(tx *bolt.Tx) error {
 		if m := tx.Bucket([]byte("meta")); m != nil {
 			v := m.Get([]byte("schema_version"))
-			if string(v) != "1" && string(v) != "2" {
+			if string(v) != "1" && string(v) != "2" && string(v) != "3" {
 				return fmt.Errorf("unsupported store schema %q", v)
 			}
 		}
@@ -179,6 +179,9 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 			if err := tx.Bucket([]byte("meta")).Put([]byte("history_seeded"), []byte("1")); err != nil {
 				return err
 			}
+		}
+		if string(tx.Bucket([]byte("meta")).Get([]byte("schema_version"))) == "3" {
+			return nil
 		}
 		return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("2"))
 	}); err != nil {
@@ -456,7 +459,7 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 			if o.Token != "" && e.Token != "" && e.Token != o.Token {
 				return model.ErrIdentityChanged
 			}
-			if o.Token != "" && e.Token == "" && (e.Local != "" || hasPending(tx, e.ID)) {
+			if o.Token != "" && e.Token == "" && (e.Local != "" || hasPending(tx, e.ID) || managedEntryPending(tx, e.ID)) {
 				return model.ErrIdentityChanged
 			}
 			if err := get(tx, "metadata", string(e.ID), &m); err != nil {

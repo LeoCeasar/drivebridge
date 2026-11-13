@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -54,7 +55,13 @@ import (
 //
 // The Info field is written to the backing store to store status
 type Item struct {
-	snapshotMu sync.Mutex
+	snapshotMu         sync.Mutex
+	stageMu            sync.Mutex
+	journal            *managedJournal
+	managedStoreFn     StoreFn
+	managedStageError  error
+	managedStaging     bool
+	managedDirsDurable bool
 	// read only
 	c               *Cache                   // cache this is part of
 	mu              sync.Mutex               // protect the variables
@@ -75,6 +82,8 @@ type Item struct {
 
 // Info is persisted to backing store
 type Info struct {
+	Journal     string        `json:",omitempty"`
+	JournalEnd  int64         `json:",omitempty"`
 	MutationSeq uint64        `json:",omitempty"`
 	DurableSeq  uint64        `json:",omitempty"`
 	StagedSeq   uint64        `json:",omitempty"`
@@ -162,11 +171,15 @@ func newItem(c *Cache, name string) (item *Item) {
 	if !exists {
 		item._removeFile("metadata doesn't exist")
 	} else if err != nil {
-		item.remove(fmt.Sprintf("failed to load metadata: %v", err))
+		if item.info.Journal != "" {
+			item.managedStageError = err // Preserve all recovery bytes on failure.
+		} else {
+			item.remove(fmt.Sprintf("failed to load metadata: %v", err))
+		}
 	}
 
 	// Get size estimate (which is best we can do until Open() called)
-	if statErr == nil {
+	if statErr == nil && item.info.Journal == "" {
 		item.info.Size = fi.Size()
 	}
 	return item
@@ -176,7 +189,7 @@ func newItem(c *Cache, name string) (item *Item) {
 func (item *Item) inUse() bool {
 	item.mu.Lock()
 	defer item.mu.Unlock()
-	return item.opens != 0 || item.info.Dirty
+	return item.opens != 0 || item.info.Dirty || item.managedStaging || item.managedStageError != nil
 }
 
 // getDiskSize returns the size on disk (approximately) of the item
@@ -186,6 +199,11 @@ func (item *Item) inUse() bool {
 func (item *Item) getDiskSize() int64 {
 	item.mu.Lock()
 	defer item.mu.Unlock()
+	if item.journal != nil && item.journal.file != nil {
+		if info, err := item.journal.file.Stat(); err == nil {
+			return item.journal.base.Info.Rs.Size() + info.Size()
+		}
+	}
 	return item.info.Rs.Size()
 }
 
@@ -206,6 +224,9 @@ func (item *Item) load() (exists bool, err error) {
 	err = decoder.Decode(&item.info)
 	if err != nil {
 		return true, fmt.Errorf("vfs cache item: corrupt metadata: %w", err)
+	}
+	if item.info.Journal != "" {
+		return true, item.loadManagedJournal()
 	}
 	return true, nil
 }
@@ -238,6 +259,9 @@ func (item *Item) _save() (err error) {
 //
 // call with the lock held
 func (item *Item) _truncate(size int64) (err error) {
+	if item.journal != nil {
+		return nil
+	} // Physical base remains immutable.
 	if size < 0 {
 		// FIXME ignore unknown length files
 		return nil
@@ -341,6 +365,9 @@ func (item *Item) Truncate(size int64) (err error) {
 	if item.fd == nil {
 		return errors.New("vfs cache item truncate: internal error: didn't Open file")
 	}
+	if _, ok := item.localJournalBackend(); ok && (item.journal != nil || !item.info.Dirty) {
+		return item.journalTruncate(size)
+	}
 
 	// Read old size
 	oldSize, err := item._getSize()
@@ -390,6 +417,9 @@ func (item *Item) _stat() (fi os.FileInfo, err error) {
 //
 // Call with mutex held
 func (item *Item) _getSize() (size int64, err error) {
+	if item.journal != nil {
+		return item.info.Size, nil
+	}
 	fi, err := item._stat()
 	if err != nil {
 		if os.IsNotExist(err) && item.o != nil {
@@ -444,6 +474,11 @@ func (item *Item) _dirty() {
 	}
 	item.info.ModTime = time.Now()
 	item.info.ATime = item.info.ModTime
+	if item.journal != nil {
+		item.modified = true
+		item.info.Dirty = true
+		return
+	}
 	if !item.modified {
 		item.modified = true
 		item.mu.Unlock()
@@ -704,7 +739,9 @@ func (item *Item) store(ctx context.Context, storeFn StoreFn) (err error) {
 func (item *Item) Close(storeFn StoreFn) (err error) {
 	if item.c.managed.Load() {
 		_, e := item.FlushManaged(item.c.ctx, storeFn)
-		return errors.Join(e, item.closeCache(storeFn))
+		err = errors.Join(e, item.closeCache(storeFn))
+		item.c.wakeManagedWorker()
+		return err
 	}
 	return item.closeCache(storeFn)
 }
@@ -780,7 +817,7 @@ func (item *Item) _actualClose(storeFn StoreFn, syncWriteBack bool) (err error) 
 	// FIXME It would be nice to do this asynchronously however it
 	// would require keeping the downloaders alive after the item
 	// has been closed
-	if item.info.Dirty && item.o != nil {
+	if item.info.Dirty && item.o != nil && item.journal == nil {
 		err = item._ensure(0, item.info.Size)
 		if err != nil {
 			return fmt.Errorf("vfs cache: failed to download missing parts of cache file: %w", err)
@@ -937,7 +974,9 @@ func (item *Item) _checkObject(o fs.Object) error {
 			// Set fingerprint
 			item.info.Fingerprint = remoteFingerprint
 		}
-		item.info.Size = o.Size()
+		if item.journal == nil {
+			item.info.Size = o.Size()
+		}
 	}
 	item.o = o
 
@@ -984,6 +1023,15 @@ func (item *Item) _removeMeta(reason string) {
 	} else {
 		fs.Debugf(item.name, "vfs cache: removed metadata from cache as %s", reason)
 	}
+	if item.info.Journal != "" && (err == nil || os.IsNotExist(err)) {
+		if e := syncParents(filepath.Dir(osPathMeta)); e != nil {
+			fs.Errorf(item.name, "cache metadata removal not durable: %v", e)
+			return
+		}
+		if e := item.removeManagedJournalFiles(); e != nil {
+			fs.Errorf(item.name, "local-save journal cleanup deferred: %v", e)
+		}
+	}
 }
 
 // remove the cached file and empty the metadata
@@ -993,13 +1041,20 @@ func (item *Item) _removeMeta(reason string) {
 //
 // call with lock held
 func (item *Item) _remove(reason string) (wasWriting bool) {
-	// Cancel writeback, if any
-	item.mu.Unlock()
-	wasWriting = item.c.writeback.Remove(item.writeBackID)
-	item.mu.Lock()
-	item.info.clean()
+	if item.info.Journal != "" && (item.info.Dirty || item.info.MutationSeq > item.info.StagedSeq || item.managedStaging) {
+		fs.Errorf(item.name, "retaining pending local-save journal during cache removal: %s", reason)
+		return false
+	}
+	// Managed journal workers use their own exclusion and never enter generic
+	// writeback. Keep item.mu held so one cannot start during cache deletion.
+	if !item.c.managed.Load() {
+		item.mu.Unlock()
+		wasWriting = item.c.writeback.Remove(item.writeBackID)
+		item.mu.Lock()
+	}
 	item._removeFile(reason)
 	item._removeMeta(reason)
+	item.info.clean()
 	return wasWriting
 }
 
@@ -1022,7 +1077,7 @@ func (item *Item) RemoveNotInUse(maxAge time.Duration, emptyOnly bool) (removed 
 	spaceFreed = 0
 	removed = false
 
-	if item.opens != 0 || item.info.Dirty || item.graceTimer != nil {
+	if item.opens != 0 || item.info.Dirty || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil {
 		return
 	}
 
@@ -1056,6 +1111,9 @@ func (item *Item) RemoveNotInUse(maxAge time.Duration, emptyOnly bool) (removed 
 func (item *Item) Reset() (rr ResetResult, spaceFreed int64, err error) {
 	item.mu.Lock()
 	defer item.mu.Unlock()
+	if item.managedStaging || item.managedStageError != nil {
+		return SkippedDirty, 0, nil
+	}
 
 	// The item is not being used now.  Just remove it instead of resetting it.
 	// Items in their grace period are treated as in-use; the cache
@@ -1399,6 +1457,18 @@ func (item *Item) readAt(b []byte, off int64) (n int, err error) {
 	}
 	defer item.mu.Unlock()
 
+	item.info.ATime = time.Now()
+	if item.journal != nil {
+		var base io.ReaderAt
+		if item.journal.baseLease != nil {
+			base, _ = item.journal.baseLease.(io.ReaderAt)
+		} else if item.journal.base.Info.Rs.Present(ranges.Range{Pos: 0, Size: item.journal.base.Info.Size}) {
+			base = item.fd
+		}
+		r := &journalReader{ctx: item.c.ctx, view: item.journal.view, size: item.info.Size, log: item.journal.file, base: base}
+		return r.ReadAt(b, off)
+	}
+
 	err = item._ensure(off, int64(len(b)))
 	if err != nil {
 		return 0, err
@@ -1414,6 +1484,7 @@ func (item *Item) readAt(b []byte, off int64) (n int, err error) {
 	}
 
 	item.info.ATime = time.Now()
+
 	// Do the reading with Item.mu unlocked and cache protected by preAccess
 	n, err = item.fd.ReadAt(b, off)
 	return n, err
@@ -1429,6 +1500,11 @@ func (item *Item) WriteAt(b []byte, off int64) (n int, err error) {
 	if item.fd == nil {
 		item.mu.Unlock()
 		return 0, errors.New("vfs cache item WriteAt: internal error: didn't Open file")
+	}
+	if _, ok := item.localJournalBackend(); ok && (item.journal != nil || !item.info.Dirty) {
+		n, err := item.journalWrite(b, off)
+		item.mu.Unlock()
+		return n, err
 	}
 	item.mu.Unlock()
 	// Do the writing with Item.mu unlocked
@@ -1555,6 +1631,7 @@ func (item *Item) rename(name string, newName string, newObj fs.Object) (err err
 
 	// Set internal state
 	item.name = newName
+	item.managedDirsDurable = false
 	item.o = newObj
 	item._updateFingerprint()
 

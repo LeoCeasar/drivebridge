@@ -231,6 +231,22 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	}
 	_, writers, _ := services.runtime.Activity()
 	out.LocalSaved = out.VFSPending == 0 && writers == 0
+	if local, ok := services.runtime.(interface{ LocalSaveStatus() (bool, int, []string) }); ok {
+		var preparing int
+		var failed []string
+		out.LocalSaved, preparing, failed = local.LocalSaveStatus()
+		out.Queued += preparing
+		if preparing > 0 && out.CloudState == "synced" {
+			out.CloudState = "queued"
+		}
+		for _, name := range failed {
+			out.Issues = append(out.Issues, model.SyncIssue{Name: name, Code: "local_archive_failed", State: model.StatusBlocked, LocalSaved: out.LocalSaved})
+		}
+		if len(failed) > 0 {
+			out.LastError = "local_archive_failed"
+			out.CloudState = "blocked"
+		}
+	}
 	if services.cacheBytes != nil {
 		if bytes, ok := services.cacheBytes(); ok {
 			out.CacheBytes = &bytes

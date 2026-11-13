@@ -494,29 +494,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	// Existing mappings are authoritative. Unknown local paths are creations,
 	// not a reason to perform network I/O on a durable local write.
-	resumedSafeSave := false
-	e, err := f.store.EntryByRemote(ctx, src.Remote())
-	if errors.Is(err, store.ErrNotFound) {
-		if err = f.requireParent(ctx, parentPath(src.Remote())); err != nil {
-			return nil, err
-		}
-		existing, err := f.store.Entries(ctx, parentPath(src.Remote()))
-		if err != nil {
-			return nil, err
-		}
-		for _, x := range existing {
-			if foldName(x.Remote) == foldName(src.Remote()) {
-				return nil, errors.New("local name collides after normalization")
-			}
-		}
-		e, resumedSafeSave, err = f.store.ResumeSafeSave(ctx, src.Remote(), newKind(src.Remote()))
-		if err == nil && !resumedSafeSave {
-			e, err = f.store.EnsureEntry(ctx, src.Remote(), newKind(src.Remote()))
-		}
-	}
+	e, err := f.admitLocalWrite(ctx, src.Remote())
 	if err != nil {
 		return nil, err
 	}
+
 	if e.Kind == model.KindFolder {
 		return nil, fs.ErrorIsDir
 	}

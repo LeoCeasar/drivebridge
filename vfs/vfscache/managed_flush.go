@@ -43,7 +43,14 @@ func (item *Item) saveManaged() error {
 	if e = item.c.managedIO.rename(temp, target); e != nil {
 		return e
 	}
-	return syncParents(dir)
+	if !item.managedDirsDurable {
+		if e = syncParents(dir); e != nil {
+			return e
+		}
+		item.managedDirsDurable = true
+		return nil
+	}
+	return platform.SyncDir(dir)
 }
 func (item *Item) lockMutation() func() {
 	if !item.c.managed.Load() {
@@ -53,15 +60,36 @@ func (item *Item) lockMutation() func() {
 	return item.snapshotMu.Unlock
 }
 
-// FlushManaged persists and stages one complete immutable byte snapshot. Missing
-// ranges are downloaded before snapshot exclusion, so downloader writers never
-// deadlock waiting for a lock held by their own waiter.
+// FlushManaged durably checkpoints changed bytes for local-snapshot backends.
+// Older managed backends retain synchronous complete-snapshot staging below.
 func (item *Item) FlushManaged(ctx context.Context, storeFn StoreFn) (fs.Object, error) {
 	if !item.c.managed.Load() {
 		return nil, errors.New("managed cache is disabled")
 	}
 	item.preAccess()
 	defer item.postAccess()
+	item.snapshotMu.Lock()
+	item.mu.Lock()
+	if item.journal != nil {
+		if err := ctx.Err(); err != nil {
+			item.mu.Unlock()
+			item.snapshotMu.Unlock()
+			return nil, err
+		}
+		if storeFn != nil {
+			item.managedStoreFn = storeFn
+		}
+		err := item.checkpointManagedLocked()
+		o := item.o
+		item.mu.Unlock()
+		item.snapshotMu.Unlock()
+		if err == nil {
+			item.c.wakeManagedWorker()
+		}
+		return o, err
+	}
+	item.mu.Unlock()
+	item.snapshotMu.Unlock()
 	for {
 		if e := ctx.Err(); e != nil {
 			return nil, e
@@ -159,9 +187,10 @@ func (item *Item) FlushForManagedRename(ctx context.Context, fn StoreFn) (out fs
 	item.mu.Lock()
 	needOpen := item.fd == nil
 	dirty := item.info.Dirty
+	hasJournal := item.journal != nil
 	o := item.o
 	item.mu.Unlock()
-	if !dirty {
+	if !dirty && !hasJournal {
 		return o, nil
 	}
 	if needOpen {
@@ -170,7 +199,17 @@ func (item *Item) FlushForManagedRename(ctx context.Context, fn StoreFn) (out fs
 		}
 		defer func() { err = errors.Join(err, item.closeCache(nil)) }()
 	}
-	return item.FlushManaged(ctx, fn)
+	out, err = item.FlushManaged(ctx, fn)
+	if err != nil || !hasJournal {
+		return out, err
+	}
+	// Namespace transactions need a fully archived immutable input before they
+	// seal. This explicit drain is not used by normal Flush/Sync/Close.
+	err = item.stageManagedJournal(ctx, fn)
+	item.mu.Lock()
+	out = item.o
+	item.mu.Unlock()
+	return out, err
 }
 
 // FlushManagedPath does not create cache entries merely to check existence.

@@ -404,7 +404,7 @@ func (fh *RWFileHandle) WriteString(s string) (n int, err error) {
 //
 // Call with mutex held
 func (fh *RWFileHandle) _truncate(size int64) (err error) {
-	if size == fh._size() {
+	if size == fh._size() && !fh.d.vfs.ManagedSyncEnabled() {
 		return nil
 	}
 	fh.file.setSize(size)

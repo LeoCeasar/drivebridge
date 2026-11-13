@@ -115,10 +115,11 @@ type nativeRuntime struct {
 	adapterShutdown bool
 }
 
-func (n *nativeRuntime) Activity() (int, int, int)     { return n.v.ManagedActivity() }
-func (n *nativeRuntime) StopActivity() (int, int, int) { return n.v.ManagedStopActivity() }
-func (n *nativeRuntime) CachePending() bool            { return n.v.ManagedCachePending() }
-func (n *nativeRuntime) Pause() (func(), error)        { return n.v.PauseManagedAdmission() }
+func (n *nativeRuntime) Activity() (int, int, int)              { return n.v.ManagedActivity() }
+func (n *nativeRuntime) StopActivity() (int, int, int)          { return n.v.ManagedStopActivity() }
+func (n *nativeRuntime) CachePending() bool                     { return n.v.ManagedCachePending() }
+func (n *nativeRuntime) LocalSaveStatus() (bool, int, []string) { return n.v.ManagedLocalSaveStatus() }
+func (n *nativeRuntime) Pause() (func(), error)                 { return n.v.PauseManagedAdmission() }
 func (n *nativeRuntime) Unmount() error {
 	n.unmountOnce.Do(func() {
 		n.mu.Lock()

@@ -248,7 +248,11 @@ func TestSafeSaveBackupWithManagedVFSKeepsBothByteSnapshots(t *testing.T) {
 	cloud.bodies["stable-token"] = "old cloud bytes"
 	listed(t, f)
 	oldCache := fsconfig.GetCacheDir()
-	if err := fsconfig.SetCacheDir(filepath.Join(t.TempDir(), "cache")); err != nil {
+	cacheRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fsconfig.SetCacheDir(filepath.Join(cacheRoot, "cache")); err != nil {
 		t.Fatal(err)
 	}
 	defer fsconfig.SetCacheDir(oldCache)

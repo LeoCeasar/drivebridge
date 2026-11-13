@@ -298,6 +298,15 @@ func (f *File) materializeManaged(ctx context.Context) error {
 	f.mu.RLock()
 	o, v := f.o, f.d.vfs
 	f.mu.RUnlock()
+	if v.cache != nil {
+		if local, size, ok := v.cache.ManagedLocalFile(f.CachePath()); ok {
+			if local != nil {
+				f.setObjectNoUpdate(local)
+			}
+			f.setSize(size)
+			return nil
+		}
+	}
 	if o == nil || o.Size() >= 0 {
 		return nil
 	}

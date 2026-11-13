@@ -315,6 +315,13 @@ func (s *Store) AckHistory(ctx context.Context, seq uint64, id string) error {
 	})
 }
 func historyProtectedTx(tx *bolt.Tx, mark func(model.BlobID)) error {
+	refs, err := managedBasesTx(tx)
+	if err != nil {
+		return err
+	}
+	for _, b := range refs {
+		mark(b)
+	}
 	b := tx.Bucket([]byte("history_events"))
 	if b == nil {
 		return nil
@@ -398,6 +405,14 @@ func (s *Store) HistoryProtection(ctx context.Context) (out model.HistoryProtect
 			out.Acknowledged = binary.BigEndian.Uint64(b)
 		}
 		needed := map[model.EntryID]map[model.BlobID]bool{}
+		bases, err := managedBasesTx(tx)
+		if err != nil {
+			return err
+		}
+		pinned := map[model.BlobID]bool{}
+		for _, b := range bases {
+			pinned[b] = true
+		}
 		mark := func(id model.EntryID, blobs ...model.BlobID) {
 			if needed[id] == nil {
 				needed[id] = map[model.BlobID]bool{}
@@ -459,7 +474,7 @@ func (s *Store) HistoryProtection(ctx context.Context) (out model.HistoryProtect
 				return err
 			}
 			for _, b := range e.Bodies {
-				if needed[e.Entry.ID][b] {
+				if needed[e.Entry.ID][b] || pinned[b] {
 					out.Versions = append(out.Versions, e.ID)
 					break
 				}
