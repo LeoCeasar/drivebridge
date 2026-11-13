@@ -118,6 +118,9 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		if err != nil {
 			return e.pause(ctx, j, err)
 		}
+		if merge.ConflictReason == "unsupported_content" {
+			return e.pause(ctx, j, model.ErrUnsupportedContent)
+		}
 		if merge.ConflictReason != "" {
 			return e.conflict(ctx, j, sn, merge.ConflictReason)
 		}

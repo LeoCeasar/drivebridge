@@ -15,16 +15,16 @@ import (
 // the caller must fetch/decode and replan; replacement may invalidate old IDs.
 // Conflicts always return zero operations and retain the local bytes as the draft.
 func Merge(baseLocal, local []byte, remote model.DocView) (model.MergeResult, error) {
-	return merge(baseLocal, local, remote, false)
+	return merge(baseLocal, local, remote, false, false)
 }
 
 // PlanStep permits a supported insertion chain to defer operations whose new
 // anchors do not exist yet. The caller must read back and rebase after each step.
 // Markdown remains the complete merged intent; no future block ID is guessed.
 func PlanStep(baseLocal, local []byte, remote model.DocView) (model.MergeResult, error) {
-	return merge(baseLocal, local, remote, true)
+	return merge(baseLocal, local, remote, true, false)
 }
-func merge(baseLocal, local []byte, remote model.DocView, deferAnchors bool) (model.MergeResult, error) {
+func merge(baseLocal, local []byte, remote model.DocView, deferAnchors, allowTableResize bool) (model.MergeResult, error) {
 	fail := func(reason string) (model.MergeResult, error) {
 		return model.MergeResult{Markdown: bytes.Clone(local), ConflictReason: reason, Hunks: []model.Hunk{{BaseStart: 0, BaseEnd: len(exactLines(baseLocal)), Base: exactLines(baseLocal), Local: exactLines(local), Remote: exactLines(remote.Markdown)}}}, nil
 	}
@@ -249,7 +249,7 @@ func merge(baseLocal, local []byte, remote model.DocView, deferAnchors bool) (mo
 			if rv.Opaque || rv.RemoteID == "" {
 				return fail("unsupported_content")
 			}
-			x, err := replacementXML(rv, c.a)
+			x, err := replacementXMLMode(rv, c.a, allowTableResize)
 			if err != nil {
 				return fail("unsupported_content")
 			}
@@ -258,23 +258,23 @@ func merge(baseLocal, local []byte, remote model.DocView, deferAnchors bool) (mo
 		}
 		// Sentinel 0 is the experimentally confirmed document-start anchor. It
 		// addresses the first body position, never the title or an invented ID.
-		if i == 0 && !c.a.Opaque && c.a.parent == "" {
-			result.Operations = append(result.Operations, operation(model.OperationBlockInsertAfter, "", "0", model.OperationPayload{XML: c.a.xml, AfterHash: c.a.Hash}))
+		if i == 0 && !c.a.Opaque {
+			result.Operations = append(result.Operations, operation(model.OperationBlockInsertAfter, "", "0", model.OperationPayload{XML: insertionXML(c.a), AfterHash: c.a.Hash}))
 			continue
 		}
 		// A newly inserted block has no current ID: do not chain guesses.
-		if deferAnchors && i > 0 && out[i-1].remote < 0 && !c.a.Opaque && c.a.parent == "" {
+		if deferAnchors && i > 0 && out[i-1].remote < 0 && !c.a.Opaque {
 			result.Deferred = true
 			continue
 		}
-		if i == 0 || out[i-1].remote < 0 || c.a.Opaque || c.a.parent != "" {
+		if i == 0 || out[i-1].remote < 0 || c.a.Opaque {
 			return fail("unsupported_content")
 		}
 		anchor := r[out[i-1].remote]
-		if anchor.RemoteID == "" || anchor.parent != "" || anchor.Opaque {
+		if anchor.RemoteID == "" || anchor.Opaque || !rootInsertionAnchor(remote, anchor, c.a.parent) {
 			return fail("unsupported_content")
 		}
-		result.Operations = append(result.Operations, operation(model.OperationBlockInsertAfter, "", anchor.RemoteID, model.OperationPayload{XML: c.a.xml, AfterHash: c.a.Hash}))
+		result.Operations = append(result.Operations, operation(model.OperationBlockInsertAfter, "", anchor.RemoteID, model.OperationPayload{XML: insertionXML(c.a), AfterHash: c.a.Hash}))
 	}
 	return result, nil
 }
@@ -374,4 +374,37 @@ func exactLines(b []byte) []string {
 		a = a[:len(a)-1]
 	}
 	return a
+}
+
+// List wrappers in the XML projection group directly addressable sibling items.
+// Wrap new items explicitly; a naked <li> is not a document fragment.
+func insertionXML(a atom) string {
+	if a.parent == "ul" || a.parent == "ol" {
+		return "<" + a.parent + ">" + a.xml + "</" + a.parent + ">"
+	}
+	return a.xml
+}
+func rootInsertionAnchor(d model.DocView, anchor atom, insertedParent string) bool {
+	if anchor.parent == "" {
+		return true
+	}
+	nodes, err := parseXML(d.XML)
+	if err != nil {
+		return false
+	}
+	for _, n := range nodes {
+		if n.tag != "ul" && n.tag != "ol" {
+			continue
+		}
+		if !simpleList(n) || !projectableList(n) {
+			continue
+		}
+		items := elements(n)
+		for i, item := range items {
+			if item.attr("id") == anchor.RemoteID {
+				return insertedParent == n.tag || i == len(items)-1
+			}
+		}
+	}
+	return false
 }

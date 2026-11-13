@@ -65,7 +65,7 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 		oldID = before.Blocks[index].RemoteID
 	}
 	if op.Kind != model.OperationBlockDelete {
-		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || (!p.ExplicitResolution && countHash(after.Blocks, p.AfterHash) != 1) {
+		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || (!p.ExplicitResolution && op.Kind != model.OperationBlockInsertAfter && countHash(after.Blocks, p.AfterHash) != 1) {
 			return unknown
 		}
 		newID = after.Blocks[position].RemoteID
@@ -124,6 +124,11 @@ func withoutNode(xml []byte, id string) (string, error) {
 			}
 			if n.tag != "" {
 				n.kids = walk(n.kids)
+			}
+			// Empty synthetic list wrappers have no block identity. The remote
+			// serializer omits them after deleting the only/last list item.
+			if (n.tag == "ul" || n.tag == "ol") && n.allowed() && len(n.kids) == 0 {
+				continue
 			}
 			out = append(out, n)
 		}

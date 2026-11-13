@@ -137,8 +137,12 @@ func TestScheme3UnsupportedStructureNeverPartiallyWrites(t *testing.T) {
 	local := strings.Replace(blobText(t, s, entry.Local), "intro before", "intro changed", 1)
 	local = strings.Replace(local, "<tbody>", "<thead>", 1)
 	stageContent(t, s, entry, local)
-	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrVersionChanged) {
-		t.Fatalf("expected preserved conflict: %v", err)
+	if err := e.SyncEntry(bg, entry.ID); !errors.Is(err, model.ErrUnsupportedContent) {
+		t.Fatalf("expected blocked format error: %v", err)
+	}
+	conflicts, err := s.Conflicts(bg)
+	if err != nil || len(conflicts) != 0 {
+		t.Fatal("format failure requested manual text merge", conflicts, err)
 	}
 	if source.writes != 0 {
 		t.Fatal("partially wrote supported portion before structural validation")

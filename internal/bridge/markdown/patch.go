@@ -14,6 +14,9 @@ func operation(kind, id, after string, p model.OperationPayload) model.Operation
 // Retain known current metadata without copying unknown structures or IDs. Table
 // layout is grafted only when its shape still matches, otherwise block the edit.
 func replacementXML(old, new atom) (string, error) {
+	return replacementXMLMode(old, new, false)
+}
+func replacementXMLMode(old, new atom, allowTableResize bool) (string, error) {
 	if old.Kind != new.Kind {
 		return "", unsupported("structural replacement")
 	}
@@ -42,7 +45,22 @@ func replacementXML(old, new atom) (string, error) {
 	if a.tag != b.tag {
 		return "", unsupported("parent shape")
 	}
-	if e = graft(a, b); e != nil {
+	if allowTableResize && a.tag == "table" && b.tag == "table" {
+		// Decode approval is deliberately rechecked before replacing a whole
+		// table. Rich/merged/resource tables must never take this route.
+		if _, err := xmlMarkdown(a); err != nil {
+			return "", err
+		}
+		if _, err := xmlMarkdown(b); err != nil {
+			return "", err
+		}
+		for _, c := range elements(a) {
+			if c.tag == "colgroup" && len(elements(c)) == tableColumns(b) {
+				b.kids = append([]*xnode{c}, b.kids...)
+				break
+			}
+		}
+	} else if e = graft(a, b); e != nil {
 		return "", e
 	}
 	return serialize(b), nil
@@ -135,4 +153,18 @@ func serialize(n *xnode) string {
 	}
 	b.WriteString("</" + n.tag + ">")
 	return b.String()
+}
+
+func tableColumns(n *xnode) int {
+	for _, section := range elements(n) {
+		if section.tag != "thead" && section.tag != "tbody" {
+			continue
+		}
+		for _, row := range elements(section) {
+			if row.tag == "tr" {
+				return len(elements(row))
+			}
+		}
+	}
+	return 0
 }

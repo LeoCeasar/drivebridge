@@ -50,6 +50,21 @@ func nodeXML(n ast.Node, src []byte) (string, error) {
 			b.WriteByte(' ')
 		}
 		return b.String(), nil
+	case *ast.RawHTML:
+		if !isSimpleHTMLBreak(v.Segments.Value(src)) {
+			return "", unsupported("RawHTML")
+		}
+		for parent := n.Parent(); parent != nil; parent = parent.Parent() {
+			if _, ok := parent.(*east.TableCell); ok {
+				return "; ", nil
+			}
+		}
+		return "<br/>", nil
+	case *ast.HTMLBlock:
+		if !isSimpleHTMLBreak(v.Lines().Value(src)) || v.HasClosure() {
+			return "", unsupported("HTMLBlock")
+		}
+		return "", nil
 	case *ast.String:
 		return esc(string(v.Value)), nil
 	case *ast.Paragraph:
@@ -110,6 +125,10 @@ func nodeXML(n ast.Node, src []byte) (string, error) {
 		}
 		url := string(v.Destination)
 		if !safeURL(url) {
+			if readableRelativeURL(url) {
+				label, err := children()
+				return label + " (" + esc(url) + ")", err
+			}
 			return "", unsupported("unsafe link URL")
 		}
 		return wrap(`a href="` + esc(url) + `"`)

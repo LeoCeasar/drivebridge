@@ -161,6 +161,13 @@ func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration 
 		}
 		job = &refreshed
 	}
+	if job.State == model.StatusConflict {
+		next, err := e.retryCompatibilityConflict(ctx, *job)
+		if err != nil {
+			return err
+		}
+		job = &next
+	}
 	if job.State == model.StatusBlocked || job.State == model.StatusConflict {
 		return nil
 	}

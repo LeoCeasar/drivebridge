@@ -60,6 +60,9 @@ func projectedAtoms(b []byte) ([]atom, error) {
 	root := parser().Parser().Parse(text.NewReader(b))
 	var out []atom
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
+		if spacingBreak(n, b) {
+			continue
+		}
 		if _, ok := n.(*ast.List); ok {
 			for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 				out = append(out, atom{node: c})
@@ -88,7 +91,7 @@ func projectedAtoms(b []byte) ([]atom, error) {
 		}
 		out[i].End = end
 		source := b[out[i].Start:end]
-		if _, ok := out[i].node.(*ast.HTMLBlock); ok {
+		if _, ok := out[i].node.(*ast.HTMLBlock); ok && !isSimpleHTMLBreak(source) {
 			nodes, e := parseXML(source)
 			if e != nil || len(nodes) != 1 {
 				return nil, unsupported("readable HTML shape")
@@ -112,12 +115,12 @@ func projectedAtoms(b []byte) ([]atom, error) {
 	// CommonMark-consumed reference definitions and all other nonblank gaps fail.
 	p := 0
 	for _, a := range out {
-		if len(bytes.TrimSpace(b[p:a.Start])) != 0 {
+		if !compatibleSpacing(b[p:a.Start]) {
 			return nil, unsupported("unmapped source")
 		}
 		p = a.End
 	}
-	if len(bytes.TrimSpace(b[p:])) != 0 {
+	if !compatibleSpacing(b[p:]) {
 		return nil, unsupported("unmapped source")
 	}
 	return out, nil

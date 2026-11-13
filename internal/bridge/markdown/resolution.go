@@ -13,7 +13,8 @@ import (
 // normal step/readback loop insert the desired sequence. Keep shared anchor
 // IDs and never borrow the explicit-human flag to weaken verification.
 func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (model.MergeResult, error) {
-	result, err := PlanStep(base, local, remote)
+	unchanged := unchangedDocCheckpoint(base, baseline, remote)
+	result, err := merge(base, local, remote, true, unchanged)
 	if err != nil || result.ConflictReason != "ambiguous_mapping" || !bytes.Equal(base, baseline.Markdown) || !bytes.Equal(base, remote.Markdown) || len(baseline.Blocks) != len(remote.Blocks) {
 		return result, err
 	}
@@ -23,10 +24,14 @@ func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (mode
 			return result, nil
 		}
 	}
-	// Reuse the full projection/opaque/list validation, not its authorization.
-	validated, err := PlanResolvedStep(base, local, remote)
-	if err != nil || validated.ConflictReason != "" || len(validated.Operations) != 1 || validated.Operations[0].Kind != model.OperationBlockDelete {
+	fresh, err := DecodeWithOptions(remote.XML, remote.Revision, Options{ProjectionVersion: remote.ProjectionVersion, SourceURL: remote.SourceURL, ReferenceMap: remote.ReferenceMap})
+	if err != nil || !unchangedDocCheckpoint(base, fresh, remote) {
 		return result, err
+	}
+	for _, block := range fresh.Blocks {
+		if block.Opaque || block.RemoteID == "" {
+			return result, nil
+		}
 	}
 	old, err := parseMarkdown(remote.Markdown, &remote)
 	if err != nil {
@@ -36,22 +41,44 @@ func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (mode
 	if err != nil {
 		return result, err
 	}
+	desiredCounts := map[string]int{}
+	for _, a := range desired {
+		if a.Opaque {
+			return result, nil
+		}
+		desiredCounts[a.Hash]++
+	}
 	i := 0
 	for i < len(old) && i < len(desired) && old[i].Hash == desired[i].Hash {
 		i++
 	}
+	// Preserve an unchanged section that appears later in the local intent.
+	// New unique content can be inserted at the shared prefix instead of
+	// deleting that section just to disambiguate paragraph alignment.
+	if i > 0 && i < len(old) && i < len(desired) && desiredCounts[old[i].Hash] > 0 && countHash(remote.Blocks, desired[i].Hash) == 0 {
+		anchor := old[i-1]
+		anchor.Block = remote.Blocks[i-1]
+		if anchor.RemoteID != "" && rootInsertionAnchor(remote, anchor, desired[i].parent) {
+			a := desired[i]
+			return model.MergeResult{Markdown: bytes.Clone(local), Deferred: true, Operations: []model.Operation{operation(model.OperationBlockInsertAfter, "", anchor.RemoteID, model.OperationPayload{XML: insertionXML(a), AfterHash: a.Hash})}}, nil
+		}
+	}
+	if i == len(old) && i > 0 && i < len(desired) {
+		anchor := old[i-1]
+		anchor.Block = remote.Blocks[i-1]
+		if rootInsertionAnchor(remote, anchor, desired[i].parent) {
+			a := desired[i]
+			return model.MergeResult{Markdown: bytes.Clone(local), Deferred: true, Operations: []model.Operation{operation(model.OperationBlockInsertAfter, "", anchor.RemoteID, model.OperationPayload{XML: insertionXML(a), AfterHash: a.Hash})}}, nil
+		}
+	}
 	// A wholly unanchored rewrite keeps the existing conflict protection.
-	if i >= len(remote.Blocks) || countHash(remote.Blocks, remote.Blocks[i].Hash) != 1 {
+	if i >= len(remote.Blocks) || countHash(remote.Blocks, remote.Blocks[i].Hash) != 1 || desiredCounts[old[i].Hash] != 0 {
 		return result, nil
 	}
 	if i == 0 {
 		// A unique surviving interior anchor also fixes identity when a leading
 		// paragraph becomes a heading. Only remove a block absent from the desired
 		// document; the retained anchor itself must never be the fallback target.
-		desiredCounts := map[string]int{}
-		for _, a := range desired {
-			desiredCounts[a.Hash]++
-		}
 		anchored := false
 		for j := 1; j < len(old); j++ {
 			if countHash(remote.Blocks, remote.Blocks[j].Hash) == 1 && desiredCounts[old[j].Hash] == 1 {
@@ -64,8 +91,22 @@ func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (mode
 		}
 	}
 	target := remote.Blocks[i]
-	validated.Operations = []model.Operation{operation(model.OperationBlockDelete, target.RemoteID, "", model.OperationPayload{BeforeHash: target.Hash})}
-	return validated, nil
+	return model.MergeResult{Markdown: bytes.Clone(local), Deferred: true, Operations: []model.Operation{operation(model.OperationBlockDelete, target.RemoteID, "", model.OperationPayload{BeforeHash: target.Hash})}}, nil
+}
+
+// A structural edit is unilateral only when the saved and observed identities
+// and complete body agree. Matching rendered text alone cannot authorize it.
+func unchangedDocCheckpoint(base []byte, baseline, remote model.DocView) bool {
+	if !bytes.Equal(base, baseline.Markdown) || !bytes.Equal(base, remote.Markdown) || !bytes.Equal(baseline.XML, remote.XML) || len(baseline.Blocks) != len(remote.Blocks) {
+		return false
+	}
+	for i, b := range baseline.Blocks {
+		r := remote.Blocks[i]
+		if b.RemoteID != r.RemoteID || b.Hash != r.Hash || !bytes.Equal(b.RawXML, r.RawXML) {
+			return false
+		}
+	}
+	return true
 }
 
 // PlanResolvedStep handles explicit human intent where automatic block identity

@@ -95,6 +95,9 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 	root := parser().Parser().Parse(text.NewReader(b))
 	var a []atom
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
+		if spacingBreak(n, b) {
+			continue
+		}
 		if list, ok := n.(*ast.List); ok {
 			p := "ul"
 			if list.IsOrdered() {
@@ -184,7 +187,7 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 				break
 			}
 		}
-		if !covered && len(line) > 0 {
+		if !covered && len(line) > 0 && !isSimpleHTMLBreak(line) {
 			return nil, unsupported("unmapped source (reference definition or unsupported syntax)")
 		}
 		i += j
@@ -193,7 +196,7 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 }
 func nodeKind(n ast.Node) string {
 	switch v := n.(type) {
-	case *ast.Paragraph, *ast.TextBlock:
+	case *ast.Paragraph, *ast.TextBlock, *ast.HTMLBlock:
 		return "p"
 	case *ast.Heading:
 		return fmt.Sprintf("h%d", v.Level)
