@@ -14,6 +14,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
+	syncer "github.com/rclone/rclone/internal/bridge/sync"
 )
 
 type mountRuntime interface {
@@ -33,6 +34,7 @@ type workerServices struct {
 	store              *store.Store
 	runtime            mountRuntime
 	run                func(context.Context) error
+	syncNow            func(context.Context) error
 	resolve            func(context.Context, model.ResolveRequest) error
 	retry              func(context.Context) error
 	refreshConflict    func(context.Context, model.ConflictID) (model.Conflict, error)
@@ -213,7 +215,7 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	w.mu.Lock()
 	services, ready, last, historyState := w.services, w.ready, w.lastError, w.historyState
 	w.mu.Unlock()
-	out := model.MountStatus{SchemaVersion: 1, MountID: w.spec.Mount.ID, Running: ready, CloudState: "starting", LastError: last}
+	out := model.MountStatus{CloudSyncInterval: syncer.BackgroundSyncInterval.String(), SchemaVersion: 1, MountID: w.spec.Mount.ID, Running: ready, CloudState: "starting", LastError: last}
 	if services == nil {
 		return out, nil
 	}
@@ -292,6 +294,9 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 	defer deadline.Stop()
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
+	stopDrain := func() {}
+	draining := false
+	defer func() { stopDrain() }()
 	for {
 		status, err := w.status(ctx)
 		if err != nil {
@@ -303,6 +308,10 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 		creates, crErr := services.store.PendingCreates(ctx)
 		if pubErr != nil || nsErr != nil || crErr != nil {
 			return ErrPending
+		}
+		if !preserve && wait > 0 && !draining && services.syncNow != nil && (status.Queued > 0 || status.Inflight > 0 || len(publications) > 0 || len(names) > 0 || len(creates) > 0) {
+			stopDrain = startStopSyncDrain(ctx, services.syncNow)
+			draining = true
 		}
 		w.mu.Lock()
 		controls := len(w.controls)
@@ -318,6 +327,7 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 		case <-tick.C:
 		}
 	}
+	stopDrain()
 	w.engineCancel()
 	<-w.engineDone
 	if err := services.runtime.Unmount(); err != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/internal/bridge/model"
 )
 
 // A RenameManaged error after durable namespace commit must implement
@@ -19,6 +20,13 @@ type ManagedRenamer interface {
 	FinishManagedRename(context.Context, string) error
 	AbortManagedRename(context.Context, string) error
 }
+
+type ManagedCheckpointBinder interface {
+	BindManagedNamespace(context.Context, string, []model.ManagedCheckpoint) error
+}
+type managedNamespaceCommitter interface {
+	CommitManagedRename(context.Context, string, []model.ManagedCheckpoint) (fs.Object, error)
+}
 type managedCommittedError struct{ error }
 
 func (e *managedCommittedError) Committed() bool { return true }
@@ -27,7 +35,7 @@ func committed(err error) bool {
 	var c interface{ Committed() bool }
 	return errors.As(err, &c) && c.Committed()
 }
-func (m *managedState) reserveRename(src, dst string) (*reservation, error) {
+func (m *managedState) reserveRename(src, dst string, allowReaders bool) (*reservation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.paused > 0 {
@@ -35,7 +43,7 @@ func (m *managedState) reserveRename(src, dst string) (*reservation, error) {
 	}
 	src, dst = managedPath(src), managedPath(dst)
 	for a := range m.handles {
-		if a.blocks(dst, true) || a.blocks(src, false) {
+		if a.blocks(dst, !allowReaders) || a.blocks(src, false) {
 			return nil, ErrExternalUpdateBusy
 		}
 	}
@@ -48,6 +56,9 @@ func (m *managedState) reserveRename(src, dst string) (*reservation, error) {
 	}
 	r := &reservation{m, []string{src, dst}}
 	m.reservations[r] = struct{}{}
+	if allowReaders {
+		m.namespacePublications[r] = make(chan struct{})
+	}
 	return r, nil
 }
 
@@ -62,7 +73,9 @@ func (d *Dir) managedRename(oldName, newName string, dest *Dir) (err error) {
 		return nil
 	}
 	m := d.vfs.managed.Load()
-	r, e := m.reserveRename(src, dst)
+	_, checkpointNamespace := d.vfs.f.(ManagedCheckpointBinder)
+	checkpointNamespace = checkpointNamespace && d.vfs.cache != nil && d.vfs.cache.UsesManagedCheckpointArchive()
+	r, e := m.reserveRename(src, dst, checkpointNamespace)
 	if e != nil {
 		return e
 	}
@@ -70,6 +83,8 @@ func (d *Dir) managedRename(oldName, newName string, dest *Dir) (err error) {
 	defer func() {
 		if !committedState || err == nil {
 			r.release()
+		} else {
+			r.failNamespaceWaiters()
 		}
 	}()
 	renamer, ok := d.vfs.f.(ManagedRenamer)
@@ -93,13 +108,35 @@ func (d *Dir) managedRename(oldName, newName string, dest *Dir) (err error) {
 		}
 	}()
 	cache := d.vfs.cache
+	binder, bindsCheckpoints := d.vfs.f.(ManagedCheckpointBinder)
+	committer, atomicCommit := d.vfs.f.(managedNamespaceCommitter)
+	var inputs []model.ManagedCheckpoint
+	fastNamespace := bindsCheckpoints && cache != nil && cache.UsesManagedCheckpointArchive()
 	// Exclude background imports through the complete namespace transaction,
 	// including Finish and cache publication, not merely the snapshot drain.
-	if cache != nil {
+	if cache != nil && !fastNamespace {
 		release := cache.BlockManagedArchives()
 		defer release()
 	}
-	if cache != nil {
+	if fastNamespace {
+		for _, p := range []string{src, dst} {
+			refs, release, err := cache.PinManagedNamespaceTree(d.vfs.ctx, p)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if !committedState || err == nil {
+					release()
+				}
+			}()
+			inputs = append(inputs, refs...)
+		}
+		if !atomicCommit {
+			if e = binder.BindManagedNamespace(d.vfs.ctx, tx, inputs); e != nil {
+				return e
+			}
+		}
+	} else if cache != nil {
 		for _, p := range []string{src, dst} {
 			e = cache.FlushManagedTree(d.vfs.ctx, p, func(name string, o fs.Object) {
 				if f, ok := d.vfs.root.cachedNode(name).(*File); ok {
@@ -112,7 +149,12 @@ func (d *Dir) managedRename(oldName, newName string, dest *Dir) (err error) {
 			}
 		}
 	}
-	o, e := renamer.RenameManaged(d.vfs.ctx, tx)
+	var o fs.Object
+	if fastNamespace && atomicCommit {
+		o, e = committer.CommitManagedRename(d.vfs.ctx, tx, inputs)
+	} else {
+		o, e = renamer.RenameManaged(d.vfs.ctx, tx)
+	}
 	if e != nil {
 		committedState = committed(e)
 		return e

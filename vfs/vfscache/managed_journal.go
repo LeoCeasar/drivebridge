@@ -140,7 +140,7 @@ func (item *Item) startManagedJournal() error {
 		err = item.c.managedIO.syncFile(j.file)
 	}
 	if err == nil {
-		err = syncParents(journalRoot(item.c.metaRoot))
+		err = item.c.syncManagedParents(journalRoot(item.c.metaRoot))
 	}
 	if err == nil {
 		item.info.Journal = id
@@ -298,12 +298,10 @@ func (item *Item) checkpointManagedLocked() error {
 		return err
 	}
 	info.JournalEnd = end
-	previous := item.info
 	item.info = info
-	if err = item.saveManaged(); err != nil {
-		item.info = previous
-		return err
-	}
+	// startManagedJournal durably linked this UUID before accepting a write.
+	// Recovery scans its checksummed WAL checkpoints, including those newer
+	// than the derived metadata. A second metadata replace adds no durability.
 	j.checkpoints = append(j.checkpoints, journalCheckpoint{info: info, view: append([]journalExtent(nil), j.view...)})
 	return nil
 }

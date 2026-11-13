@@ -98,7 +98,7 @@ func (s *Store) RestoreHistory(ctx context.Context, r model.HistoryRestoreReques
 		if er = get(tx, "metadata", string(e.ID), &m); er != nil {
 			return er
 		}
-		if m.Tombstone != r.ExpectedDeleted || m.SafeSaveParked || m.SafeSaveOriginal != "" || m.SafeSavePending != "" || m.VirtualType != "" {
+		if m.Tombstone != r.ExpectedDeleted || m.SafeSaveParked || m.SafeSaveOriginal != "" || m.FuseSoftRemove != "" || m.SafeSavePending != "" || m.VirtualType != "" {
 			return ErrInvalidState
 		}
 		occupied, er := byPath(tx, e.Remote)

@@ -3,11 +3,14 @@ package vfs
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/vfs/vfscommon"
 	"github.com/stretchr/testify/require"
 )
@@ -37,29 +40,117 @@ func TestExternalUpdateRejectsOpenReader(t *testing.T) {
 	require.NoError(t, h.Release())
 	require.NoError(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }))
 }
-func TestOpenCannotRaceReservedUpdate(t *testing.T) {
-	v, o := managedTestVFS(t)
-	_, e := v.Stat("file")
-	require.NoError(t, e)
+
+// Immutable objects model the managed overlay: publication changes a mapping,
+// while old objects continue to open their original complete body.
+type publicationTestFS struct {
+	fs.Fs
+	mu      sync.RWMutex
+	current fs.Object
+}
+
+func (f *publicationTestFS) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+	if remote != "file" {
+		return f.Fs.NewObject(ctx, remote)
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.current, nil
+}
+func (f *publicationTestFS) List(ctx context.Context, dir string) (fs.DirEntries, error) {
+	if dir != "" {
+		return f.Fs.List(ctx, dir)
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return fs.DirEntries{f.current}, nil
+}
+
+func TestReadsDuringReservedUpdateKeepTheirVersion(t *testing.T) {
+	v, _ := managedTestVFS(t)
+	backing := &publicationTestFS{Fs: v.f, current: object.NewMemoryObject("file", time.Now(), []byte("old"))}
+	v.f = backing
+	v.root.f = backing
+	warm, err := v.Open("file")
+	require.NoError(t, err)
+	body, err := io.ReadAll(warm)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(body))
+	require.NoError(t, warm.Close())
+	next := object.NewMemoryObject("file", time.Now().Add(time.Second), []byte("complete-new-version"))
 	entered, leave := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { close(entered); <-leave; return o, nil })
+		done <- v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) {
+			close(entered)
+			<-leave
+			backing.mu.Lock()
+			backing.current = next
+			backing.mu.Unlock()
+			return next, nil
+		})
 	}()
 	select {
 	case <-entered:
 	case err := <-done:
-		t.Fatalf("reservation ended before callback: %v", err)
+		t.Fatalf("callback not reached: %v", err)
 	}
-	_, e = v.Open("file")
-	require.ErrorIs(t, e, ErrExternalUpdateBusy)
+	during, err := v.Open("file")
+	require.NoError(t, err)
+	duringBody, err := io.ReadAll(during)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(duringBody))
+	require.NoError(t, during.Close())
+	old, err := v.Open("file")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = old.Close() })
+	root, err := v.root.Open(os.O_RDONLY)
+	require.NoError(t, err)
+	writerDone := make(chan struct {
+		h   Handle
+		err error
+	}, 1)
+	go func() {
+		h, err := v.OpenFile("file", os.O_WRONLY, 0600)
+		writerDone <- struct {
+			h   Handle
+			err error
+		}{h, err}
+	}()
+	select {
+	case result := <-writerDone:
+		if result.h != nil {
+			_ = result.h.Close()
+		}
+		t.Fatalf("writer completed before local publication: %v", result.err)
+	case <-time.After(20 * time.Millisecond):
+	}
 	close(leave)
 	require.NoError(t, <-done)
-	h, e := v.Open("file")
-	require.NoError(t, e)
-	require.NoError(t, h.Close())
-	require.NoError(t, h.Release())
+	writer := <-writerDone
+	require.NoError(t, writer.err)
+	require.NoError(t, writer.h.Close())
+	// Force cache pressure before the lazy reader's first Read: its pin must
+	// protect the detached old generation from quota eviction.
+	oldItem := old.(*managedHandle).Handle.(*RWFileHandle).item
+	removed, _ := oldItem.RemoveNotInUse(0, false)
+	require.False(t, removed)
+	// The old handle has not read yet: its lazy open must retain the old object.
+	body, err = io.ReadAll(old)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(body))
+	require.Equal(t, next.Size(), v.root.cachedNode("file").Size())
+	newer, err := v.Open("file")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = newer.Close() })
+	body, err = io.ReadAll(newer)
+	require.NoError(t, err)
+	require.Equal(t, "complete-new-version", string(body))
+	require.NoError(t, old.Close())
+	require.NoError(t, newer.Close())
+	require.NoError(t, root.Close())
 }
+
 func TestExternalUpdateFailureReleasesReservation(t *testing.T) {
 	v, _ := managedTestVFS(t)
 	want := errors.New("CAS rejected")
@@ -146,4 +237,27 @@ func TestManagedReadOnlyFlushRetainsAdmission(t *testing.T) {
 	require.NoError(t, h.Flush())
 	require.ErrorIs(t, v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) { return o, nil }), ErrExternalUpdateBusy)
 	require.NoError(t, h.Release())
+}
+
+func TestExternalPublicationPreservesDirtyWrites(t *testing.T) {
+	v, _ := managedTestVFS(t)
+	h, err := v.OpenFile("file", os.O_RDWR, 0600)
+	require.NoError(t, err)
+	_, err = h.WriteAt([]byte("user-save"), 0)
+	require.NoError(t, err)
+
+	called := false
+	err = v.TryExternalUpdate(context.Background(), "file", func() (fs.Object, error) {
+		called = true
+		return object.NewMemoryObject("file", time.Now(), []byte("remote")), nil
+	})
+	require.ErrorIs(t, err, ErrExternalUpdateBusy)
+	require.False(t, called)
+	require.NoError(t, h.Close())
+	read, err := v.Open("file")
+	require.NoError(t, err)
+	body, err := io.ReadAll(read)
+	require.NoError(t, err)
+	require.Equal(t, "user-save", string(body))
+	require.NoError(t, read.Close())
 }

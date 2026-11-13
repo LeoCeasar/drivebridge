@@ -152,6 +152,10 @@ func TestDifferentAccountCannotRebindOldAcceptedQueue(t *testing.T) {
 	entry := h.save("data.bin", "old identity accepted")
 	h.vfs.Shutdown()
 	h.vfs = nil
+	if err := h.overlay.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.overlay = nil
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}

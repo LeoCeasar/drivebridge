@@ -55,6 +55,7 @@ import (
 //
 // The Info field is written to the backing store to store status
 type Item struct {
+	namespacePins      int // protects a captured checkpoint through namespace Finish
 	snapshotMu         sync.Mutex
 	stageMu            sync.Mutex
 	journal            *managedJournal
@@ -82,6 +83,7 @@ type Item struct {
 
 // Info is persisted to backing store
 type Info struct {
+	Detached    bool          `json:",omitempty"`
 	Journal     string        `json:",omitempty"`
 	JournalEnd  int64         `json:",omitempty"`
 	MutationSeq uint64        `json:",omitempty"`
@@ -189,7 +191,7 @@ func newItem(c *Cache, name string) (item *Item) {
 func (item *Item) inUse() bool {
 	item.mu.Lock()
 	defer item.mu.Unlock()
-	return item.opens != 0 || item.info.Dirty || item.managedStaging || item.managedStageError != nil
+	return item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.managedStaging || item.managedStageError != nil
 }
 
 // getDiskSize returns the size on disk (approximately) of the item
@@ -236,6 +238,9 @@ func (item *Item) load() (exists bool, err error) {
 // call with the lock held
 func (item *Item) _save() (err error) {
 	if item.c.managed.Load() {
+		if item.journal != nil {
+			return nil
+		}
 		return item.saveManaged()
 	}
 	osPathMeta := item.c.toOSPathMeta(item.name) // No locking in Cache
@@ -908,6 +913,11 @@ func (item *Item) reload(ctx context.Context) error {
 	if !dirty {
 		return nil
 	}
+	if item.info.Detached {
+		// A removed/replaced generation remains a history task, never a visible
+		// virtual file. Its journal already supplies all required local bytes.
+		return nil
+	}
 	// see if the object still exists
 	obj, _ := item.c.fremote.NewObject(ctx, item.name)
 	// open the file with the object (or nil)
@@ -942,6 +952,11 @@ func (item *Item) reload(ctx context.Context) error {
 //
 // call with lock held
 func (item *Item) _checkObject(o fs.Object) error {
+	// Even after archive acceptance, an unretired journal is one complete local
+	// generation. A lazy reader may still carry pre-archive object metadata.
+	if item.c.managed.Load() && item.journal != nil {
+		return nil
+	}
 	if o == nil {
 		if item.info.Fingerprint != "" {
 			// no remote object && local object
@@ -1024,7 +1039,7 @@ func (item *Item) _removeMeta(reason string) {
 		fs.Debugf(item.name, "vfs cache: removed metadata from cache as %s", reason)
 	}
 	if item.info.Journal != "" && (err == nil || os.IsNotExist(err)) {
-		if e := syncParents(filepath.Dir(osPathMeta)); e != nil {
+		if e := item.c.syncManagedParents(filepath.Dir(osPathMeta)); e != nil {
 			fs.Errorf(item.name, "cache metadata removal not durable: %v", e)
 			return
 		}
@@ -1041,7 +1056,7 @@ func (item *Item) _removeMeta(reason string) {
 //
 // call with lock held
 func (item *Item) _remove(reason string) (wasWriting bool) {
-	if item.info.Journal != "" && (item.info.Dirty || item.info.MutationSeq > item.info.StagedSeq || item.managedStaging) {
+	if item.info.Journal != "" && (item.info.Dirty || item.info.MutationSeq > item.info.StagedSeq || item.managedStaging || item.namespacePins != 0) {
 		fs.Errorf(item.name, "retaining pending local-save journal during cache removal: %s", reason)
 		return false
 	}
@@ -1077,7 +1092,7 @@ func (item *Item) RemoveNotInUse(maxAge time.Duration, emptyOnly bool) (removed 
 	spaceFreed = 0
 	removed = false
 
-	if item.opens != 0 || item.info.Dirty || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil {
+	if item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.graceTimer != nil || item.managedStaging || item.managedStageError != nil {
 		return
 	}
 
@@ -1118,7 +1133,7 @@ func (item *Item) Reset() (rr ResetResult, spaceFreed int64, err error) {
 	// The item is not being used now.  Just remove it instead of resetting it.
 	// Items in their grace period are treated as in-use; the cache
 	// cleaner will pick them up on the next pass.
-	if item.opens == 0 && !item.info.Dirty && item.graceTimer == nil {
+	if item.opens == 0 && item.pendingAccesses == 0 && item.namespacePins == 0 && !item.info.Dirty && item.graceTimer == nil {
 		spaceFreed = item.info.Rs.Size()
 		if item._remove("Removing old cache file not in use") {
 			fs.Errorf(item.name, "item removed when it was writing/uploaded")
@@ -1142,7 +1157,7 @@ func (item *Item) Reset() (rr ResetResult, spaceFreed int64, err error) {
 	   operation needs the cache mutex, which is held here.  We skip this file now. The
 	   caller (the cache cleaner thread) may retry resetting this item if the cache size does
 	   not reduce below quota. */
-	if item.pendingAccesses > 0 {
+	if item.pendingAccesses > 0 || item.namespacePins > 0 {
 		return SkippedPendingAccess, 0, nil
 	}
 
@@ -1631,6 +1646,12 @@ func (item *Item) rename(name string, newName string, newObj fs.Object) (err err
 
 	// Set internal state
 	item.name = newName
+	if item.c.managed.Load() {
+		item.info.Detached = isDetachedManagedName(newName)
+		if item.info.Detached {
+			item.managedStoreFn = nil
+		}
+	}
 	item.managedDirsDurable = false
 	item.o = newObj
 	item._updateFingerprint()
@@ -1642,6 +1663,9 @@ func (item *Item) rename(name string, newName string, newObj fs.Object) (err err
 	err2 := rename(item.c.toOSPathMeta(name), item.c.toOSPathMeta(newName)) // No locking in Cache
 	if err2 != nil {
 		err = err2
+	}
+	if err == nil && item.c.managed.Load() {
+		err = item.saveManaged()
 	}
 
 	item.mu.Unlock()

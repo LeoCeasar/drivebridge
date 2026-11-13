@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rclone/rclone/internal/bridge/platform"
 	"hash/crc32"
 	"math"
 	"os"
@@ -46,7 +47,7 @@ func scanManagedJournal(p string, persisted Info) (*managedJournal, Info, int64,
 		off := int64(binary.LittleEndian.Uint64(h[16:24]))
 		size := binary.LittleEndian.Uint64(h[24:32])
 		if binary.LittleEndian.Uint32(h[:4]) != journalMagic || size > maxJournalPayload || off < 0 || int64(size) > math.MaxInt64-pos-journalHeader || pos+journalHeader+int64(size) > stat.Size() {
-			if pos < persisted.JournalEnd {
+			if pos < persisted.JournalEnd || kind == journalCheckpointRecord {
 				return nil, persisted, 0, errors.New("invalid committed local-save record")
 			}
 			break
@@ -57,10 +58,9 @@ func scanManagedJournal(p string, persisted Info) (*managedJournal, Info, int64,
 		}
 		crc := crc32.Update(0, crc32.IEEETable, h[:32])
 		if crc32.Update(crc, crc32.IEEETable, data) != binary.LittleEndian.Uint32(h[32:36]) {
-			if pos < persisted.JournalEnd {
-				return nil, persisted, 0, errors.New("committed local-save checksum mismatch")
-			}
-			break
+			// A complete record with a bad checksum is corruption, including a
+			// checkpoint newer than derived metadata. Never silently roll it back.
+			return nil, persisted, 0, errors.New("local-save checksum mismatch")
 		}
 		end := pos + journalHeader + int64(size)
 		switch kind {
@@ -148,6 +148,7 @@ func scanManagedJournal(p string, persisted Info) (*managedJournal, Info, int64,
 		return nil, persisted, 0, errors.New("invalid local-save acknowledgement sequence")
 	}
 	info.Dirty = info.MutationSeq > info.StagedSeq
+	info.Detached = persisted.Detached
 	return j, info, committedEnd, nil
 }
 
@@ -167,7 +168,7 @@ func readManagedJournal(p string, persisted Info) (*managedJournal, Info, error)
 		_, _, err = j.append(journalAckRecord, info.StagedSeq, 0, nil)
 	}
 	if err == nil {
-		err = j.file.Sync()
+		err = platform.SyncFile(j.file)
 	}
 	if err != nil {
 		j.close()

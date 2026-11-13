@@ -332,24 +332,31 @@ func TestUnverifiedEmptyUploadRemainsDurableAndBlocked(t *testing.T) {
 		t.Fatal("unverified empty sent")
 	}
 }
-func TestOversizeTemporaryReplacementPreservesBothAcceptedFiles(t *testing.T) {
+func TestOversizeTemporaryReplacementSavesLocallyAndBlocksUpload(t *testing.T) {
 	h := newHarness(t)
 	original := h.read("document.md")
 	target := h.entry("document.md")
 	large := strings.Repeat("x", int(store.LargeSnapshotBytes)+1)
 	temporary := h.save("oversize.tmp", large)
-	if err := h.vfs.Rename("oversize.tmp", "document.md"); !errors.Is(err, model.ErrUnsupportedContent) {
-		t.Fatal(err)
+	if err := h.vfs.Rename("oversize.tmp", "document.md"); err != nil {
+		t.Fatal("cloud size constraint rejected local save", err)
 	}
 	after := h.entry("document.md")
-	source := h.entry("oversize.tmp")
-	if after.ID != target.ID || after.Token != target.Token || after.Local != target.Local || h.read("document.md") != original {
-		t.Fatal("rejected oversized rename changed target")
+	if after.ID != target.ID || after.Token != target.Token || after.Status != model.StatusBlocked || h.blob(after.Local) != large || h.read("document.md") != large {
+		t.Fatal("oversize local replacement was not preserved", after)
 	}
-	if source.ID != temporary.ID || source.FrozenBy != "" || h.blob(source.Local) != large {
-		t.Fatal("accepted oversized temporary input was lost")
+	source, err := h.store.Entry(h.ctx, temporary.ID)
+	if err != nil || source.FrozenBy != "" || h.blob(source.Local) != large {
+		t.Fatal("accepted temporary history lost", source, err)
+	}
+	if h.blob(after.LocalCheckpoint) != original || h.cloud.doc(t, h.docToken) != original {
+		t.Fatal("upload limit must retain previous confirmed baseline and cloud body")
+	}
+	if _, err := h.store.EntryByRemote(h.ctx, "oversize.tmp"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("replacement retained obsolete source path", err)
 	}
 }
+
 func TestNewMarkdownCreationPersistsInputAndUniqueNameBeforeCloudCall(t *testing.T) {
 	h := newHarness(t)
 	content := "new document 中文😀\n"

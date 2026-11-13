@@ -62,7 +62,7 @@ func writeEvidence(t *testing.T, env, name string, v any) {
 		t.Fatal(err)
 	}
 	if _, err = f.Write(append(data, '\n')); err == nil {
-		err = f.Sync()
+		err = platform.SyncFile(f)
 	}
 	closeErr := f.Close()
 	if err != nil || closeErr != nil {
@@ -97,15 +97,27 @@ func TestNativeMount(t *testing.T) {
 	}
 	h := newHarness(t)
 	point := filepath.Join(h.root, "native-mount")
+	if runtime.GOOS == "darwin" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		point = filepath.Join(home, "Shared", "DriveBridge-Native-Acceptance-"+string(h.scope.MountID))
+	}
 	if err := os.Mkdir(point, 0700); err != nil {
 		t.Fatal(err)
 	}
+	defer os.Remove(point)
 	options := mountlib.Opt
 	options.Daemon = false
 	options.AllowOther = false
 	options.AllowRoot = false
 	options.DeviceName = "DriveBridge integration " + string(h.scope.MountID)
-	_, unmount, actual, err := mount(h.vfs, point, &options)
+	if runtime.GOOS == "darwin" {
+		options.NoAppleXattr = true
+		options.ExtraOptions = append(options.ExtraOptions, "local")
+	}
+	mountErrors, unmount, actual, err := mount(h.vfs, point, &options)
 	if err != nil {
 		t.Fatalf("native driver mount failed: %v", err)
 	}
@@ -121,13 +133,39 @@ func TestNativeMount(t *testing.T) {
 	}
 	doc := filepath.Join(point, "document.md")
 	initial := []byte("alpha beta gamma\n\nstable anchor 中文😀\n\ntail\n")
-	info, err := os.Stat(doc)
-	if err != nil || info.Size() != int64(len(initial)) {
-		t.Fatal(info, err)
+	deadline := time.Now().Add(10 * time.Second)
+	var info os.FileInfo
+	for {
+		info, err = os.Stat(doc)
+		if err == nil {
+			break
+		}
+		select {
+		case err := <-mountErrors:
+			t.Fatalf("native mount exited before ready: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native mount not ready", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if info.Size() < 0 {
+		t.Fatal("cold placeholder has invalid size", info.Size())
+	}
+	h.cloud.mu.Lock()
+	initialMutations := h.cloud.applies + h.cloud.uploads + h.cloud.creates + h.cloud.deletes
+	h.cloud.mu.Unlock()
+	if initialMutations != 0 {
+		t.Fatal("cold metadata triggered cloud mutation")
 	}
 	got, err := os.ReadFile(doc)
 	if err != nil || string(got) != string(initial) {
 		t.Fatal(string(got), err)
+	}
+	info, err = os.Stat(doc)
+	if err != nil || info.Size() != int64(len(initial)) {
+		t.Fatal("hydrated getattr has incorrect size", info, err)
 	}
 	identity := h.entry("document.md")
 	tmp := filepath.Join(point, "editor.tmp")
@@ -139,7 +177,7 @@ func TestNativeMount(t *testing.T) {
 	if _, err = f.Write(body); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.Sync(); err != nil {
+	if err = platform.SyncFile(f); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.Close(); err != nil {
@@ -156,7 +194,7 @@ func TestNativeMount(t *testing.T) {
 	if err != nil || string(got) != string(body) {
 		t.Fatal(string(got), err)
 	}
-	checks := []string{"target-getattr-exact-size", "immutable-read", "os-write-fsync-close", "os-atomic-rename-keeps-token"}
+	checks := []string{"cold-placeholder-metadata", "cold-read-hydrates-exact-size", "immutable-read", "os-write-fsync-close", "os-atomic-rename-keeps-token"}
 	for _, fault := range []struct {
 		name string
 		code int32
@@ -173,36 +211,33 @@ func TestNativeMount(t *testing.T) {
 		}
 		h.io.errno.Store(fault.code)
 		h.io.fail.Store(true)
-		syncErr := f.Sync()
+		syncErr := platform.SyncFile(f)
 		closeErr := f.Close()
-		h.io.fail.Store(false)
-		if !errors.Is(syncErr, fault.want) {
-			t.Fatalf("%s not returned through actual OS fsync: %v", fault.name, syncErr)
+		if syncErr != nil || closeErr != nil {
+			t.Fatalf("%s background archive failure rejected local journal save: fsync=%v close=%v", fault.name, syncErr, closeErr)
 		}
-		if closeErr == nil {
-			t.Fatalf("%s was hidden by actual OS close", fault.name)
+		if err = h.vfs.DrainManagedArchives(h.ctx); !errors.Is(err, fault.want) {
+			t.Fatalf("%s background archive failure was not reported: %v", fault.name, err)
 		}
-		unchanged := h.entry("document.md")
-		if unchanged.Generation != before.Generation || unchanged.Local != before.Local {
-			t.Fatal("failed native sync accepted a generation")
-		}
-		retry, err := os.OpenFile(doc, os.O_RDWR|os.O_TRUNC, 0600)
+		unchanged, err := h.store.EntryByRemote(h.ctx, "document.md")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = retry.Write(content); err != nil {
-			t.Fatal(err)
-		}
-		if err = retry.Sync(); err != nil {
-			t.Fatal(err)
-		}
-		if err = retry.Close(); err != nil {
-			t.Fatal(err)
+		if unchanged.Generation != before.Generation || unchanged.Local != before.Local {
+			t.Fatal("failed background archive changed accepted Store generation")
 		}
 		if got, err = os.ReadFile(doc); err != nil || string(got) != string(content) {
-			t.Fatal(string(got), err)
+			t.Fatal("journal save unavailable while archive failed", string(got), err)
 		}
-		checks = append(checks, "native-fsync-close-"+fault.name+"-and-retry")
+		h.io.fail.Store(false)
+		if err = h.vfs.DrainManagedArchives(h.ctx); err != nil {
+			t.Fatal("background archive did not recover without rewriting", err)
+		}
+		accepted := h.entry("document.md")
+		if accepted.ID != before.ID || accepted.Token != before.Token || h.blob(accepted.Local) != string(content) {
+			t.Fatal("background archive recovery lost saved bytes or resource identity")
+		}
+		checks = append(checks, "native-local-fsync-close-success-background-archive-"+fault.name+"-and-retry-without-rewrite")
 	}
 	h.cloud.mu.Lock()
 	cloudMutations := h.cloud.applies + h.cloud.uploads + h.cloud.creates + h.cloud.deletes
@@ -211,5 +246,5 @@ func TestNativeMount(t *testing.T) {
 		t.Fatal("native durability smoke unexpectedly performed cloud mutation")
 	}
 	sum := sha256.Sum256(got)
-	writeEvidence(t, "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR", "native-"+string(h.scope.MountID)+".json", map[string]any{"schema_version": 1, "mode": "managed-overlay-synthetic-provider-native-driver", "goos": runtime.GOOS, "goarch": runtime.GOARCH, "engine": engine, "checks": checks, "final_sha256": hex.EncodeToString(sum[:]), "completed_at": time.Now().UTC(), "faults": "injected Store.SyncFile errors observed through kernel fsync/close, not a physically full disk"})
+	writeEvidence(t, "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR", "native-"+string(h.scope.MountID)+".json", map[string]any{"schema_version": 1, "mode": "managed-overlay-synthetic-provider-native-driver", "goos": runtime.GOOS, "goarch": runtime.GOARCH, "engine": engine, "checks": checks, "final_sha256": hex.EncodeToString(sum[:]), "completed_at": time.Now().UTC(), "faults": "injected background Store.SyncFile archive EIO/ENOSPC; native local journal fsync/close succeed; not a physically full disk"})
 }

@@ -115,7 +115,7 @@
     if (name === 'history') historyView?.load();
     document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
     $('page-label').textContent = titles[name]; document.title = `${titles[name]} · DriveBridge`;
-    $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '查看本机保存和云端确认，处理需要你决定的差异。';
+    $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '本机保存立即生效；后台每5分钟同步各文件的最新保存版本，上传期间的新修改留待下一轮。';
     $('mount-panel').hidden = conflicts; $('conflict-summary').hidden = conflicts; $('setup-shortcut').hidden = conflicts; $('conflict-area').hidden = !conflicts;
   }
   document.querySelectorAll('[data-view]').forEach(e => e.addEventListener('click', () => view(e.dataset.view)));
@@ -139,6 +139,7 @@
     const meta = make('div',undefined,'mount-meta'), budget = mount.cache_max_bytes, retention = recovery.retentionLabel(mount.cache_max_age);
     if (budget > 0 && typeof state.cache_bytes === 'number') meta.append(meter(`正文缓存 ${recovery.formatBytes(state.cache_bytes)} / ${recovery.formatBytes(budget)}（软上限）`,state.cache_bytes,budget,retention));
     else if (budget > 0) meta.append(make('span',`正文缓存上限 ${recovery.formatBytes(budget)}（软上限）${retention ? '，' + retention : ''}`,'mount-path'));
+    if (state.cloud_sync_interval) meta.append(make('span','云端每5分钟同步最新保存版本；所有保存仍保留修改历史。','mount-path'));
     const index = state.directory_index;
     if (index && index.known > 0) meta.append(meter(`目录清单 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,index.failed ? '部分更新失败，保留旧清单' : index.refreshing ? '后台更新中' : ''));
     return meta;

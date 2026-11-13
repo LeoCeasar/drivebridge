@@ -10,7 +10,7 @@ import (
 // A single local edit can change and insert same-kind paragraphs, making their
 // individual identities ambiguous despite an unchanged remote. For plain,
 // supported content only, remove the first changed unique block, then let the
-// normal step/readback loop insert the desired sequence. Keep all shared prefix
+// normal step/readback loop insert the desired sequence. Keep shared anchor
 // IDs and never borrow the explicit-human flag to weaken verification.
 func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (model.MergeResult, error) {
 	result, err := PlanStep(base, local, remote)
@@ -41,8 +41,27 @@ func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (mode
 		i++
 	}
 	// A wholly unanchored rewrite keeps the existing conflict protection.
-	if i == 0 || i >= len(remote.Blocks) || countHash(remote.Blocks, remote.Blocks[i].Hash) != 1 {
+	if i >= len(remote.Blocks) || countHash(remote.Blocks, remote.Blocks[i].Hash) != 1 {
 		return result, nil
+	}
+	if i == 0 {
+		// A unique surviving interior anchor also fixes identity when a leading
+		// paragraph becomes a heading. Only remove a block absent from the desired
+		// document; the retained anchor itself must never be the fallback target.
+		desiredCounts := map[string]int{}
+		for _, a := range desired {
+			desiredCounts[a.Hash]++
+		}
+		anchored := false
+		for j := 1; j < len(old); j++ {
+			if countHash(remote.Blocks, remote.Blocks[j].Hash) == 1 && desiredCounts[old[j].Hash] == 1 {
+				anchored = true
+				break
+			}
+		}
+		if !anchored || desiredCounts[old[0].Hash] != 0 {
+			return result, nil
+		}
 	}
 	target := remote.Blocks[i]
 	validated.Operations = []model.Operation{operation(model.OperationBlockDelete, target.RemoteID, "", model.OperationPayload{BeforeHash: target.Hash})}

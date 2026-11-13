@@ -713,7 +713,11 @@ func TestRenameAbortAndFrozenTree(t *testing.T) {
 	if _, _, err = s.Prepare(ctx, flushed.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PrepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: "dir", Dst: "moved"}); !errors.Is(err, ErrBusy) {
+	activeRename, err := s.PrepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: "dir", Dst: "moved"})
+	if err != nil {
+		t.Fatalf("local rename must preserve active upload work: %v", err)
+	}
+	if err = s.AbortNamespace(ctx, activeRename.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.EntryByRemote(ctx, "dir/file"); err != nil {

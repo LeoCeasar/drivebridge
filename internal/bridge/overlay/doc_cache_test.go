@@ -1,7 +1,9 @@
 package overlay
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -91,6 +93,7 @@ func TestLegacyImageBackfillPreservesPendingDraft(t *testing.T) {
 	if err := f.PrepareManagedRead(ctx, "manual.md"); err != nil {
 		t.Fatal(err)
 	}
+	waitForDocumentMedia(t, f, en)
 	after, err := st.Entry(ctx, en.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -220,12 +223,13 @@ func TestDocumentImageBackfillThroughAbsoluteNativeOpen(t *testing.T) {
 	f, st, base, managed, _ := bodyCacheIntegration(t, nil)
 	source := &assetSource{Source: base, body: "cached native image"}
 	f.source = source
-	acceptAssets(t, st, "manual.md", "doc", "1", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
+	en := acceptAssets(t, st, "manual.md", "doc", "1", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
 	file, err := managed.Open("/manual.md")
 	if err != nil {
 		t.Fatal("native absolute path rejected", err)
 	}
 	file.Close()
+	waitForDocumentMedia(t, f, en)
 	if source.opens != 1 {
 		t.Fatal("native document open failed to prepare images", source.opens)
 	}
@@ -265,5 +269,240 @@ func TestLegacyImagesRemainWhenAnotherEntryStillReferencesDocument(t *testing.T)
 	}
 	if body(t, image) != source.body {
 		t.Fatal("other entry lost shared image cache")
+	}
+}
+
+func TestCachedDocumentReadSurvivesMissingImagesOffline(t *testing.T) {
+	f, st, base := fixture(t)
+	f.source = &assetSource{Source: base, err: errors.New("offline")}
+	acceptAssets(t, st, "manual.md", "doc", "accepted text", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
+	if err := f.PrepareManagedRead(ctx, "manual.md"); err != nil {
+		t.Fatal("image failure rejected locally accepted text", err)
+	}
+	obj, err := f.NewObject(ctx, "manual.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := body(t, obj); got != "accepted text" {
+		t.Fatal(got)
+	}
+}
+
+type stalledMediaSource struct {
+	Source
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *stalledMediaSource) OpenDocMedia(ctx context.Context, token string) (io.ReadCloser, error) {
+	if token != "image" {
+		return io.NopCloser(strings.NewReader("other image")), nil
+	}
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+		return nil, errors.New("offline")
+	}
+}
+
+func TestCachedDocumentReadsDoNotWaitForImageCloud(t *testing.T) {
+	f, st, base := fixture(t)
+	source := &stalledMediaSource{Source: base, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	f.source = source
+	defer close(source.release)
+	acceptAssets(t, st, "manual.md", "doc", "accepted text", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
+	result := make(chan error, 1)
+	go func() { result <- f.PrepareManagedRead(ctx, "manual.md") }()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cached text open waited for image download")
+	}
+	select {
+	case <-source.entered:
+	case <-time.After(time.Second):
+		t.Fatal("legacy media was not scheduled for backfill")
+	}
+	for i := 0; i < 10; i++ {
+		if err := f.PrepareManagedRead(ctx, "manual.md"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.docMediaMu.Lock()
+	queued := len(f.docMediaQueue)
+	f.docMediaMu.Unlock()
+	if queued != 0 {
+		t.Fatal("repeated cached reads queued duplicate downloads", queued)
+	}
+	obj, err := f.NewObject(ctx, "manual.md")
+	if err != nil || body(t, obj) != "accepted text" {
+		t.Fatal("stalled media hid cached text", err)
+	}
+	// An explicit image open for a different document is independent of the
+	// blocked background download.
+	acceptAssets(t, st, "other.md", "other", "1", []model.DocAsset{{Token: "other-image", Path: assetPath("other-image")}})
+	other, err := f.NewObject(ctx, assetPath("other-image"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageResult := make(chan error, 1)
+	go func() {
+		r, err := other.Open(ctx)
+		if err == nil {
+			_, err = io.Copy(io.Discard, r)
+			r.Close()
+		}
+		imageResult <- err
+	}()
+	select {
+	case err := <-imageResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unrelated image open waited for blocked document")
+	}
+	if f.Features().Shutdown == nil {
+		t.Fatal("background media worker has no shutdown")
+	}
+	if err := f.Features().Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDocumentAssetManifestReusesVerifiedImmutableSnapshot(t *testing.T) {
+	f, st, _ := fixture(t)
+	p := assetPath("image")
+	en := acceptAssets(t, st, "manual.md", "doc", "1", []model.DocAsset{{Token: "image", Path: p}})
+	if _, err := f.NewObject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	sn := mustSnapshot(t, st, en.RemoteCheckpoint)
+	r, err := st.ReadBlob(ctx, sn.XML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := r.(interface{ Name() string }).Name()
+	r.Close()
+	if err := os.Rename(name, name+".held"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Rename(name+".held", name)
+	for i := 0; i < 3; i++ {
+		if _, err := f.NewObject(ctx, p); err != nil {
+			t.Fatal("warm asset metadata reparsed original XML", err)
+		}
+		if _, err := f.List(ctx, ""); err != nil {
+			t.Fatal("warm directory metadata reparsed original XML", err)
+		}
+	}
+}
+
+func TestCompleteImageCacheEnsureDoesNotReparseXML(t *testing.T) {
+	f, st, base := fixture(t)
+	source := &assetSource{Source: base, body: "cached image"}
+	f.source = source
+	en := acceptAssets(t, st, "manual.md", "doc", "1", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
+	if err := f.ensureDocImages(ctx, en); err != nil {
+		t.Fatal(err)
+	}
+	sn := mustSnapshot(t, st, en.RemoteCheckpoint)
+	r, err := st.ReadBlob(ctx, sn.XML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := r.(interface{ Name() string }).Name()
+	r.Close()
+	if err := os.Rename(name, name+".held"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Rename(name+".held", name)
+	for i := 0; i < 3; i++ {
+		if err := doccache.Ensure(ctx, st, source, sn); err != nil {
+			t.Fatal("complete cached images require original XML", err)
+		}
+	}
+	if source.opens != 1 {
+		t.Fatal("complete cached images downloaded again", source.opens)
+	}
+}
+
+func waitForDocumentMedia(t *testing.T, f *Fs, en model.Entry) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		f.docMediaMu.Lock()
+		ready := f.docMediaStates[en.RemoteCheckpoint].ready
+		f.docMediaMu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("background document media backfill did not complete")
+}
+
+func TestLegacyImageBackfillRetriesAfterFailureWithoutBlockingText(t *testing.T) {
+	f, st, base := fixture(t)
+	source := &assetSource{Source: base, err: errors.New("offline")}
+	f.source = source
+	en := acceptAssets(t, st, "manual.md", "doc", "accepted text", []model.DocAsset{{Token: "image", Path: assetPath("image")}})
+	if err := f.PrepareManagedRead(ctx, en.Remote); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	failed := false
+	for time.Now().Before(deadline) {
+		f.docMediaMu.Lock()
+		state := f.docMediaStates[en.RemoteCheckpoint]
+		failed = !state.queued && !state.retryAt.IsZero()
+		f.docMediaMu.Unlock()
+		if failed {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !failed {
+		t.Fatal("failed backfill did not become retryable")
+	}
+	for i := 0; i < 3; i++ {
+		if err := f.PrepareManagedRead(ctx, en.Remote); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if source.opens != 1 {
+		t.Fatal("offline text reads retried media without backoff", source.opens)
+	}
+	source.err = nil
+	source.body = "recovered image"
+	// Advance just this snapshot past its retry cooldown without a wall-clock
+	// minute of sleeping. The subsequent read still only schedules the worker.
+	f.docMediaMu.Lock()
+	state := f.docMediaStates[en.RemoteCheckpoint]
+	state.retryAt = time.Time{}
+	f.docMediaStates[en.RemoteCheckpoint] = state
+	f.docMediaMu.Unlock()
+	if err := f.PrepareManagedRead(ctx, en.Remote); err != nil {
+		t.Fatal(err)
+	}
+	waitForDocumentMedia(t, f, en)
+	if source.opens != 2 {
+		t.Fatal("legacy image did not recover in background", source.opens)
+	}
+	for i := 0; i < 3; i++ {
+		if err := f.PrepareManagedRead(ctx, en.Remote); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if source.opens != 2 {
+		t.Fatal("ready cache downloaded again", source.opens)
 	}
 }

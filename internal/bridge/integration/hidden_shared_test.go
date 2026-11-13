@@ -18,6 +18,9 @@ import (
 func TestHiddenSharedVFSRetainsAndResumesAcceptedUploads(t *testing.T) {
 	h := newHarness(t)
 	h.vfs.Shutdown()
+	if err := h.overlay.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	var enabled atomic.Bool
 	enabled.Store(true)
 	const hidden = "hidden-root"

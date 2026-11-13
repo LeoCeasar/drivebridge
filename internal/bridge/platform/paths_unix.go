@@ -26,7 +26,7 @@ func SyncDir(path string) error {
 		return err
 	}
 	defer f.Close()
-	return f.Sync()
+	return SyncFile(f)
 }
 
 // ValidMountpoint checks syntax only; the mount manager checks runtime availability.

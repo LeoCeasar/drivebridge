@@ -109,8 +109,11 @@ func fixture(t *testing.T, gate chan struct{}) (*Manager, model.MountID, *fakeRu
 	if err != nil {
 		t.Fatal(err)
 	}
+	var workers sync.WaitGroup
 	m.spawn = func(context.Context, []string, string) (int, error) {
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			err := m.RunWorker(workerCtx, mid)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				t.Logf("worker exited: %v", err)
@@ -118,7 +121,7 @@ func fixture(t *testing.T, gate chan struct{}) (*Manager, model.MountID, *fakeRu
 		}()
 		return os.Getpid(), nil
 	}
-	t.Cleanup(func() { cancel(); _ = m.Close() })
+	t.Cleanup(func() { cancel(); _ = m.Close(); workers.Wait() })
 	return m, mid, runtime, cancel
 }
 func TestReadyRequiresMountAndIPC(t *testing.T) {

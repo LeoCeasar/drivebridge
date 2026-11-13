@@ -52,6 +52,7 @@ func bodyCacheIntegration(t *testing.T, rejectWrites *atomic.Bool) (*Fs, *store.
 		t.Fatal(err)
 	}
 	f := raw.(*Fs)
+	t.Cleanup(func() { _ = f.Shutdown(ctx) })
 	previous := fsconfig.GetCacheDir()
 	if err := fsconfig.SetCacheDir(filepath.Join(root, "vfs-cache")); err != nil {
 		t.Fatal(err)

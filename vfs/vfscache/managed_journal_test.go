@@ -313,3 +313,61 @@ func TestLocalCheckpointWorkerProcessesAndRebasesAfterClose(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "saved", string(b))
 }
+
+func TestAcknowledgedWALSaveNeedsNoMetadataReplacement(t *testing.T) {
+	c, i, _ := journalItem(t, "")
+	_, err := i.WriteAt([]byte("durable WAL is the save authority"), 0)
+	require.NoError(t, err)
+	originalRename := c.managedIO.rename
+	replacements := 0
+	c.managedIO.rename = func(a, b string) error { replacements++; return originalRename(a, b) }
+	flushCheckpoint(t, i)
+	require.NoError(t, i.Close(nil))
+	require.Zero(t, replacements, "already linked WAL checkpoints need no second metadata fsync+rename")
+	i.closeManagedJournal()
+	recovered := newItem(c, "note.md")
+	require.NoError(t, recovered.Open(nil))
+	require.Equal(t, "durable WAL is the save authority", readJournal(t, recovered))
+	require.NoError(t, recovered.Close(nil))
+	recovered.closeManagedJournal()
+}
+
+func TestTruncatedCheckpointFailsClosedWithDerivedMetadata(t *testing.T) {
+	c, i, _ := journalItem(t, "")
+	_, err := i.WriteAt([]byte("last successful save"), 0)
+	require.NoError(t, err)
+	flushCheckpoint(t, i)
+	require.NoError(t, i.journal.file.Truncate(i.info.JournalEnd-1))
+	_, err = ManagedMetadataPending(c.root, c.metaRoot)
+	require.Error(t, err, "a truncated commit record must not roll back a successful save")
+}
+
+func TestLazyReadGenerationPreventsJournalRetirement(t *testing.T) {
+	c, i, _ := journalItem(t, "")
+	_, err := i.WriteAt([]byte("local immutable read generation"), 0)
+	require.NoError(t, err)
+	flushCheckpoint(t, i)
+	require.NoError(t, i.stageManagedJournal(context.Background(), nil))
+	require.NoError(t, i.Close(nil))
+	release := i.PinReadGeneration()
+	defer release()
+	require.NoError(t, i.compactManagedJournal(context.Background()))
+	require.NotNil(t, i.journal, "lazy reader may still need its WAL generation")
+	_ = c
+}
+
+func TestArchivedJournalIsNotInvalidatedByStaleObject(t *testing.T) {
+	_, i, _ := journalItem(t, "")
+	_, err := i.WriteAt([]byte("current locally saved body"), 0)
+	require.NoError(t, err)
+	flushCheckpoint(t, i)
+	require.NoError(t, i.stageManagedJournal(context.Background(), nil))
+	original := i.journal
+	i.mu.Lock()
+	err = i._checkObject(nil)
+	i.mu.Unlock()
+	require.NoError(t, err)
+	require.Same(t, original, i.journal, "live journal is authoritative over stale incoming metadata")
+	require.Equal(t, "current locally saved body", readJournal(t, i))
+	require.NoError(t, i.Close(nil))
+}

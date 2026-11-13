@@ -56,10 +56,7 @@ func (s *Store) EntryByToken(ctx context.Context, token string) (out model.Entry
 	}
 	found := false
 	err = s.view(ctx, func(tx *bolt.Tx) error {
-		return each[model.Entry](tx, "entries", func(e model.Entry) error {
-			if e.Token != token {
-				return nil
-			}
+		return eachIndexedEntryTx(tx, entryTokens, token, func(e model.Entry) error {
 			if found {
 				return model.ErrIdentityChanged
 			}

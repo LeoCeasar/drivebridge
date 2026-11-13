@@ -121,7 +121,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 	addMount.Flags().String("cache-max-age", defaults.CacheMaxAge, "Unused synced body retention; 0h uses only the capacity budget")
 	addMount.Flags().String("macos-backend", "", "macOS mount backend: kernel or fskit (empty keeps the default)")
 	addMount.Flags().StringSlice("background-pull-exclude", defaults.BackgroundPullExcludedExtensions, "Suffixes excluded from background body refresh; explicit reads and local uploads remain enabled")
-	addMount.Flags().String("write-back", defaults.WriteBack, "Local write-back delay")
+	addMount.Flags().String("write-back", defaults.WriteBack, "Legacy local cache delay; cloud sync runs in fixed 5-minute cycles")
 	addMount.Flags().Bool("notify", true, "Notify about conflicts when a desktop is available")
 	addMount.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
 		r, err := m.ResolveRemote(ctx, flagString(addMount, "remote"))

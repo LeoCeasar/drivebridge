@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,6 +49,9 @@ func TestRunBlockedActiveRefreshAllowsOtherUploadAndDrainsOnCancel(t *testing.T)
 	}
 	blocked := &blockedActiveSource{Source: source, token: slow.Token, started: make(chan struct{}), cancelled: make(chan struct{}), allowReturn: make(chan struct{}), returned: make(chan struct{})}
 	engine.source = blocked
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	engine.opt.Now = func() time.Time { return time.Unix(0, clock.Load()) }
 	engine.opt.PollInterval = 10 * time.Millisecond
 	engine.opt.DirectoryInterval = time.Hour
 	engine.deps.ActiveEntries = func() []model.EntryID { return []model.EntryID{slow.ID} }
@@ -79,6 +83,7 @@ func TestRunBlockedActiveRefreshAllowsOtherUploadAndDrainsOnCancel(t *testing.T)
 		t.Fatal("active refresh never started")
 	}
 	stageContent(t, s, target, "upload while another refresh is blocked")
+	clock.Add(int64(5 * time.Minute))
 	select {
 	case <-published:
 	case <-time.After(2500 * time.Millisecond):

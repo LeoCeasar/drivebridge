@@ -15,6 +15,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
+	syncer "github.com/rclone/rclone/internal/bridge/sync"
 )
 
 func errorCode(err error) string {
@@ -117,7 +118,7 @@ func ExitCode(err error) int {
 	}
 }
 func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.MountStatus, error) {
-	out := model.MountStatus{SchemaVersion: 1, MountID: id, LocalSaved: true, CloudState: "synced"}
+	out := model.MountStatus{CloudSyncInterval: syncer.BackgroundSyncInterval.String(), SchemaVersion: 1, MountID: id, LocalSaved: true, CloudState: "synced"}
 	jobs, err := s.Pending(ctx)
 	if err != nil {
 		return out, err
@@ -219,7 +220,7 @@ func (m *Manager) Status(ctx context.Context, id model.MountID) (model.MountStat
 	if err = m.validateOwnership(ctx, spec); err != nil {
 		return out, err
 	}
-	out = model.MountStatus{SchemaVersion: 1, MountID: id, CloudState: "stopped", LocalSaved: true}
+	out = model.MountStatus{CloudSyncInterval: syncer.BackgroundSyncInterval.String(), SchemaVersion: 1, MountID: id, CloudState: "stopped", LocalSaved: true}
 	if _, statErr := os.Stat(filepath.Join(spec.Paths.Root, "store.db")); statErr == nil {
 		lock, lockErr := privateLock(m.runtimeLockPath(id))
 		if lockErr != nil {
@@ -286,7 +287,7 @@ func (m *Manager) startupStatus(ctx context.Context, spec mountSpec) (model.Moun
 	if !os.IsNotExist(err) {
 		return out, err
 	}
-	out = model.MountStatus{SchemaVersion: 1, MountID: spec.Mount.ID, CloudState: "starting"}
+	out = model.MountStatus{CloudSyncInterval: syncer.BackgroundSyncInterval.String(), SchemaVersion: 1, MountID: spec.Mount.ID, CloudState: "starting"}
 	readLastWorkerError(spec.Paths.Root, &out)
 	return out, nil
 }

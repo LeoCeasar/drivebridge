@@ -151,3 +151,42 @@ func TestNativeMacOSBackendOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRuntimeCloseJoinsFilesystemShutdown(t *testing.T) {
+	for _, adapterShutdown := range []bool{false, true} {
+		t.Run(fmt.Sprint(adapterShutdown), func(t *testing.T) {
+			f, err := memory.NewFs(context.Background(), "shutdown-"+uuid.NewString(), "", configmap.Simple{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			f.Features().Shutdown = func(ctx context.Context) error {
+				if err := ctx.Err(); err != nil {
+					t.Fatal("filesystem shutdown inherited canceled mount context", err)
+				}
+				calls++
+				return nil
+			}
+			options := vfscommon.Opt
+			options.CacheMode = vfscommon.CacheModeOff
+			options.PollInterval = 0
+			v, err := vfs.NewManaged(context.Background(), f, &options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := &nativeRuntime{v: v, adapterShutdown: adapterShutdown}
+			if adapterShutdown {
+				v.Shutdown()
+			}
+			if err := n.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := n.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatal("native runtime did not join filesystem worker exactly once", calls)
+			}
+		})
+	}
+}

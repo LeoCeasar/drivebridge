@@ -127,7 +127,10 @@ func liveJobEntry(tx *bolt.Tx, r jobRecord) (model.Entry, error) {
 	if err = get(tx, "metadata", string(e.ID), &metadata); err != nil {
 		return e, err
 	}
-	if metadata.Tombstone {
+	// Namespace intent may be accepted while an admitted predecessor is still
+	// reconciling. Preserve that journal through verification; namespace cloud
+	// dispatch waits for it. Queued/cancelled work cannot enter through this path.
+	if metadata.Tombstone && !active(r.Job.State) {
 		return e, ErrNotFound
 	}
 	return e, nil
@@ -263,12 +266,18 @@ func (s *Store) Prepare(ctx context.Context, id model.JobID) (model.Job, model.E
 			if rec.Job.State != model.StatusQueued {
 				return ErrInvalidState
 			}
+			if managedEntryPending(tx, e.ID) {
+				return ErrBusy
+			}
 			if inflight(tx, e.ID, id) || priorPending(tx, rec.Job) {
 				return ErrBusy
 			}
 			var m Metadata
 			if err = get(tx, "metadata", string(e.ID), &m); err != nil {
 				return err
+			}
+			if m.FuseSoftRemove != "" {
+				return ErrFrozen
 			}
 			if m.Tombstone {
 				return ErrNotFound
@@ -554,6 +563,13 @@ func (s *Store) CommitPublication(ctx context.Context, c model.PublishCandidate)
 			return model.ErrVersionChanged
 		}
 		if e.FrozenBy != "" {
+			return ErrFrozen
+		}
+		var metadata Metadata
+		if er = get(tx, "metadata", string(e.ID), &metadata); er != nil {
+			return er
+		}
+		if metadata.FuseSoftRemove != "" {
 			return ErrFrozen
 		}
 		var p publication

@@ -39,11 +39,7 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	// classification with namespace preparation so a new virtual target cannot
 	// slip between the readonly check and an atomic replacement reservation.
 	editorBackup := model.EditorTildeBackup(src, dst)
-	if editorBackup {
-		f.listMu.Lock()
-	} else if err := f.lockNamespace(ctx, parentPath(src), parentPath(dst)); err != nil {
-		return "", err
-	}
+	f.listMu.Lock()
 	defer f.listMu.Unlock()
 	if target, err := f.store.EntryByRemote(ctx, dst); err == nil {
 		if err = f.requireWritable(ctx, target); err != nil {
@@ -68,9 +64,6 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 	if err = f.requireWritable(ctx, source); err != nil {
 		return "", err
 	}
-	if source.Token != "" && source.Kind == model.KindDocx && !strings.EqualFold(path.Ext(dst), ".md") && !editorBackup {
-		return "", model.ErrUnsupportedContent
-	}
 	if _, err = f.directory(ctx, parentPath(dst)); err != nil {
 		return "", err
 	}
@@ -88,92 +81,23 @@ func (f *Fs) BeginManagedRename(ctx context.Context, src, dst string) (string, e
 		return "", err
 	}
 	safeSaveBackup := kind == "rename" && source.Kind == model.KindFile && source.Token != "" && safeSaveSibling(src, dst)
-	var op model.NamespaceOp
-	if editorBackup && source.Token != "" && (source.Kind == model.KindFile || source.Kind == model.KindDocx) {
-		op, err = f.store.PrepareEditorBackup(ctx, src, dst)
-	} else {
-		op, err = f.store.PrepareNamespace(ctx, model.NamespaceOp{Kind: kind, Src: src, Dst: dst})
-	}
+	op, err := f.store.PrepareManagedRename(ctx, model.NamespaceOp{Kind: kind, Src: src, Dst: dst}, editorBackup && source.Token != "" && (source.Kind == model.KindFile || source.Kind == model.KindDocx), newKind(dst), f.localOnlyPath, safeSaveSibling)
 	if err != nil {
 		return "", err
 	}
-	kind = op.Kind
 	if safeSaveBackup && !editorBackup {
 		if err = f.store.ConfigureSafeSaveBackup(ctx, op.ID); err != nil {
 			_ = f.store.AbortNamespace(ctx, op.ID)
 			return "", err
 		}
 	}
-	if kind == "rename" && source.Token == "" && source.Kind != model.KindFolder {
-		if err = f.store.ConfigureNamespaceKind(ctx, op.ID, newKind(dst)); err != nil {
-			_ = f.store.AbortNamespace(ctx, op.ID)
-			return "", err
-		}
-	}
-	work, err := f.store.NamespaceJournal(ctx, op.ID)
-	if err != nil {
-		_ = f.store.AbortNamespace(ctx, op.ID)
-		return "", err
-	}
-	locality := map[model.EntryID]bool{}
-	promotion := map[model.EntryID]bool{}
-	for _, before := range work.Before {
-		destination := before.Remote
-		kind := before.Kind
-		if before.Remote == src || strings.HasPrefix(before.Remote, src+"/") {
-			destination = dst + strings.TrimPrefix(before.Remote, src)
-			if before.ID == source.ID && kind != model.KindFolder && source.Token == "" {
-				kind = newKind(dst)
-			}
-		}
-		locality[before.ID] = f.localOnlyPath(destination, kind)
-		if metadata, err := f.store.Metadata(ctx, before.ID); err != nil {
-			_ = f.store.AbortNamespace(ctx, op.ID)
-			return "", err
-		} else if metadata.SafeSaveOriginal != "" {
-			original, err := f.store.Entry(ctx, metadata.SafeSaveOriginal)
-			if err != nil {
-				_ = f.store.AbortNamespace(ctx, op.ID)
-				return "", err
-			}
-			locality[before.ID] = locality[before.ID] || safeSaveSibling(original.Remote, destination)
-		}
-		promotion[before.ID] = f.localOnlyPath(before.Remote, before.Kind) && !locality[before.ID]
-	}
-	if err = f.store.ConfigureNamespaceLocality(ctx, op.ID, locality, promotion); err != nil {
-		_ = f.store.AbortNamespace(ctx, op.ID)
-		return "", err
-	}
 	return op.ID, nil
 }
 func (f *Fs) RenameManaged(ctx context.Context, id string) (fs.Object, error) {
-	// Recheck before commit even if the reservation came from a different local
-	// caller. A committed result remains committed and is handled by recovery.
-	ops, err := f.store.PendingNamespace(ctx)
-	if err != nil {
+	if err := f.validateManagedNamespaceCommit(ctx, id); err != nil {
 		return nil, err
 	}
-	for _, op := range ops {
-		if op.ID != id || op.State == "committed" {
-			continue
-		}
-		for _, remote := range []string{op.Src, op.Dst} {
-			if remote == "" {
-				continue
-			}
-			e, err := f.store.EntryByRemote(ctx, remote)
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if err = f.requireWritable(ctx, e); err != nil {
-				return nil, err
-			}
-		}
-	}
-	_, err = f.store.SealNamespace(ctx, id)
+	_, err := f.store.SealNamespace(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +156,25 @@ func (f *Fs) ReplayManagedNamespace(ctx context.Context, reconcile func(src, dst
 		}
 	}
 	return nil
+}
+
+func (f *Fs) ReplayManagedNamespaceCheckpoints(ctx context.Context, reconcile func(string, string, []model.ManagedCheckpoint) error) error {
+	return f.ReplayManagedNamespace(ctx, func(src, dst string) error {
+		ops, err := f.store.PendingNamespace(ctx)
+		if err != nil {
+			return err
+		}
+		for _, op := range ops {
+			if op.State == "committed" && op.Src == src && op.Dst == dst {
+				refs, err := f.store.ManagedNamespaceCheckpoints(ctx, op.ID)
+				if err != nil {
+					return err
+				}
+				return reconcile(src, dst, refs)
+			}
+		}
+		return ErrRecoveryRequired
+	})
 }
 
 // Move is a safe local fallback. Managed VFS must use Begin before Flush and
@@ -425,4 +368,34 @@ func (f *Fs) finishLocalNamespace(ctx context.Context, id string) error {
 		return err
 	}
 	return f.FinishManagedRename(ctx, id)
+}
+
+func (f *Fs) validateManagedNamespaceCommit(ctx context.Context, id string) error {
+	// Recheck before commit even if the reservation came from a different local
+	// caller. A committed result remains committed and is handled by recovery.
+	ops, err := f.store.PendingNamespace(ctx)
+	if err != nil {
+		return err
+	}
+	for _, op := range ops {
+		if op.ID != id || op.State == "committed" {
+			continue
+		}
+		for _, remote := range []string{op.Src, op.Dst} {
+			if remote == "" {
+				continue
+			}
+			e, err := f.store.EntryByRemote(ctx, remote)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err = f.requireWritable(ctx, e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

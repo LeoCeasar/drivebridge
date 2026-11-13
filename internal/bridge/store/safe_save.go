@@ -47,6 +47,10 @@ func cleanSafeSaveSource(tx *bolt.Tx, e model.Entry, namespace string) (bool, er
 // Unlike a remote rename, a local editor backup may preserve an upload that
 // is queued, blocked or already in flight. It neither cancels nor replays it.
 func editorBackupSource(tx *bolt.Tx, e model.Entry, namespace string) (bool, error) {
+	return editorBackupSourceStateTx(tx, e, namespace, false)
+}
+
+func editorBackupSourceStateTx(tx *bolt.Tx, e model.Entry, namespace string, allowPending bool) (bool, error) {
 	if (e.Kind != model.KindFile && e.Kind != model.KindDocx) || e.Token == "" || e.Local == "" || e.Visible != e.Local || e.RemoteCheckpoint == "" || e.LocalCheckpoint == "" || (e.FrozenBy != "" && e.FrozenBy != namespace) {
 		return false, nil
 	}
@@ -54,8 +58,45 @@ func editorBackupSource(tx *bolt.Tx, e model.Entry, namespace string) (bool, err
 	if err := get(tx, "metadata", string(e.ID), &metadata); err != nil {
 		return false, err
 	}
-	return !metadata.Tombstone && metadata.SafeSavePending == "" && !metadata.SafeSaveParked, nil
+	return !metadata.Tombstone && (allowPending || metadata.SafeSavePending == "") && !metadata.SafeSaveParked, nil
 }
+
+// The next editor cycle can begin before the replacement's background archive.
+// A live identity-bound WAL already protects its bytes. Close the previous
+// causal backup in the same transaction as the new reservation; parked originals
+// and displaced/history-only journals cannot supply that proof.
+func completeManagedEditorCycleTx(tx *bolt.Tx, e model.Entry) error {
+	refs, err := managedEntriesTx(tx)
+	if err != nil {
+		return err
+	}
+	protected := false
+	for key, id := range refs {
+		if id != e.ID {
+			continue
+		}
+		route, err := managedRouteTx(tx, key)
+		if err != nil {
+			return err
+		}
+		if !route.HistoryOnly && !route.Retired && route.Entry.ID == e.ID {
+			protected = true
+			break
+		}
+	}
+	if !protected {
+		return nil
+	}
+	valid, err := editorBackupSourceStateTx(tx, e, "", true)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return nil
+	}
+	return completeSafeSave(tx, e)
+}
+
 func (s *Store) ConfigureSafeSaveBackup(ctx context.Context, id string) error {
 	return s.update(ctx, func(tx *bolt.Tx) error {
 		var r namespaceRecord
@@ -151,10 +192,7 @@ func commitSafeSaveBackup(tx *bolt.Tx, r namespaceRecord) (model.Entry, error) {
 	return shadow, nil
 }
 func parkedSafeSave(tx *bolt.Tx, remote string) (out model.Entry, found bool, err error) {
-	err = each[model.Entry](tx, "entries", func(e model.Entry) error {
-		if e.Remote != remote {
-			return nil
-		}
+	err = eachIndexedEntryTx(tx, entryRemotes, remote, func(e model.Entry) error {
 		var metadata Metadata
 		if err := get(tx, "metadata", string(e.ID), &metadata); err != nil {
 			return err

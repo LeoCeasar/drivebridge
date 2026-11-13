@@ -96,11 +96,14 @@ func (s *Store) RetainManagedEntry(ctx context.Context, key string, id model.Ent
 		if b != "" {
 			bases[key] = b
 		}
+		if err = retainManagedRouteTx(tx, key, e); err != nil {
+			return err
+		}
 		entries[key] = id
-		// Old applications understand mutable cache files only. Advancing the
-		// reader floor before the first WAL write prevents an older binary from
-		// staging the sparse base as if it contained the saved journal bytes.
-		if err = tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("3")); err != nil {
+		// Fence old cache/namespace replay before the first WAL write. The
+		// identity route may later move or retain history-only checkpoint inputs,
+		// which a schema3 reader cannot reconcile safely.
+		if err = raiseReaderFloorTx(tx, 4); err != nil {
 			return err
 		}
 		if err = put(tx, "meta", "managed_bases", bases); err != nil {
@@ -126,7 +129,7 @@ func (s *Store) RetainManagedBase(ctx context.Context, key string, b model.BlobI
 			return model.ErrIdentityChanged
 		}
 		refs[key] = b
-		if err = tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("3")); err != nil {
+		if err = raiseReaderFloorTx(tx, 3); err != nil {
 			return err
 		}
 		return put(tx, "meta", "managed_bases", refs)
@@ -147,6 +150,9 @@ func (s *Store) ReleaseManagedBase(ctx context.Context, key string) error {
 			return err
 		}
 		delete(entries, key)
+		if err = retireManagedRouteTx(tx, key); err != nil {
+			return err
+		}
 		return put(tx, "meta", "managed_entries", entries)
 	})
 }
@@ -170,6 +176,9 @@ func (s *Store) ReconcileManagedBases(ctx context.Context, live map[string]bool)
 		}
 		for key := range entries {
 			if !live[key] {
+				if err = retireManagedRouteTx(tx, key); err != nil {
+					return err
+				}
 				delete(entries, key)
 			}
 		}

@@ -33,7 +33,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	dirs := time.NewTicker(e.opt.DirectoryInterval)
 	defer dirs.Stop()
 	for {
-		if err := e.cycle(ctx); err != nil && ctx.Err() != nil {
+		if err := e.backgroundCycle(ctx); err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		select {
@@ -74,6 +74,15 @@ func (e *Engine) refreshActive(ctx context.Context) {
 }
 
 func (e *Engine) cycle(ctx context.Context) error {
+	return e.cycleWithPolicy(ctx, false)
+}
+func (e *Engine) cycleWithPolicy(ctx context.Context, skipWriteBack bool) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.cycleGate:
+	}
+	defer func() { e.cycleGate <- struct{}{} }()
 	if err := e.check(ctx); err != nil {
 		return err
 	}
@@ -81,8 +90,6 @@ func (e *Engine) cycle(ctx context.Context) error {
 	if e.backgroundShouldYield() {
 		return nil
 	}
-	// Namespace intent precedes dependent content, particularly new parent folders.
-	namespaceErr := e.syncNamespace(ctx)
 	jobs, err := e.store.Pending(ctx)
 	if err != nil {
 		return err
@@ -99,8 +106,12 @@ func (e *Engine) cycle(ctx context.Context) error {
 	}
 	e.retryMu.Unlock()
 	ids := map[model.EntryID]bool{}
+	cutoffs := map[model.EntryID]uint64{}
 	for _, j := range jobs {
 		ids[j.EntryID] = true
+		if j.Generation > cutoffs[j.EntryID] {
+			cutoffs[j.EntryID] = j.Generation
+		}
 	}
 	publications, err := e.store.PendingPublications(ctx)
 	if err != nil {
@@ -108,7 +119,13 @@ func (e *Engine) cycle(ctx context.Context) error {
 	}
 	for _, p := range publications {
 		ids[p.EntryID] = true
+		if p.ExpectedGeneration > cutoffs[p.EntryID] {
+			cutoffs[p.EntryID] = p.ExpectedGeneration
+		}
 	}
+	// Capture durable content before namespace network calls. A save arriving
+	// after this boundary cannot join a file's pass during the current cycle.
+	namespaceErr := e.syncNamespace(ctx)
 	sem := make(chan struct{}, e.opt.Concurrency)
 	var wg sync.WaitGroup
 	for id := range ids {
@@ -119,7 +136,12 @@ func (e *Engine) cycle(ctx context.Context) error {
 		case sem <- struct{}{}:
 		}
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-sem }(); _ = e.SyncEntry(ctx, id) }()
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			cutoff := cutoffs[id]
+			_ = e.syncEntry(ctx, id, &cutoff, skipWriteBack)
+		}()
 	}
 	wg.Wait()
 	if e.deps.OnConflict != nil {

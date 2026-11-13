@@ -422,6 +422,9 @@ func newHarness(t *testing.T) *harness {
 		if h.vfs != nil {
 			h.vfs.Shutdown()
 		}
+		if h.overlay != nil {
+			_ = h.overlay.Shutdown(context.Background())
+		}
 		if h.store != nil {
 			h.store.Close()
 		}
@@ -475,6 +478,9 @@ func (h *harness) open() {
 func (h *harness) restart() {
 	h.t.Helper()
 	h.vfs.Shutdown()
+	if err := h.overlay.Shutdown(context.Background()); err != nil {
+		h.t.Fatal(err)
+	}
 	if err := h.store.Close(); err != nil {
 		h.t.Fatal(err)
 	}

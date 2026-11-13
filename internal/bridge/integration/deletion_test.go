@@ -1,10 +1,8 @@
 package integration
 
 import (
-	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -17,9 +15,11 @@ func TestDeletionActualVFSLocalUnlinkSupersedesUpload(t *testing.T) {
 	if err := h.vfs.Remove("data.bin"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(h.ctx, 200*time.Millisecond)
-	defer cancel()
-	_ = h.engine.Run(ctx)
+	// Exercise deletion explicitly; automatic Run now waits for its fixed
+	// five-minute boundary rather than dispatching immediately on startup.
+	if err := h.engine.SyncNow(h.ctx); err != nil {
+		t.Fatal(err)
+	}
 	h.cloud.mu.Lock()
 	deletes, uploads := h.cloud.deletes, h.cloud.uploads
 	_, remains := h.cloud.resources[h.fileToken]

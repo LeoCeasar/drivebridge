@@ -80,6 +80,7 @@ func fixture(t *testing.T) (*Fs, *store.Store, *fakeSource) {
 	if len(fs.Registry) != registered {
 		t.Fatal("overlay registered backend")
 	}
+	t.Cleanup(func() { _ = raw.(*Fs).Shutdown(ctx) })
 	return raw.(*Fs), st, source
 }
 func put(t *testing.T, f *Fs, name, body string) fs.Object {
@@ -543,7 +544,11 @@ func TestMkdirRmdirAndBoundKindRules(t *testing.T) {
 	if e != nil || entry.Kind != model.KindFile || entry.Token != "raw-token" {
 		t.Fatal(entry, e)
 	}
-	if _, e = f.BeginManagedRename(ctx, "native.md", "native.txt"); !errors.Is(e, model.ErrUnsupportedContent) {
+	op, e := f.BeginManagedRename(ctx, "native.md", "native.txt")
+	if e != nil {
+		t.Fatal("local rename must not depend on cloud document extension", e)
+	}
+	if e = f.AbortManagedRename(ctx, op); e != nil {
 		t.Fatal(e)
 	}
 }

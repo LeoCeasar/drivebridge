@@ -110,6 +110,7 @@ type nativeRuntime struct {
 	v               *vfs.VFS
 	point           *mountlib.MountPoint
 	closeOnce       sync.Once
+	closeErr        error
 	unmountOnce     sync.Once
 	unmountErr      error
 	adapterShutdown bool
@@ -145,8 +146,13 @@ func (n *nativeRuntime) Close() error {
 		if !adapterShutdown {
 			n.v.Shutdown()
 		}
+		// The filesystem's media worker owns the Store too. Join it while
+		// RunWorker still owns the open Store, including adapter-led unmounts.
+		if features := n.v.Fs().Features(); features != nil && features.Shutdown != nil {
+			n.closeErr = features.Shutdown(context.Background())
+		}
 	})
-	return nil
+	return n.closeErr
 }
 func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServices, error) {
 	engineName, mount, err := selectMount()
@@ -227,6 +233,11 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return nil, err
 	}
 	overlayFS := f.(*overlay.Fs)
+	defer func() {
+		if !success {
+			_ = overlayFS.Shutdown(context.Background())
+		}
+	}()
 	if _, err = f.List(ctx, ""); err != nil {
 		return nil, err
 	}
@@ -329,7 +340,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			return allowed, err
 		}
 		return backgroundPullAllowed(ctx, m.LoadConfig, s.Entry, spec.Mount.ID, id)
-	}, ShouldSync: overlayFS.ShouldSync, ShouldSyncPath: overlayFS.SyncPathAllowed, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries}, syncer.Options{WriteBack: duration, PollInterval: poll, DirectoryInterval: dirs})
+	}, ShouldSync: overlayFS.ShouldSync, ShouldSyncPath: overlayFS.SyncPathAllowed, LocalOnly: overlayFS.LocalOnly, ActiveEntries: overlayFS.ActiveEntries}, syncer.Options{PollInterval: poll, DirectoryInterval: dirs})
 	if err != nil {
 		native.Unmount()
 		return nil, err
@@ -368,7 +379,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			return out, ErrPending
 		}
 		return
-	}, store: s, runtime: native, run: backgroundRun, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
+	}, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
 		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {

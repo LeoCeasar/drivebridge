@@ -70,3 +70,59 @@ func (f *Fs) ReleaseManagedSnapshot(ctx context.Context, key string) error {
 func (f *Fs) ReconcileManagedSnapshots(ctx context.Context, live map[string]bool) error {
 	return f.store.ReconcileManagedBases(ctx, live)
 }
+
+// Body preparation is outside Store namespace transactions. Acceptance resolves
+// the journal's current identity inside the same transaction as rename/replace.
+func (f *Fs) ArchiveManagedCheckpoint(ctx context.Context, key string, seq uint64, in io.Reader, src fs.ObjectInfo) (fs.Object, error) {
+	b, err := f.store.PutBlob(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	current, err := f.store.ManagedCheckpointEntry(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	localOnly := f.localOnlyPath(current.Remote, current.Kind)
+	e, err := f.store.AcceptManagedCheckpoint(ctx, key, seq, b, localOnly)
+	if err != nil {
+		if errors.Is(err, store.ErrFrozen) || errors.Is(err, store.ErrBusy) {
+			return nil, managedArchiveRetry{err}
+		}
+		return nil, err
+	}
+	m, err := f.store.Metadata(ctx, e.ID)
+	if err != nil {
+		return nil, err
+	}
+	// History-only generations intentionally have no visible path. The worker
+	// owns their immutable bytes but must not resurrect an overlay object.
+	e.Local, e.Visible = b, b
+	return &Object{f: f, e: e, m: m, size: src.Size()}, nil
+}
+
+type managedArchiveRetry struct{ error }
+
+func (managedArchiveRetry) Temporary() bool { return true }
+func (e managedArchiveRetry) Unwrap() error { return e.error }
+
+func (f *Fs) BindManagedNamespace(ctx context.Context, id string, inputs []model.ManagedCheckpoint) error {
+	return f.store.BindManagedNamespace(ctx, id, inputs)
+}
+
+func (f *Fs) CommitManagedRename(ctx context.Context, id string, inputs []model.ManagedCheckpoint) (fs.Object, error) {
+	if err := f.validateManagedNamespaceCommit(ctx, id); err != nil {
+		return nil, err
+	}
+	e, err := f.store.CommitManagedNamespace(ctx, id, inputs)
+	if err != nil {
+		return nil, err
+	}
+	if e.Kind == model.KindFolder {
+		return nil, nil
+	}
+	o, err := f.object(ctx, e)
+	if err != nil {
+		return nil, &CommittedError{Err: err}
+	}
+	return o, nil
+}

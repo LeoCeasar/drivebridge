@@ -87,6 +87,15 @@ type Fs struct {
 	active            map[model.EntryID]time.Time
 	listed            map[model.EntryID]bool
 	docMediaMu        sync.Mutex
+	docMediaFlights   map[model.SnapshotID]*docMediaFlight
+	docMediaStates    map[model.SnapshotID]docMediaState
+	docMediaQueue     chan model.Entry
+	docMediaCancel    context.CancelFunc
+	docMediaDone      chan struct{}
+	docMediaClosed    bool
+	docManifestMu     sync.Mutex
+	docManifests      map[model.SnapshotID][]model.DocAsset
+	docManifestOrder  []model.SnapshotID
 	materialMu        sync.Mutex
 	materializing     map[model.EntryID]*materialization
 }
@@ -142,7 +151,7 @@ func New(d Dependencies) (fs.Fs, error) {
 	}
 	f := &Fs{store: d.Store, source: source, scope: sc, patterns: patterns, refreshing: make(map[model.EntryID]*directoryRefresh), directoryFailures: make(map[model.EntryID]bool), warmSeen: make(map[model.EntryID]bool), warmQueued: make(map[model.EntryID]bool), materializing: make(map[model.EntryID]*materialization), active: make(map[model.EntryID]time.Time), listed: make(map[model.EntryID]bool)}
 	f.deletionCommit = d.DeletionCommit
-	f.features = &fs.Features{CanHaveEmptyDirectories: true, Move: f.Move}
+	f.features = &fs.Features{CanHaveEmptyDirectories: true, Move: f.Move, Shutdown: f.Shutdown}
 	if d.TempPatterns == nil {
 		if _, err := d.Store.ReconcileSystemMetadata(context.Background()); err != nil {
 			return nil, err
@@ -185,7 +194,8 @@ func (f *Fs) LocalOnly(remote string) bool {
 func (f *Fs) localOnlyPath(remote string, kind model.Kind) bool {
 	parts := strings.Split(remote, "/")
 	for i, component := range parts {
-		if safeSaveDirectory.MatchString(component) && (i < len(parts)-1 || kind == model.KindFolder) {
+		isSaveDirectory := safeSaveDirectory.MatchString(component) || component == "(A Document Being Saved By Typora)"
+		if isSaveDirectory && (i < len(parts)-1 || kind == model.KindFolder) {
 			return true
 		}
 	}
@@ -337,7 +347,7 @@ func (f *Fs) cachedDirectory(ctx context.Context, parent model.Entry) (fs.DirEnt
 			result = append(result, o)
 		}
 	}
-	assets, err := f.docAssets(ctx, parent.Remote)
+	assets, err := f.readDocAssets(ctx, parent.Remote, true)
 	if err != nil {
 		return nil, err
 	}

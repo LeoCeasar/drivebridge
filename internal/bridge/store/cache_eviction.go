@@ -105,7 +105,7 @@ type cachePrune struct {
 }
 
 func cleanBody(e model.Entry, m Metadata) bool {
-	return e.Kind != model.KindFolder && e.Token != "" && e.Status == model.StatusSynced && e.Local != "" && e.Local == e.LocalCheckpoint && e.Local == e.Visible && e.RemoteCheckpoint != "" && e.Desired == "" && e.FrozenBy == "" && !m.Tombstone && m.VirtualType == "" && m.SafeSavePending == "" && !m.SafeSaveParked && m.SafeSaveOriginal == ""
+	return e.Kind != model.KindFolder && e.Token != "" && e.Status == model.StatusSynced && e.Local != "" && e.Local == e.LocalCheckpoint && e.Local == e.Visible && e.RemoteCheckpoint != "" && e.Desired == "" && e.FrozenBy == "" && !m.Tombstone && m.VirtualType == "" && m.FuseSoftRemove == "" && m.SafeSavePending == "" && !m.SafeSaveParked && m.SafeSaveOriginal == ""
 }
 func namespaceTouches(r namespaceRecord, e model.Entry) bool {
 	if r.Op.SrcID == e.ID || r.Op.DstID == e.ID || r.Op.ResultID == e.ID {

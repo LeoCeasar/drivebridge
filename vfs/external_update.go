@@ -64,11 +64,13 @@ type ManagedNamespaceReplayer interface {
 }
 
 type managedState struct {
-	nativeNotify func(string)
-	paused       int
-	mu           sync.Mutex
-	handles      map[*admission]struct{}
-	reservations map[*reservation]struct{}
+	namespacePublications map[*reservation]chan struct{}
+	nativeNotify          func(string)
+	paused                int
+	mu                    sync.Mutex
+	handles               map[*admission]struct{}
+	reservations          map[*reservation]struct{}
+	readPublications      map[*reservation]chan struct{}
 }
 type admission struct {
 	m         *managedState
@@ -82,7 +84,7 @@ type reservation struct {
 }
 
 func newManagedState() *managedState {
-	return &managedState{handles: map[*admission]struct{}{}, reservations: map[*reservation]struct{}{}}
+	return &managedState{handles: map[*admission]struct{}{}, reservations: map[*reservation]struct{}{}, readPublications: map[*reservation]chan struct{}{}, namespacePublications: map[*reservation]chan struct{}{}}
 }
 func managedPath(s string) string { return strings.TrimPrefix(path.Clean("/"+s), "/") }
 func related(a, b string) bool {
@@ -93,21 +95,51 @@ func (m *managedState) admit(name string, write, directory bool) (*admission, er
 		return nil, nil
 	}
 	name = managedPath(name)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.paused > 0 {
-		return nil, ErrExternalUpdateBusy
-	}
-	for r := range m.reservations {
-		for _, p := range r.paths {
-			if related(name, p) {
-				return nil, ErrExternalUpdateBusy
+	for {
+		m.mu.Lock()
+		if m.paused > 0 {
+			m.mu.Unlock()
+			return nil, ErrExternalUpdateBusy
+		}
+		var wait <-chan struct{}
+		for r := range m.reservations {
+			publication := m.readPublications[r]
+			if publication != nil && !write {
+				continue
+			}
+			for _, p := range r.paths {
+				if related(name, p) {
+					if namespace := m.namespacePublications[r]; namespace != nil {
+						if directory && !write && name != p && (name == "" || strings.HasPrefix(p, name+"/")) {
+							continue
+						}
+						wait = namespace
+						break
+					}
+					if publication != nil {
+						wait = publication
+						break
+					}
+					m.mu.Unlock()
+					return nil, ErrExternalUpdateBusy
+				}
+			}
+			if wait != nil {
+				break
 			}
 		}
+		if wait != nil {
+			// Publication callbacks only commit prepared local metadata. A writer
+			// waits for that atomic change, without holding admission exclusion.
+			m.mu.Unlock()
+			<-wait
+			continue
+		}
+		a := &admission{m: m, path: name, write: write, directory: directory}
+		m.handles[a] = struct{}{}
+		m.mu.Unlock()
+		return a, nil
 	}
-	a := &admission{m: m, path: name, write: write, directory: directory}
-	m.handles[a] = struct{}{}
-	return a, nil
 }
 func (a *admission) release() {
 	if a == nil {
@@ -132,6 +164,10 @@ func (m *managedState) reserve(paths []string, readers bool) (*reservation, erro
 	return m.reserveWithPause(paths, readers, false)
 }
 func (m *managedState) reserveWithPause(paths []string, readers, allowPaused bool) (*reservation, error) {
+	return m.reserveWithPauseMode(paths, readers, allowPaused, false)
+}
+
+func (m *managedState) reserveWithPauseMode(paths []string, readers, allowPaused, allowReads bool) (*reservation, error) {
 	if m == nil {
 		return nil, nil
 	}
@@ -159,6 +195,9 @@ func (m *managedState) reserveWithPause(paths []string, readers, allowPaused boo
 	}
 	r := &reservation{m, paths}
 	m.reservations[r] = struct{}{}
+	if allowReads {
+		m.readPublications[r] = make(chan struct{})
+	}
 	return r, nil
 }
 func (r *reservation) release() {
@@ -167,7 +206,26 @@ func (r *reservation) release() {
 	}
 	r.m.mu.Lock()
 	delete(r.m.reservations, r)
+	if done := r.m.namespacePublications[r]; done != nil {
+		delete(r.m.namespacePublications, r)
+		close(done)
+	}
+	if done := r.m.readPublications[r]; done != nil {
+		delete(r.m.readPublications, r)
+		close(done)
+	}
 	r.m.mu.Unlock()
+}
+
+// A committed namespace requiring recovery remains reserved, but opens must
+// receive an error rather than wait forever for a publication that cannot finish.
+func (r *reservation) failNamespaceWaiters() {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if done := r.m.namespacePublications[r]; done != nil {
+		delete(r.m.namespacePublications, r)
+		close(done)
+	}
 }
 func (m *managedState) migrate(old, new string) {
 	if m == nil {
@@ -224,18 +282,22 @@ func (v *VFS) tryExternalUpdate(ctx context.Context, remote string, commit func(
 		return err
 	}
 	name := managedPath(remote)
-	r, e := m.reserveWithPause([]string{name}, true, true)
+	r, e := m.reserveWithPauseMode([]string{name}, true, true, true)
 	if e != nil {
 		return e
 	}
 	defer r.release()
+	var publishCache func() error
 	if v.cache != nil {
-		if e = v.cache.InvalidateClean(name); e != nil {
+		var releaseCache func()
+		publishCache, releaseCache, e = v.cache.PrepareReadPublication(name)
+		if e != nil {
 			if errors.Is(e, vfscache.ErrBusy) {
 				return ErrExternalUpdateBusy
 			}
 			return e
 		}
+		defer releaseCache()
 	}
 	if e = ctx.Err(); e != nil {
 		return e
@@ -243,6 +305,18 @@ func (v *VFS) tryExternalUpdate(ctx context.Context, remote string, commit func(
 	o, e := commit()
 	if e != nil {
 		return e
+	}
+	// Reader construction binds its cache generation and object under m.mu.
+	// The callback runs outside this lock, so reads never wait for publication work.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if o == nil && !allowRemoval {
+		return fmt.Errorf("managed publication returned nil object")
+	}
+	if publishCache != nil {
+		if e = publishCache(); e != nil {
+			return e
+		}
 	}
 	if o == nil {
 		if allowRemoval {
@@ -298,14 +372,25 @@ func (f *File) materializeManaged(ctx context.Context) error {
 	f.mu.RLock()
 	o, v := f.o, f.d.vfs
 	f.mu.RUnlock()
+	// Bind local cache observations to the same generation switch as new readers.
+	m := v.managed.Load()
+	if m != nil {
+		m.mu.Lock()
+	}
 	if v.cache != nil {
 		if local, size, ok := v.cache.ManagedLocalFile(f.CachePath()); ok {
 			if local != nil {
 				f.setObjectNoUpdate(local)
 			}
 			f.setSize(size)
+			if m != nil {
+				m.mu.Unlock()
+			}
 			return nil
 		}
+	}
+	if m != nil {
+		m.mu.Unlock()
 	}
 	if o == nil || o.Size() >= 0 {
 		return nil
@@ -314,12 +399,21 @@ func (f *File) materializeManaged(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("managed filesystem cannot materialize unknown size")
 	}
+	before := o
 	o, e := mm.MaterializeManaged(ctx, f.Path())
 	if e != nil {
 		return e
 	}
 	if o == nil || o.Size() < 0 {
 		return fmt.Errorf("managed materializer returned unknown size")
+	}
+	if m != nil {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
+	// A completed publication owns the inode if materialization finished later.
+	if f.getObject() != before {
+		return nil
 	}
 	f.setObjectNoUpdate(o)
 	f.setSize(o.Size())

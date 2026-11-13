@@ -3,8 +3,10 @@ package doccache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"maps"
+	"os"
 
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -30,6 +32,38 @@ func Ensure(ctx context.Context, st *store.Store, source any, sn model.Snapshot)
 	if side.ProjectionVersion != 2 || len(side.Assets) == 0 {
 		return nil
 	}
+	// Current snapshots already carry the complete bundle. Legacy snapshots
+	// may have a revision-bound backfill saved separately. In either case,
+	// reuse its local bodies before reading or decoding the original XML.
+	cached := sn.DocMedia
+	if len(cached) == 0 {
+		cached, err = st.CachedDocMedia(ctx, sn.Token, sn.Revision)
+		if err != nil {
+			return err
+		}
+	}
+	ready := true
+	for _, asset := range side.Assets {
+		blob := cached[asset.Path]
+		if blob == "" {
+			ready = false
+			break
+		}
+		body, readErr := st.ReadBlob(ctx, blob)
+		if errors.Is(readErr, os.ErrNotExist) {
+			ready = false
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if err := body.Close(); err != nil {
+			return err
+		}
+	}
+	if ready {
+		return nil
+	}
 	r, err = st.ReadBlob(ctx, sn.XML)
 	if err != nil {
 		return err
@@ -53,7 +87,7 @@ func Ensure(ctx context.Context, st *store.Store, source any, sn model.Snapshot)
 	if maps.Equal(prepared.DocMedia, sn.DocMedia) {
 		return nil
 	}
-	cached, err := st.CachedDocMedia(ctx, sn.Token, sn.Revision)
+	cached, err = st.CachedDocMedia(ctx, sn.Token, sn.Revision)
 	if err != nil {
 		return err
 	}

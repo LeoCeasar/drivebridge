@@ -93,9 +93,15 @@ func (c *Cache) RenameManagedTree(src, dst string, resolve func(string) (fs.Obje
 	c.mu.Unlock()
 	sort.Strings(dests)
 	sort.Strings(sources)
-	for _, p := range dests {
-		if e := c.InvalidateClean(p); e != nil {
+	if c.UsesManagedCheckpointArchive() {
+		if e := c.DetachManagedTree(dst); e != nil {
 			return e
+		}
+	} else {
+		for _, p := range dests {
+			if e := c.InvalidateClean(p); e != nil {
+				return e
+			}
 		}
 	}
 	for _, p := range sources {
@@ -108,7 +114,7 @@ func (c *Cache) RenameManagedTree(src, dst string, resolve func(string) (fs.Obje
 			return e
 		}
 		for _, dir := range []string{filepath.Dir(c.toOSPath(p)), filepath.Dir(c.toOSPath(target)), filepath.Dir(c.toOSPathMeta(p)), filepath.Dir(c.toOSPathMeta(target))} {
-			if e = syncParents(dir); e != nil {
+			if e = c.syncManagedParents(dir); e != nil {
 				return e
 			}
 		}

@@ -42,6 +42,16 @@ func (f *Fs) object(ctx context.Context, e model.Entry) (*Object, error) {
 		return &Object{f: f, e: e, m: m, size: int64(len(content)), virtual: content}, nil
 	}
 	size := int64(-1)
+	if e.Status == model.StatusQueued || e.Visible == "" {
+		pendingSize, modTime, pending, err := f.store.PendingManagedSize(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		if pending {
+			m.ModTime = modTime
+			return &Object{f: f, e: e, m: m, size: pendingSize}, nil
+		}
+	}
 	if e.Visible != "" {
 		r, err := f.store.ReadBlob(ctx, e.Visible)
 		if err != nil {

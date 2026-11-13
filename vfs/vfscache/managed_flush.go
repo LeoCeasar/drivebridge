@@ -19,6 +19,7 @@ import (
 type managedIOOps struct {
 	syncFile func(*os.File) error
 	rename   func(string, string) error
+	syncDir  func(string) error
 }
 
 const managedTempPrefix = ".rclone-managed-meta-"
@@ -44,7 +45,7 @@ func (item *Item) saveManaged() error {
 		return e
 	}
 	if !item.managedDirsDurable {
-		if e = syncParents(dir); e != nil {
+		if e = item.c.syncManagedParents(dir); e != nil {
 			return e
 		}
 		item.managedDirsDurable = true
@@ -133,7 +134,7 @@ func (item *Item) flushManagedLocked(ctx context.Context, storeFn StoreFn) (fs.O
 	if e := item.c.managedIO.syncFile(item.fd); e != nil {
 		return nil, e
 	}
-	if e := syncParents(filepath.Dir(item.c.toOSPath(item.name))); e != nil {
+	if e := item.c.syncManagedParents(filepath.Dir(item.c.toOSPath(item.name))); e != nil {
 		return nil, e
 	}
 	previous := item.info.DurableSeq

@@ -136,7 +136,9 @@ func TestManagedEditorSaveNeverRestoresOldCloudBody(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.OfferRemote(ctx, en.ID, current.Generation, old, old.Markdown); !errors.Is(err, store.ErrBusy) {
+		// Archival may advance the generation between this metadata read and
+		// the remote offer. Either guard must reject the stale cloud body.
+		if _, err := st.OfferRemote(ctx, en.ID, current.Generation, old, old.Markdown); !errors.Is(err, store.ErrBusy) && !errors.Is(err, model.ErrGenerationChanged) {
 			t.Fatal("cloud observation can replace pending local save", err)
 		}
 		r, err := managed.Open("manual.md")

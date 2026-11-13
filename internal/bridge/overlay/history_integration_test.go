@@ -50,7 +50,7 @@ func TestHistoryRestoresOldDocumentImagesWithoutCloudDownload(t *testing.T) {
 	f.source = source
 	oldAsset := model.DocAsset{Token: "old-image", Name: "old.png", MIME: "image/png", Path: assetPath("old-image")}
 	e := acceptAssets(t, s, "manual.md", "doc", "r1", []model.DocAsset{oldAsset})
-	if err := f.PrepareManagedRead(ctx, "manual.md"); err != nil {
+	if err := f.ensureDocImages(ctx, e); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.TouchManagedAccess(ctx, "manual.md"); err != nil {
@@ -79,7 +79,7 @@ func TestHistoryRestoresOldDocumentImagesWithoutCloudDownload(t *testing.T) {
 	source.body = "new-image-payload"
 	newAsset := model.DocAsset{Token: "new-image", Name: "new.png", MIME: "image/png", Path: assetPath("new-image")}
 	e = acceptAssets(t, s, "manual.md", "doc", "r2", []model.DocAsset{newAsset})
-	if err = f.PrepareManagedRead(ctx, "manual.md"); err != nil {
+	if err = f.ensureDocImages(ctx, e); err != nil {
 		t.Fatal(err)
 	}
 	parent, err := s.EntryByRemote(ctx, "")

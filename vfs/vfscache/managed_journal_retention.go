@@ -52,7 +52,7 @@ func (c *Cache) reconcileManagedBasePins(ctx context.Context) error {
 		}
 	}
 	if removed {
-		if err = syncParents(journalRoot(c.metaRoot)); err != nil {
+		if err = c.syncManagedParents(journalRoot(c.metaRoot)); err != nil {
 			return err
 		}
 	}
@@ -80,7 +80,7 @@ func (item *Item) removeManagedJournalFiles() error {
 	if err = os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = syncParents(journalRoot(item.c.metaRoot)); err != nil {
+	if err = item.c.syncManagedParents(journalRoot(item.c.metaRoot)); err != nil {
 		return err
 	}
 	return item.releaseManagedBase(id)

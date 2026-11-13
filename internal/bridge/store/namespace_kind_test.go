@@ -73,7 +73,7 @@ func TestUnboundTempReplacementKeepsDocxKind(t *testing.T) {
 	}
 }
 
-func TestNamespaceCannotReclassifyBoundOrOversizeContent(t *testing.T) {
+func TestNamespaceReclassifiesOversizeLocalContentButNotBoundIdentity(t *testing.T) {
 	s, _, _ := openTest(t)
 	e := bind(t, s, entry(t, s, "old.bin"), "bound")
 	op, err := s.PrepareNamespace(ctx, model.NamespaceOp{Kind: "rename", Src: e.Remote, Dst: "old.md"})
@@ -98,8 +98,12 @@ func TestNamespaceCannotReclassifyBoundOrOversizeContent(t *testing.T) {
 	if _, err = s.SealNamespace(ctx, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.CommitNamespace(ctx, op.ID); !errors.Is(err, model.ErrUnsupportedContent) {
-		t.Fatal(err)
+	current, err := s.CommitNamespace(ctx, op.ID)
+	if err != nil {
+		t.Fatalf("oversize text must remain locally saved: %v", err)
+	}
+	if current.Kind != model.KindDocx || current.Local != e.Local || current.Status != model.StatusBlocked {
+		t.Fatalf("local document state: %+v", current)
 	}
 }
 

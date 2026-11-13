@@ -17,10 +17,13 @@ import (
 // transferred to the remote.
 type RWFileHandle struct {
 	// read only variables
-	file  *File
-	d     *Dir
-	flags int            // open flags
-	item  *vfscache.Item // cached file item
+	file                  *File
+	d                     *Dir
+	flags                 int            // open flags
+	item                  *vfscache.Item // cached file item
+	readObject            fs.Object
+	readObjectPinned      bool
+	releaseReadGeneration func()
 
 	// read write variables protected by mutex
 	mu          sync.Mutex
@@ -42,6 +45,14 @@ func (fh *RWFileHandle) Unlock() error {
 
 func newRWFileHandle(d *Dir, f *File, flags int) (fh *RWFileHandle, err error) {
 	defer log.Trace(f.Path(), "")("err=%v", &err)
+	// Bind a managed reader to one cache generation and immutable object.
+	// Publication only holds this lock for its local generation switch.
+	managedRead := d.vfs.managed.Load() != nil && flags&(accessModeMask|os.O_CREATE|os.O_TRUNC) == os.O_RDONLY
+	if managedRead {
+		m := d.vfs.managed.Load()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
 	// get an item to represent this from the cache
 	item := d.vfs.cache.Item(f.CachePath())
 
@@ -57,6 +68,12 @@ func newRWFileHandle(d *Dir, f *File, flags int) (fh *RWFileHandle, err error) {
 		d:     d,
 		flags: flags,
 		item:  item,
+	}
+
+	if managedRead {
+		fh.readObject = f.getObject()
+		fh.readObjectPinned = true
+		fh.releaseReadGeneration = item.PinReadGeneration()
 	}
 
 	// truncate immediately if O_TRUNC is set or O_CREATE is set and file doesn't exist
@@ -99,6 +116,9 @@ func (fh *RWFileHandle) openPending() (err error) {
 	defer fh.file.muRW.Unlock()
 
 	o := fh.file.getObject()
+	if fh.readObjectPinned {
+		o = fh.readObject
+	}
 	err = fh.item.Open(o)
 	if err != nil {
 		return fmt.Errorf("open RW handle failed to open cache file: %w", err)
@@ -112,7 +132,9 @@ func (fh *RWFileHandle) openPending() (err error) {
 		fh.offset = 0
 	}
 	fh.opened = true
-	fh.d.addObject(fh.file) // make sure the directory has this object in it now
+	if !fh.readObjectPinned || fh.item.GetName() == fh.file.CachePath() {
+		fh.d.addObject(fh.file) // detached old readers must not republish their inode
+	}
 	return nil
 }
 
@@ -163,6 +185,9 @@ func (fh *RWFileHandle) close() (err error) {
 	}
 
 	fh.closed = true
+	if fh.releaseReadGeneration != nil {
+		defer fh.releaseReadGeneration()
+	}
 	fh.updateSize()
 	if fh.opened {
 		err = fh.item.Close(fh.file.setObject)
@@ -238,6 +263,9 @@ func (fh *RWFileHandle) _size() int64 {
 	size, err := fh.item.GetSize()
 	if err != nil {
 		o := fh.file.getObject()
+		if fh.readObjectPinned {
+			o = fh.readObject
+		}
 		if o != nil {
 			size = o.Size()
 		} else {
@@ -245,7 +273,9 @@ func (fh *RWFileHandle) _size() int64 {
 			size = 0
 		}
 	}
-	fh.file.setSize(size)
+	if !fh.readObjectPinned {
+		fh.file.setSize(size)
+	}
 	return size
 }
 

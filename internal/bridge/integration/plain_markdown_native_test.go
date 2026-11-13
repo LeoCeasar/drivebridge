@@ -93,6 +93,12 @@ func TestNativePlainMarkdownMerge(t *testing.T) {
 	if err = os.WriteFile(file, []byte("alpha local collision\nbeta remote extended text\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if body, err := os.ReadFile(file); err != nil || string(body) != "alpha local collision\nbeta remote extended text\n" {
+		t.Fatalf("native local journal read before archive: %q err=%v", body, err)
+	}
+	// OS close acknowledges the local journal. Explicitly join its background
+	// Store handoff before asking the cloud engine to process this edit.
+	entry = h.entry(plainMDName)
 	if err = h.engine.SyncEntry(h.ctx, entry.ID); !errors.Is(err, model.ErrVersionChanged) {
 		t.Fatal(err)
 	}

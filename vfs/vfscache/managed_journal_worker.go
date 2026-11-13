@@ -25,6 +25,7 @@ func (c *Cache) wakeManagedWorker() {
 // StopManagedArchives joins the worker before its Store is closed or files are
 // replaced by an upgrade. Accepted, unfinished checkpoints stay on disk.
 func (c *Cache) StopManagedArchives() {
+	defer c.closeManagedDirectories()
 	if c.managedCancel != nil {
 		c.managedCancel()
 		<-c.managedDone
@@ -57,10 +58,15 @@ func (c *Cache) managedJournalWorker(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			c.archiveMu.RLock()
+			identityArchive := c.UsesManagedCheckpointArchive()
+			if !identityArchive {
+				c.archiveMu.RLock()
+			}
 			err := i.stageManagedJournal(ctx, nil)
-			c.archiveMu.RUnlock()
-			if err != nil && ctx.Err() == nil {
+			if !identityArchive {
+				c.archiveMu.RUnlock()
+			}
+			if err != nil && ctx.Err() == nil && !managedArchiveTemporary(err) {
 				fs.Errorf(i.GetName(), "local save is preserved; background archive will retry: %v", err)
 			}
 		}
@@ -81,7 +87,15 @@ func (item *Item) stageManagedJournal(ctx context.Context, fn StoreFn) (err erro
 	}
 	item.managedStaging = true
 	item.mu.Unlock()
-	defer func() { item.mu.Lock(); item.managedStaging = false; item.managedStageError = err; item.mu.Unlock() }()
+	defer func() {
+		item.mu.Lock()
+		item.managedStaging = false
+		item.managedStageError = err
+		if managedArchiveTemporary(err) {
+			item.managedStageError = nil
+		}
+		item.mu.Unlock()
+	}()
 	for {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -111,7 +125,12 @@ func (item *Item) stageManagedJournal(ctx context.Context, fn StoreFn) (err erro
 			return e
 		}
 		src := object.NewStaticObjectInfo(name, cp.info.ModTime, cp.info.Size, true, nil, item.c.fremote)
-		o, e := item.c.fremote.Put(ctx, reader, src)
+		var o fs.Object
+		if archive, ok := item.c.fremote.(managedCheckpointArchiver); ok {
+			o, e = archive.ArchiveManagedCheckpoint(ctx, cp.info.Journal, cp.info.DurableSeq, reader, src)
+		} else {
+			o, e = item.c.fremote.Put(ctx, reader, src)
+		}
 		e = errors.Join(e, reader.Close())
 		if e != nil {
 			return e
@@ -125,15 +144,19 @@ func (item *Item) stageManagedJournal(ctx context.Context, fn StoreFn) (err erro
 			e = item.c.managedIO.syncFile(j.file)
 		}
 		if e == nil {
-			item.o = o
+			if !item.info.Detached && o.Remote() == item.name {
+				item.o = o
+			}
 			item.info.StagedSeq = cp.info.MutationSeq
 			item.info.Dirty = item.info.MutationSeq > item.info.StagedSeq
 			item._updateFingerprint()
-			e = item.saveManaged()
 		}
 		callback := fn
 		if callback == nil {
 			callback = item.managedStoreFn
+		}
+		if item.info.Detached || o.Remote() != item.name {
+			callback = nil
 		}
 		item.mu.Unlock()
 		if e != nil {
@@ -143,6 +166,11 @@ func (item *Item) stageManagedJournal(ctx context.Context, fn StoreFn) (err erro
 			callback(o)
 		}
 	}
+}
+
+func managedArchiveTemporary(err error) bool {
+	var retry interface{ Temporary() bool }
+	return errors.As(err, &retry) && retry.Temporary()
 }
 
 // DrainManagedArchives waits for locally accepted checkpoints only. It does not
@@ -176,8 +204,14 @@ func (c *Cache) BlockManagedArchives() func() {
 // short publication section checks that no new edits arrived in the meantime.
 func (item *Item) compactManagedJournal(ctx context.Context) (err error) {
 	item.mu.Lock()
+	detached := item.info.Detached
+	item.mu.Unlock()
+	if detached {
+		return item.retireDetachedJournal(ctx)
+	}
+	item.mu.Lock()
 	j := item.journal
-	if j == nil || item.opens != 0 || item.info.Dirty || item.info.MutationSeq != item.info.StagedSeq || len(j.checkpoints) == 0 {
+	if j == nil || item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.Dirty || item.info.MutationSeq != item.info.StagedSeq || len(j.checkpoints) == 0 {
 		item.mu.Unlock()
 		return nil
 	}
@@ -208,13 +242,13 @@ func (item *Item) compactManagedJournal(ctx context.Context) (err error) {
 	defer item.snapshotMu.Unlock()
 	item.mu.Lock()
 	defer item.mu.Unlock()
-	if item.journal != j || item.name != name || item.opens != 0 || item.info.MutationSeq != cp.info.MutationSeq || item.info.Dirty || item.fd != nil {
+	if item.journal != j || item.name != name || item.opens != 0 || item.pendingAccesses != 0 || item.namespacePins != 0 || item.info.MutationSeq != cp.info.MutationSeq || item.info.Dirty || item.fd != nil {
 		return nil
 	}
 	if err = item.c.managedIO.rename(tmp.Name(), dataPath); err != nil {
 		return err
 	}
-	if err = syncParents(filepath.Dir(dataPath)); err != nil {
+	if err = item.c.syncManagedParents(filepath.Dir(dataPath)); err != nil {
 		return err
 	}
 	if _, _, err = j.append(journalRetireRecord, cp.info.MutationSeq, 0, nil); err != nil {
@@ -240,7 +274,7 @@ func (item *Item) compactManagedJournal(ctx context.Context) (err error) {
 	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = syncParents(journalRoot(item.c.metaRoot)); err != nil {
+	if err = item.c.syncManagedParents(journalRoot(item.c.metaRoot)); err != nil {
 		return err
 	}
 	return item.releaseManagedBase(id)

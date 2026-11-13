@@ -298,7 +298,7 @@ func (s blockedVirtualList) List(context.Context, string) ([]larkcli.DriveItem, 
 	<-s.release
 	return s.items, nil
 }
-func TestVirtualListingAndReplacementClassificationBarrier(t *testing.T) {
+func TestLocalNamespaceDoesNotWaitForRemoteClassification(t *testing.T) {
 	f, st, s := fixture(t)
 	put(t, f, "temp", "data")
 	s.items = []larkcli.DriveItem{{Token: "sheet", Name: "sheet", Type: "sheet", URL: "https://provider.example/a"}}
@@ -307,21 +307,35 @@ func TestVirtualListingAndReplacementClassificationBarrier(t *testing.T) {
 	listing := make(chan error, 1)
 	go func() { listing <- f.RefreshDirectory(ctx, "") }()
 	<-block.entered
-	rename := make(chan error, 1)
-	go func() { _, e := f.BeginManagedRename(ctx, "temp", "sheet.url"); rename <- e }()
+	type result struct {
+		id  string
+		err error
+	}
+	rename := make(chan result, 1)
+	go func() { id, err := f.BeginManagedRename(ctx, "temp", "sheet.url"); rename <- result{id, err} }()
 	select {
-	case e := <-rename:
+	case r := <-rename:
+		if r.err != nil {
+			close(block.release)
+			<-listing
+			t.Fatal(r.err)
+		}
+		if err := f.AbortManagedRename(ctx, r.id); err != nil {
+			close(block.release)
+			<-listing
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
 		close(block.release)
 		<-listing
-		t.Fatal("rename passed incomplete classification", e)
-	case <-time.After(30 * time.Millisecond):
+		t.Fatal("local namespace waited for cloud listing")
 	}
 	close(block.release)
 	if err := <-listing; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-rename; !errors.Is(err, fs.ErrorPermissionDenied) {
-		t.Fatal(err)
+	if _, err := f.BeginManagedRename(ctx, "temp", "sheet.url"); !errors.Is(err, fs.ErrorPermissionDenied) {
+		t.Fatal("known virtual target lost readonly protection", err)
 	}
 	ops, _ := st.PendingNamespace(ctx)
 	if len(ops) != 0 {

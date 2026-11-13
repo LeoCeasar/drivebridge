@@ -3,6 +3,7 @@ package vfscache
 import (
 	"context"
 	"errors"
+	"github.com/rclone/rclone/lib/file"
 	"github.com/rclone/rclone/lib/ranges"
 	"io"
 	"os"
@@ -182,7 +183,7 @@ func (item *Item) managedJournalReader(ctx context.Context, cp journalCheckpoint
 			b, _ := item.localJournalBackend()
 			base, err = b.OpenManagedSnapshot(ctx, j.base.Snapshot)
 		} else if j.base.Info.Rs.Present(ranges.Range{Pos: 0, Size: j.base.Info.Size}) {
-			base, err = os.Open(item.c.toOSPath(item.name))
+			base, err = file.OpenFile(item.c.toOSPath(item.name), os.O_RDONLY, 0)
 		} else {
 			err = errors.New("original file was not cached; local save retained")
 		}

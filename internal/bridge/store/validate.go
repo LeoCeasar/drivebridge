@@ -61,7 +61,7 @@ func (s *Store) validateSupported(ctx context.Context, allowLegacy bool) error {
 		}
 		version := string(meta.Get([]byte("schema_version")))
 		legacy := allowLegacy && version == "1"
-		if version != "2" && version != "3" && !legacy {
+		if version != "2" && version != "3" && version != "4" && !legacy {
 			return errors.New("unknown store schema")
 		}
 		for _, b := range buckets {

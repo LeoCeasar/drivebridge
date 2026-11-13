@@ -22,6 +22,7 @@ import (
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/rc"
+	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/lib/diskusage"
 	"github.com/rclone/rclone/lib/encoder"
@@ -42,12 +43,15 @@ import (
 
 // Cache opened files
 type Cache struct {
-	managed       atomic.Bool
-	managedIO     managedIOOps
-	managedWake   chan struct{}
-	managedDone   chan struct{}
-	managedCancel context.CancelFunc
-	archiveMu     sync.RWMutex
+	managedDirsMu     sync.Mutex
+	managedDirs       map[string]os.FileInfo
+	managedDirHandles map[string]*os.File
+	managed           atomic.Bool
+	managedIO         managedIOOps
+	managedWake       chan struct{}
+	managedDone       chan struct{}
+	managedCancel     context.CancelFunc
+	archiveMu         sync.RWMutex
 	// read only - no locking needed to read these
 	ctx        context.Context      // context for cache lifetime
 	fremote    fs.Fs                // fs for the remote we are caching
@@ -148,12 +152,18 @@ func newCache(ctx context.Context, fremote fs.Fs, opt *vfscommon.Options, avFn A
 		avFn:       avFn,
 	}
 
-	c.managedIO = managedIOOps{syncFile: func(f *os.File) error { return f.Sync() }, rename: platform.ReplaceFile}
+	c.managedIO = managedIOOps{syncFile: platform.SyncFile, rename: platform.ReplaceFile}
 	if managed {
 		c.opt.HandleCaching = 0
 	}
 	c.managed.Store(managed)
-	if replay != nil {
+	if r, ok := fremote.(interface {
+		ReplayManagedNamespaceCheckpoints(context.Context, func(string, string, []model.ManagedCheckpoint) error) error
+	}); managed && ok {
+		if err := r.ReplayManagedNamespaceCheckpoints(ctx, c.recoverManagedNamespace); err != nil {
+			return nil, err
+		}
+	} else if replay != nil {
 		if err := replay(ctx, c.discardCommittedNamespace); err != nil {
 			return nil, err
 		}

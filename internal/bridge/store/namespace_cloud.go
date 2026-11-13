@@ -43,7 +43,7 @@ func (s *Store) BeginNamespaceDispatch(ctx context.Context, id, step string) err
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		if r.SafeSaveBackup {
+		if r.SafeSaveBackup || r.FuseSoftRemove {
 			return ErrSafeSavePending
 		}
 		if r.WaitFor != "" {
@@ -60,6 +60,13 @@ func (s *Store) BeginNamespaceDispatch(ctx context.Context, id, step string) err
 		}
 		if r.Dispatched {
 			return model.ErrUnknownResult
+		}
+		blocked, err := managedNamespaceBlockedTx(tx, r)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return ErrBusy
 		}
 		r.CloudStep = step
 		r.Dispatched = true

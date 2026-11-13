@@ -135,7 +135,7 @@ func (s *Store) ObserveRemoteDeletion(ctx context.Context, expected model.Entry)
 		if e.Local != expected.Local || e.LocalCheckpoint != expected.LocalCheckpoint || e.RemoteCheckpoint != expected.RemoteCheckpoint {
 			return model.ErrVersionChanged
 		}
-		if metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
+		if metadata.FuseSoftRemove != "" || metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
 			return ErrFrozen
 		}
 		localOnly := false
@@ -271,7 +271,7 @@ func (s *Store) ResolveRemoteDeletion(ctx context.Context, r model.ResolveReques
 		if e.Kind != model.KindFile && e.Kind != model.KindDocx {
 			return model.ErrUnsupportedContent
 		}
-		if metadata.VirtualType != "" || metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
+		if metadata.VirtualType != "" || metadata.FuseSoftRemove != "" || metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
 			return ErrFrozen
 		}
 		if er = deletionWorkSafe(tx, e); er != nil {

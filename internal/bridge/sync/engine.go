@@ -46,6 +46,8 @@ type Options struct {
 	ForegroundGrace time.Duration
 }
 type Engine struct {
+	schedule   backgroundSchedule
+	cycleGate  chan struct{}
 	store      *store.Store
 	source     Source
 	publisher  Publisher
@@ -85,7 +87,9 @@ func New(d Dependencies, o Options) (*Engine, error) {
 	if o.DirectoryInterval <= 0 {
 		o.DirectoryInterval = 30 * time.Second
 	}
-	return &Engine{store: d.Store, source: d.Source, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return &Engine{cycleGate: gate, store: d.Store, source: d.Source, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
 }
 func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error) {
 	candidate := make(chan struct{}, 1)
@@ -100,6 +104,9 @@ func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error
 	}
 }
 func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
+	return e.syncEntry(ctx, id, nil, false)
+}
+func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration *uint64, skipWriteBack bool) error {
 	if err := e.check(ctx); err != nil {
 		return err
 	}
@@ -130,6 +137,9 @@ func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 	}
 	if job == nil {
 		return e.publishPending(ctx, id)
+	}
+	if maxGeneration != nil && job.Generation > *maxGeneration {
+		return nil
 	}
 	if !e.retryReady(job.ID) {
 		return nil
@@ -162,7 +172,10 @@ func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 		return store.ErrFrozen
 	}
 	if job.State == model.StatusQueued {
-		ready, err := e.writeBackReady(ctx, *job)
+		ready, err := true, error(nil)
+		if !skipWriteBack {
+			ready, err = e.writeBackReady(ctx, *job)
+		}
 		if err != nil || !ready {
 			return err
 		}

@@ -56,6 +56,15 @@ func captureHistoryTx(tx *bolt.Tx, id model.EntryID, conflict *model.Conflict) e
 	if err != nil {
 		return err
 	}
+	if m.FuseSoftRemove != "" {
+		if !m.Tombstone {
+			return nil
+		}
+		e, err = logicalFuseHistoryEntryTx(tx, e, m)
+		if err != nil {
+			return err
+		}
+	}
 	if m.SafeSaveParked || m.SafeSaveOriginal != "" {
 		return nil
 	}

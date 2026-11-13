@@ -80,7 +80,7 @@ type Mount struct {
 	CacheMode                        string   `json:"cache_mode"`
 	CacheMaxBytes                    int64    `json:"cache_max_bytes"`
 	CacheMaxAge                      string   `json:"cache_max_age,omitempty"`
-	WriteBack                        string   `json:"write_back"`
+	WriteBack                        string   `json:"write_back"` // Legacy local cache delay; managed cloud cycles are fixed at five minutes.
 	PollDocs                         string   `json:"poll_docs"`
 	RefreshDirs                      string   `json:"refresh_dirs"`
 	MaxDocBytes                      int64    `json:"max_doc_bytes"`
@@ -316,23 +316,24 @@ type SyncIssue struct {
 }
 
 type MountStatus struct {
-	History        *HistoryStatus        `json:"history,omitempty"`
-	Issues         []SyncIssue           `json:"issues,omitempty"`
-	DirectoryIndex *DirectoryIndexStatus `json:"directory_index,omitempty"`
+	CloudSyncInterval string                `json:"cloud_sync_interval,omitempty"`
+	History           *HistoryStatus        `json:"history,omitempty"`
+	Issues            []SyncIssue           `json:"issues,omitempty"`
+	DirectoryIndex    *DirectoryIndexStatus `json:"directory_index,omitempty"`
 	// CacheBytes is the clean-body cache size observed by the last periodic
 	// sweep (store blobs plus fetched VFS data). Nil until measured; it is an
 	// observation for display, never a quota decision.
-	CacheBytes *int64 `json:"cache_bytes,omitempty"`
-	SchemaVersion  int                   `json:"schema_version"`
-	MountID        MountID               `json:"mount_id"`
-	Running        bool                  `json:"running"`
-	LocalSaved     bool                  `json:"local_saved"`
-	VFSPending     int                   `json:"vfs_pending"`
-	Queued         int                   `json:"queued"`
-	Inflight       int                   `json:"inflight"`
-	Conflicts      int                   `json:"conflicts"`
-	CloudState     string                `json:"cloud_state"`
-	LastError      string                `json:"last_error"`
+	CacheBytes    *int64  `json:"cache_bytes,omitempty"`
+	SchemaVersion int     `json:"schema_version"`
+	MountID       MountID `json:"mount_id"`
+	Running       bool    `json:"running"`
+	LocalSaved    bool    `json:"local_saved"`
+	VFSPending    int     `json:"vfs_pending"`
+	Queued        int     `json:"queued"`
+	Inflight      int     `json:"inflight"`
+	Conflicts     int     `json:"conflicts"`
+	CloudState    string  `json:"cloud_state"`
+	LastError     string  `json:"last_error"`
 }
 
 // Operation kinds describe logical mutations, never verified transport capabilities.

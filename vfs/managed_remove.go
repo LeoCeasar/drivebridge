@@ -1,6 +1,18 @@
 package vfs
 
-import "github.com/rclone/rclone/fs"
+import (
+	"context"
+	"errors"
+	"github.com/rclone/rclone/fs"
+)
+
+type managedRemover interface {
+	ManagedCheckpointBinder
+	BeginManagedRemove(context.Context, string) (string, error)
+	CommitManagedRemove(context.Context, string) error
+	FinishManagedRename(context.Context, string) error
+	AbortManagedRename(context.Context, string) error
+}
 
 func (f *File) removeManaged() error {
 	f.mu.RLock()
@@ -18,6 +30,9 @@ func (f *File) removeManagedReserved() error {
 	v, d := f.d.vfs, f.d
 	f.mu.RUnlock()
 	name := f.CachePath()
+	if remover, ok := v.f.(managedRemover); ok && v.cache != nil && v.cache.UsesManagedCheckpointArchive() {
+		return f.removeCheckpointManaged(remover, name)
+	}
 	if v.cache != nil {
 		release := v.cache.BlockManagedArchives()
 		defer release()
@@ -39,6 +54,46 @@ func (f *File) removeManagedReserved() error {
 		}
 	}
 	d.delObject(f.Name())
+	return nil
+}
+
+func (f *File) removeCheckpointManaged(remover managedRemover, name string) (err error) {
+	f.mu.RLock()
+	v, d := f.d.vfs, f.d
+	f.mu.RUnlock()
+	id, err := remover.BeginManagedRemove(f.ctx, name)
+	if err != nil {
+		return err
+	}
+	committedState := false
+	defer func() {
+		if err != nil && !committedState {
+			err = errors.Join(err, remover.AbortManagedRename(f.ctx, id))
+		}
+	}()
+	refs, release, err := v.cache.PinManagedNamespaceTree(f.ctx, name)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !committedState || err == nil {
+			release()
+		}
+	}()
+	if err = remover.BindManagedNamespace(f.ctx, id, refs); err != nil {
+		return err
+	}
+	if err = remover.CommitManagedRemove(f.ctx, id); err != nil {
+		return err
+	}
+	committedState = true
+	if err = v.cache.DetachManagedTree(name); err != nil {
+		return &managedCommittedError{err}
+	}
+	d.delObject(f.Name())
+	if err = remover.FinishManagedRename(f.ctx, id); err != nil {
+		return &managedCommittedError{err}
+	}
 	return nil
 }
 

@@ -83,6 +83,12 @@ type docAssetReference struct {
 // docAssets reads only immutable sidecars bound to current accepted checkpoints
 // in this Store. Merely saving an unrelated/unpublished snapshot grants nothing.
 func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetReference, error) {
+	return f.readDocAssets(ctx, parent, false)
+}
+
+// A normal directory listing only needs to know whether the reserved asset
+// directory exists; stop at the first verified reference without statting media.
+func (f *Fs) readDocAssets(ctx context.Context, parent string, firstOnly bool) (map[string]docAssetReference, error) {
 	if _, err := f.directory(ctx, parent); err != nil {
 		return nil, err
 	}
@@ -118,41 +124,12 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 		if (!restoredAssets && sn.Token != e.Token) || sn.BlockMap == "" {
 			continue
 		}
-		r, err := f.store.ReadBlob(ctx, sn.BlockMap)
+		assets, err := f.verifiedDocAssets(ctx, sn)
 		if err != nil {
 			return nil, err
 		}
-		var sidecar model.DocSidecar
-		err = json.NewDecoder(r).Decode(&sidecar)
-		closeErr := r.Close()
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		if sidecar.ProjectionVersion != 2 || len(sidecar.Assets) == 0 || sn.XML == "" {
+		if len(assets) == 0 {
 			continue
-		}
-		raw, err := f.store.ReadBlob(ctx, sn.XML)
-		if err != nil {
-			return nil, err
-		}
-		xml, err := io.ReadAll(raw)
-		closeErr = raw.Close()
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		view, err := markdown.DecodeWithOptions(xml, sn.Revision, markdown.Options{ProjectionVersion: 2, SourceURL: sidecar.SourceURL, ReferenceMap: sidecar.ReferenceMap})
-		if err != nil {
-			continue
-		}
-		originalAssets := make(map[model.DocAsset]bool, len(view.Assets))
-		for _, asset := range view.Assets {
-			originalAssets[asset] = true
 		}
 		metadata, err := f.store.Metadata(ctx, e.ID)
 		if err != nil {
@@ -168,14 +145,19 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 		if current.Remote != e.Remote || current.Token != e.Token || current.RemoteCheckpoint != e.RemoteCheckpoint {
 			continue
 		}
-		cached, err := f.store.CachedDocMedia(ctx, sn.Token, sn.Revision)
-		if err != nil {
-			return nil, err
+		if firstOnly && len(assets) > 0 {
+			asset := assets[0]
+			result[path.Join(parent, asset.Path)] = docAssetReference{asset: asset, owner: e}
+			return result, nil
 		}
-		for _, asset := range sidecar.Assets {
-			if !originalAssets[asset] || asset.Token == "" || strings.ContainsAny(asset.Token, "/\\:\x00 \t\n\r") || asset.Path != markdown.AssetPath(asset.Token, asset.Name, asset.MIME) {
-				continue
+		cached := sn.DocMedia
+		if len(cached) < len(assets) {
+			cached, err = f.store.CachedDocMedia(ctx, sn.Token, sn.Revision)
+			if err != nil {
+				return nil, err
 			}
+		}
+		for _, asset := range assets {
 			remote := path.Join(parent, asset.Path)
 			ref := docAssetReference{asset: asset, owner: e, modTime: metadata.ModTime, size: -1}
 			if b := cached[asset.Path]; b != "" {
@@ -199,6 +181,74 @@ func (f *Fs) docAssets(ctx context.Context, parent string) (map[string]docAssetR
 	}
 	return result, nil
 }
+
+// verifiedDocAssets caches the immutable XML/sidecar agreement, never the
+// mutable entry authority or body leases. Each caller still revalidates its
+// accepted checkpoint, tombstone and history restore state.
+func (f *Fs) verifiedDocAssets(ctx context.Context, sn model.Snapshot) ([]model.DocAsset, error) {
+	f.docManifestMu.Lock()
+	assets, ok := f.docManifests[sn.ID]
+	f.docManifestMu.Unlock()
+	if ok {
+		return assets, nil
+	}
+	r, err := f.store.ReadBlob(ctx, sn.BlockMap)
+	if err != nil {
+		return nil, err
+	}
+	var sidecar model.DocSidecar
+	err = json.NewDecoder(r).Decode(&sidecar)
+	closeErr := r.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if sidecar.ProjectionVersion == 2 && len(sidecar.Assets) > 0 && sn.XML != "" {
+		raw, err := f.store.ReadBlob(ctx, sn.XML)
+		if err != nil {
+			return nil, err
+		}
+		xml, err := io.ReadAll(raw)
+		closeErr = raw.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		view, decodeErr := markdown.DecodeWithOptions(xml, sn.Revision, markdown.Options{ProjectionVersion: 2, SourceURL: sidecar.SourceURL, ReferenceMap: sidecar.ReferenceMap})
+		if decodeErr == nil {
+			original := make(map[model.DocAsset]bool, len(view.Assets))
+			for _, asset := range view.Assets {
+				original[asset] = true
+			}
+			for _, asset := range sidecar.Assets {
+				if original[asset] && asset.Token != "" && !strings.ContainsAny(asset.Token, "/\\:\x00 \t\n\r") && asset.Path == markdown.AssetPath(asset.Token, asset.Name, asset.MIME) {
+					assets = append(assets, asset)
+				}
+			}
+		}
+	}
+	f.docManifestMu.Lock()
+	defer f.docManifestMu.Unlock()
+	if f.docManifests == nil {
+		f.docManifests = make(map[model.SnapshotID][]model.DocAsset)
+	}
+	if existing, ok := f.docManifests[sn.ID]; ok {
+		return existing, nil
+	}
+	const manifestLimit = 128
+	if len(f.docManifestOrder) == manifestLimit {
+		delete(f.docManifests, f.docManifestOrder[0])
+		f.docManifestOrder = f.docManifestOrder[1:]
+	}
+	f.docManifests[sn.ID] = assets
+	f.docManifestOrder = append(f.docManifestOrder, sn.ID)
+	return assets, nil
+}
+
 func (f *Fs) listDocAssets(ctx context.Context, remote string) (fs.DirEntries, error) {
 	parent, directory, ok := assetDirectoryParent(remote)
 	if !ok {

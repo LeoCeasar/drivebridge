@@ -51,6 +51,7 @@ type Metadata struct {
 	HistoryMediaBody  model.BlobID     `json:"history_media_body,omitempty"`
 	LastBodyAccess    time.Time        `json:"last_body_access,omitempty"`
 	DirectoryCachedAt time.Time        `json:"directory_cached_at,omitempty"`
+	FuseSoftRemove    string           `json:"fuse_soft_remove,omitempty"`
 	SafeSavePending   string           `json:"safe_save_pending,omitempty"`
 	SafeSaveParked    bool             `json:"safe_save_parked,omitempty"`
 	SafeSaveOriginal  model.EntryID    `json:"safe_save_original,omitempty"`
@@ -76,7 +77,7 @@ type PersistenceIO interface {
 }
 type nativeIO struct{}
 
-func (nativeIO) SyncFile(f *os.File) error { return f.Sync() }
+func (nativeIO) SyncFile(f *os.File) error { return platform.SyncFile(f) }
 func (nativeIO) Rename(a, b string) error  { return platform.ReplaceFile(a, b) }
 func (nativeIO) SyncDir(p string) error    { return platform.SyncDir(p) }
 
@@ -152,7 +153,7 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 	if err = db.Update(func(tx *bolt.Tx) error {
 		if m := tx.Bucket([]byte("meta")); m != nil {
 			v := m.Get([]byte("schema_version"))
-			if string(v) != "1" && string(v) != "2" && string(v) != "3" {
+			if string(v) != "1" && string(v) != "2" && string(v) != "3" && string(v) != "4" {
 				return fmt.Errorf("unsupported store schema %q", v)
 			}
 		}
@@ -160,6 +161,15 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
+		}
+		if err := initNamespaceIndexesTx(tx); err != nil {
+			return err
+		}
+		if err := initManagedCheckpointsTx(tx); err != nil {
+			return err
+		}
+		if err := initEntryIndexesTx(tx); err != nil {
+			return err
 		}
 		if err := initHistoryTx(tx); err != nil {
 			return err
@@ -180,10 +190,7 @@ func OpenWithOptions(dir string, o Options) (*Store, error) {
 				return err
 			}
 		}
-		if string(tx.Bucket([]byte("meta")).Get([]byte("schema_version"))) == "3" {
-			return nil
-		}
-		return tx.Bucket([]byte("meta")).Put([]byte("schema_version"), []byte("2"))
+		return raiseReaderFloorTx(tx, 2)
 	}); err != nil {
 		db.Close()
 		l.Unlock()
@@ -314,12 +321,38 @@ func get(tx *bolt.Tx, b, k string, v any) error {
 	return json.Unmarshal(x, v)
 }
 func put(tx *bolt.Tx, b, k string, v any) error {
+	var previous model.Entry
+	if b == "entries" {
+		var err error
+		previous, err = entryTx(tx, model.EntryID(k))
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
 	x, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	if err := tx.Bucket([]byte(b)).Put([]byte(k), x); err != nil {
 		return err
+	}
+	if b == "entries" {
+		var current model.Entry
+		if err := json.Unmarshal(x, &current); err != nil {
+			return err
+		}
+		if err := updateEntryIndexesTx(tx, previous, current); err != nil {
+			return err
+		}
+	}
+	if b == "namespace" {
+		var current namespaceRecord
+		if err := json.Unmarshal(x, &current); err != nil {
+			return err
+		}
+		if err := indexNamespaceTx(tx, current); err != nil {
+			return err
+		}
 	}
 	if b == "snapshots" {
 		var r snapshotRecord
@@ -413,16 +446,12 @@ func (s *Store) Entries(ctx context.Context, parent string) (out []model.Entry, 
 		return
 	}
 	err = s.view(ctx, func(tx *bolt.Tx) error {
-		return each[model.Entry](tx, "entries", func(e model.Entry) error {
+		return eachIndexedEntryTx(tx, entryParents, string(pathKey(parent)), func(e model.Entry) error {
 			var m Metadata
 			if err := get(tx, "metadata", string(e.ID), &m); err != nil {
 				return err
 			}
-			p := path.Dir(e.Remote)
-			if p == "." {
-				p = ""
-			}
-			if !m.Tombstone && e.Remote != "" && p == parent {
+			if !m.Tombstone {
 				out = append(out, e)
 			}
 			return nil
@@ -470,6 +499,16 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 			}
 		} else {
 			m.VirtualType = o.VirtualType
+			if fuseSoftRemovalAtTx(tx, o.Remote) {
+				if o.Token != "" {
+					return ErrFrozen
+				}
+				// An explicit create at the vacated path is a new file, not a rename
+				// replacement of the hidden inode. End only that reconciliation option.
+				if err := tx.Bucket([]byte(fuseSoftRemovesBucket)).Delete([]byte(o.Remote)); err != nil {
+					return err
+				}
+			}
 			if namespaceReserved(tx, o.Remote) {
 				return ErrFrozen
 			}

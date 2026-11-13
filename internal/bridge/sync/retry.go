@@ -75,5 +75,5 @@ func (e *Engine) Retry(ctx context.Context, id model.EntryID) error {
 			break
 		}
 	}
-	return e.SyncEntry(ctx, id)
+	return e.syncEntry(ctx, id, nil, true)
 }

@@ -35,7 +35,7 @@ func (s *Store) ObserveUnsentDeletion(ctx context.Context, expected model.Entry)
 		if e.Local != expected.Local || e.LocalCheckpoint != expected.LocalCheckpoint || e.RemoteCheckpoint != expected.RemoteCheckpoint {
 			return model.ErrVersionChanged
 		}
-		if metadata.VirtualType != "" || metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
+		if metadata.VirtualType != "" || metadata.FuseSoftRemove != "" || metadata.SafeSavePending != "" || metadata.SafeSaveParked || metadata.SafeSaveOriginal != "" {
 			return ErrFrozen
 		}
 		if er = deletionWorkSafe(tx, e); er != nil {
