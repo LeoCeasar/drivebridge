@@ -88,3 +88,41 @@ func TestGitFailureIsBlockedWithoutCreatingManualConflict(t *testing.T) {
 		t.Fatal("runtime failure became manual conflict", current, len(cs))
 	}
 }
+
+func TestMergeTextNormalizesBreakBeforeComparingBothSides(t *testing.T) {
+	_, e, _, _ := setup(t, model.KindDocx)
+	got, reason, err := e.mergeText(bg, []byte("a<br>b\n"), []byte("a<br/>local\n"), []byte("cloud  \nb\n"))
+	if err != nil || reason != "" || string(got) != "cloud  \nlocal\n" {
+		t.Fatalf("format-only conflict %q %s %v", got, reason, err)
+	}
+}
+func TestLegacyDraftDifferingOnlyInBreakSpellingAutomaticallyRetries(t *testing.T) {
+	s, e, _, en, _, c := legacyFormatFixture(t, "alpha<br>local\n\nbeta two\n")
+	if err := s.SaveDraft(bg, c.ID, strings.NewReader("alpha  \nlocal\n\nbeta two\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SyncEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.Entry(bg, en.ID)
+	cs, _ := s.Conflicts(bg)
+	if current.Status != model.StatusSynced || len(cs) != 0 {
+		t.Fatalf("format-only draft blocked %s conflicts=%d", current.Status, len(cs))
+	}
+}
+
+func TestLegacyDraftConsecutiveBreakVariantsAutomaticallyRetry(t *testing.T) {
+	s, e, source, en, job, c := legacyFormatFixture(t, "alpha<br><br>local\n\nbeta two\n")
+	if err := s.SaveDraft(bg, c.ID, strings.NewReader("alpha<BR/><br />local\n\nbeta two\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SyncEntry(bg, en.ID); err != nil {
+		journal, _ := s.Journal(bg, job.ID)
+		t.Fatalf("%v cloud=%s journal=%+v", err, source.xml, journal)
+	}
+	current, _ := s.Entry(bg, en.ID)
+	cs, _ := s.Conflicts(bg)
+	if current.Status != model.StatusSynced || len(cs) != 0 {
+		t.Fatalf("consecutive format-only draft blocked %s conflicts=%d", current.Status, len(cs))
+	}
+}

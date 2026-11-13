@@ -112,7 +112,9 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			return e.pause(ctx, j, checked)
 		}
 		var merge model.MergeResult
-		if journal.HumanResolution {
+		if !journal.HumanResolution && markdown.MatchesEncodedIntent(local, current) {
+			merge = model.MergeResult{Markdown: bytes.Clone(local)}
+		} else if journal.HumanResolution {
 			merge, err = markdown.PlanResolvedStepWithBase(base, local, baseRemote, current)
 		} else {
 			var desired []byte
@@ -160,6 +162,10 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			}
 		}
 		op, err := e.bind(merge.Operations[0])
+		if err != nil {
+			return e.pause(ctx, j, err)
+		}
+		op, err = markdown.ProjectOperationHash(op, current)
 		if err != nil {
 			return e.pause(ctx, j, err)
 		}

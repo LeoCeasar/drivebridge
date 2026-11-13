@@ -65,6 +65,10 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 	}
 	var body []byte
 	if en.Kind == model.KindDocx {
+		input, err = markdown.NormalizeForMerge(input)
+		if err != nil {
+			return en, e.pause(ctx, j, err)
+		}
 		body, err = markdown.Encode(input)
 		if err != nil {
 			return en, e.pause(ctx, j, err)
@@ -210,6 +214,9 @@ func (e *Engine) verifyCreated(ctx context.Context, op model.CreateOp, token str
 		sn, view, err := e.fetchDoc(ctx, token)
 		if err != nil {
 			return "", err
+		}
+		if markdown.MatchesEncodedIntent(input, view) {
+			return sn.Revision, nil
 		}
 		wanted, err := markdown.Encode(input)
 		if err != nil {

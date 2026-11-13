@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -34,8 +35,9 @@ type conversionRuleDocument struct {
 	Rules   []ConversionRule `json:"rules"`
 }
 type compiledConversion struct {
-	xml     string
-	spacing bool
+	xml      string
+	markdown string
+	spacing  bool
 }
 
 // ConversionRules is an immutable, validated runtime snapshot.
@@ -44,6 +46,7 @@ type ConversionRules struct {
 	exact       map[string]compiledConversion
 	breaks      map[string]compiledConversion
 	fingerprint string
+	literals    map[string]*strings.Replacer
 }
 
 var defaultConversionRules = mustDefaultConversionRules()
@@ -197,7 +200,8 @@ func mustDefaultConversionRules() *ConversionRules {
 	return rules
 }
 func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) {
-	out := &ConversionRules{exact: map[string]compiledConversion{}, breaks: map[string]compiledConversion{}}
+	out := &ConversionRules{exact: map[string]compiledConversion{}, breaks: map[string]compiledConversion{}, literals: map[string]*strings.Replacer{}}
+	literalRules := map[string][]ConversionRule{}
 	ids := map[string]bool{}
 	for _, r := range d.Rules {
 		fail := func(s string) (*ConversionRules, error) { return nil, fmt.Errorf("rule %q: %s", r.ID, s) }
@@ -211,18 +215,45 @@ func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) 
 		if len(r.Source) > 65536 || len(r.Target) > 65536 {
 			return fail("source/target exceeds 64 KiB")
 		}
-		if r.Match != "exact" && r.Match != "simple_html_break" {
-			return fail("match must be exact or simple_html_break")
+		if r.Match != "exact" && r.Match != "simple_html_break" && r.Match != "literal" {
+			return fail("match must be exact, literal or simple_html_break")
 		}
 		if r.Match == "simple_html_break" && r.Source != "<br>" {
 			return fail("simple_html_break source must be <br>")
 		}
-		if !rawHTMLToken(r.Source) {
+		if r.Match == "literal" {
+			if r.Source == "" || strings.ContainsAny(r.Source, "\r\n") || validate([]byte(r.Source)) != nil {
+				return fail("literal source must be nonempty single-line UTF-8 text")
+			}
+		} else if !rawHTMLToken(r.Source) {
 			return fail("source must be one complete inline HTML token")
 		}
-		target, err := compileConversionTarget(r.Target)
+		var target compiledConversion
+		var err error
+		if r.Match == "literal" {
+			if strings.ContainsAny(r.Target, "\r\n") {
+				return fail("literal target must be single-line plain text")
+			}
+			if err = validate([]byte(r.Target)); err == nil {
+				target.xml = esc(r.Target)
+			}
+		} else {
+			target, err = compileConversionTarget(r.Target)
+		}
 		if err != nil {
 			return fail("unsafe or unsupported target: " + err.Error())
+		}
+		nodes, err := parseXML([]byte("<p>" + target.xml + "</p>"))
+		if err != nil {
+			return fail("invalid compiled target")
+		}
+		target.markdown, err = inlineMD(nodes[0])
+		if err != nil {
+			return fail("unrepresentable target")
+		}
+		if r.Match == "literal" {
+			literalRules[r.Context] = append(literalRules[r.Context], ConversionRule{ID: r.ID, Source: r.Source, Target: target.markdown})
+			continue
 		}
 		key := r.Context + "\x00" + r.Source
 		if r.Match == "simple_html_break" {
@@ -236,6 +267,42 @@ func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) 
 			}
 			out.exact[key] = target
 		}
+	}
+	for context, rules := range literalRules {
+		sort.Slice(rules, func(i, j int) bool {
+			if len(rules[i].Source) != len(rules[j].Source) {
+				return len(rules[i].Source) > len(rules[j].Source)
+			}
+			return rules[i].Source < rules[j].Source
+		})
+		pairs := []string{}
+		seen := map[string]bool{}
+		for _, r := range rules {
+			if seen[r.Source] {
+				return nil, fmt.Errorf("rule %q: duplicate literal source", r.ID)
+			}
+			seen[r.Source] = true
+			pairs = append(pairs, r.Source, r.Target)
+		}
+		probePairs := []string{}
+		for _, r := range rules {
+			probePairs = append(probePairs, r.Source, "\x00")
+		}
+		probe := strings.NewReplacer(probePairs...)
+		for _, r := range rules {
+			if probe.Replace(r.Target) != r.Target {
+				return nil, fmt.Errorf("rule %q: target matches a literal source; chained replacements are not stable", r.ID)
+			}
+		}
+		for key, v := range out.exact {
+			if strings.HasPrefix(key, context+"\x00") && probe.Replace(v.markdown) != v.markdown {
+				return nil, errors.New("HTML target matches a literal source")
+			}
+		}
+		if v, ok := out.breaks[context]; ok && probe.Replace(v.markdown) != v.markdown {
+			return nil, errors.New("break target matches a literal source")
+		}
+		out.literals[context] = strings.NewReplacer(pairs...)
 	}
 	b, _ := json.Marshal(d)
 	out.fingerprint = digest(string(b))

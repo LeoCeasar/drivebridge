@@ -167,3 +167,28 @@ func TestObsoleteFormatRetirementKeepsDraftsAndUncertainWork(t *testing.T) {
 		})
 	}
 }
+
+func TestEquivalentDraftRetryStillGuardsConcurrentHumanEdit(t *testing.T) {
+	s, _, j, c := formatConflict(t, false)
+	if err := s.SaveDraft(ctx, c.ID, strings.NewReader("old<br>draft")); err != nil {
+		t.Fatal(err)
+	}
+	captures, _ := s.Conflicts(ctx)
+	expected := captures[0]
+	if err := s.SaveDraft(ctx, c.ID, strings.NewReader("new human draft")); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := s.RetryEquivalentDraftConflict(ctx, expected, []byte("same"), []byte("same"))
+	now, _ := s.Conflicts(ctx)
+	job, _ := s.Job(ctx, j.ID)
+	if err != nil || changed || len(now) != 1 || read(t, s, now[0].Draft) != "new human draft" || job.State != model.StatusConflict {
+		t.Fatal("new draft consumed", changed, err, now, job)
+	}
+}
+func TestEquivalentDraftRetryRejectsDifferentNormalizedBodies(t *testing.T) {
+	s, _, _, c := formatConflict(t, false)
+	changed, err := s.RetryEquivalentDraftConflict(ctx, c, []byte("local"), []byte("draft"))
+	if err != nil || changed {
+		t.Fatal("non-equivalent proof accepted", changed, err)
+	}
+}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -14,7 +15,7 @@ func (s *Store) RetryCompatibilityConflict(ctx context.Context, expected model.C
 	if expected.Reason != "unsupported_content" {
 		return false, nil
 	}
-	return s.retryTextConflict(ctx, expected, false)
+	return s.retryTextConflict(ctx, expected, false, false)
 }
 
 // RetryCleanTextConflict is invoked only after a clean Git merge of the captured
@@ -22,17 +23,31 @@ func (s *Store) RetryCompatibilityConflict(ctx context.Context, expected model.C
 func (s *Store) RetryCleanTextConflict(ctx context.Context, expected model.Conflict) (bool, error) {
 	switch expected.Reason {
 	case "overlapping_edits", "ambiguous_mapping", "same_insertion", "table_both_changed", "delete_vs_edit", "merge_complexity", "remote_drift", "unsupported_content":
-		return s.retryTextConflict(ctx, expected, true)
+		return s.retryTextConflict(ctx, expected, true, false)
 	}
 	return false, nil
 }
-func (s *Store) retryTextConflict(ctx context.Context, expected model.Conflict, plain bool) (changed bool, err error) {
+
+// RetryEquivalentDraftConflict requires exact normalized equality computed by
+// the background converter. Original captures remain immutable; the transaction
+// still checks the complete expected record so a newer human draft cannot race.
+func (s *Store) RetryEquivalentDraftConflict(ctx context.Context, expected model.Conflict, local, draft []byte) (bool, error) {
+	if len(local) > 10<<20 || len(draft) > 10<<20 || !bytes.Equal(local, draft) {
+		return false, nil
+	}
+	switch expected.Reason {
+	case "overlapping_edits", "ambiguous_mapping", "same_insertion", "table_both_changed", "delete_vs_edit", "merge_complexity", "remote_drift", "unsupported_content":
+		return s.retryTextConflict(ctx, expected, true, true)
+	}
+	return false, nil
+}
+func (s *Store) retryTextConflict(ctx context.Context, expected model.Conflict, plain, equivalentDraft bool) (changed bool, err error) {
 	err = s.update(ctx, func(tx *bolt.Tx) error {
 		var c model.Conflict
 		if err := get(tx, "conflicts", string(expected.ID), &c); err != nil {
 			return err
 		}
-		if c != expected || c.Resolved || c.Local == "" || c.Draft != "" && c.Draft != c.Local {
+		if c != expected || c.Resolved || c.Local == "" || c.Draft != "" && c.Draft != c.Local && !equivalentDraft {
 			return nil
 		}
 		en, err := entryTx(tx, c.EntryID)
