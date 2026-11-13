@@ -89,6 +89,10 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 	if e := validate(b); e != nil {
 		return nil, e
 	}
+	trimmed := bytes.TrimSpace(b)
+	if bytes.HasPrefix(trimmed, []byte("+++\n")) || bytes.HasPrefix(trimmed, []byte("+++\r\n")) {
+		return nil, unsupported("TOML front matter")
+	}
 	frontEnd, err := yamlFrontMatterEnd(b)
 	if err != nil {
 		return nil, err

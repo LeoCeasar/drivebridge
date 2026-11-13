@@ -73,6 +73,10 @@ func DiagnoseContent(body []byte, err error) *model.SyncDiagnostic {
 	case "link title":
 		kind, message = "link_title", "链接标题属性尚不支持安全写回。"
 	}
+	if c.Detail == "TOML front matter" {
+		kind = "front_matter"
+		message = "TOML 元信息暂不支持无损转换，已保留本地原文并停止此文件写回。"
+	}
 	if strings.Contains(c.Detail, "YAML front matter") {
 		kind = "front_matter"
 		message = "YAML 元信息不完整或格式无效；请检查开头及结束的 --- 和键值缩进。"
@@ -86,7 +90,7 @@ func DiagnoseContent(body []byte, err error) *model.SyncDiagnostic {
 		// parse recovers its exact range; never assign a line to an unrelated error.
 		_, parseErr := parseMarkdown(body, nil)
 		var pc *ContentError
-		verifiedFrontMatter = errors.As(parseErr, &pc) && pc.Detail == c.Detail && strings.Contains(pc.Detail, "YAML front matter")
+		verifiedFrontMatter = errors.As(parseErr, &pc) && pc.Detail == c.Detail && strings.Contains(pc.Detail, "front matter")
 		if errors.As(parseErr, &at) {
 			var pc *ContentError
 			if errors.As(parseErr, &pc) && pc.Detail != c.Detail {

@@ -61,7 +61,7 @@ func TestYAMLFrontMatterProtectsMetadataAndKeepsSourceOffsets(t *testing.T) {
 }
 
 func TestYAMLFrontMatterBoundariesAndMalformedInput(t *testing.T) {
-	for _, input := range []string{"---\n", "---\n\nparagraph\n", "---\nparagraph\n---\n", "+++\nname: synthetic\n+++\n", "```yaml\n---\nname: synthetic\n---\n```\n"} {
+	for _, input := range []string{"---\n", "---\n\nparagraph\n", "---\nparagraph\n---\n", "```yaml\n---\nname: synthetic\n---\n```\n"} {
 		encoded, err := Encode([]byte(input))
 		if err != nil || strings.Contains(string(encoded), "DriveBridge YAML front matter v1") {
 			t.Fatalf("not front matter %q: %s %v", input, encoded, err)
@@ -148,5 +148,15 @@ func TestYAMLFrontMatterRequiresCodeContentMarker(t *testing.T) {
 	var content *ContentError
 	if !errors.As(err, &content) || !strings.Contains(content.Detail, "YAML front matter") {
 		t.Fatalf("invalid reserved content marker accepted: %v", err)
+	}
+}
+
+func TestTOMLFrontMatterRemainsProtected(t *testing.T) {
+	for _, input := range []string{"+++\nname = 'synthetic'\n+++\n\nbody\n", "+++\r\nname = 'synthetic'\r\n+++\r\n"} {
+		_, err := Encode([]byte(input))
+		var content *ContentError
+		if !errors.As(err, &content) || content.Detail != "TOML front matter" {
+			t.Fatalf("TOML flattened: %v", err)
+		}
 	}
 }
