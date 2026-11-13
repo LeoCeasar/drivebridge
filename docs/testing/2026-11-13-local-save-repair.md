@@ -1,6 +1,6 @@
 # 2026-11-13 本地保存修复验证记录
 
-本轮把编辑器保存拆为本地持久日志确认、后台 Git/Store 归档及周期云端同步。前台保存不等待云端合并、上传或图片补齐。最终模块、竞态与原生复验均已通过；安装结果在完成升级后补录。
+本轮把编辑器保存拆为本地持久日志确认、后台 Git/Store 归档及周期云端同步。前台保存不等待云端合并、上传或图片补齐。最终模块、竞态与原生复验均已通过；0.2.10已构建并替换本地应用，实际账号的最后版本云端读回复核也已通过。
 
 ## 保存与同步规则
 
@@ -46,14 +46,17 @@
 - Darwin 新增阻塞声明正确的 FULLFSYNC 包装，保留持久性；同进程 FUSE 自测不再卡住 Go 调度器。
 - Windows只完成交叉编译，尚无本轮 Windows真机运行证据。
 
-## 最终验收状态（待补齐）
+## 最终验收状态
 
 - 受影响模块全量通过：`accepted-modules.log`；八个并发相关包竞态检查通过：`accepted-race.log`。Darwin 链接器存在 LC_DYSYMTAB 提示，未报告数据竞态。
 - 最后一次全部原生用例通过：`native/release-final/run.log`，三组实际内核测试共44.499秒；覆盖最终防护代码。
 - Windows amd64 最终交叉编译通过：`accepted-windows-compile.log`；该检查不执行 Windows测试。
-- 0.2.10安装包与本机替换：下一步执行。
+- 0.2.10已构建并通过维护租约安装到 `/Applications/DriveBridge.app`；原账号、映射、挂载ID及登录启动配置保持，Finder“位置”显示挂载盘。
+- 实际账号测试目录新建一份专用Markdown，20次连续保存与5次读取均成功；保存p9556.42ms，最大171.45ms，热目录列举约0.5ms。最后正文于14:50:02完成后台上传验证，本地与云端读回SHA-256完全一致；状态为0排队、0进行中、0冲突、无错误。中间任务只保留历史，由最后一代完成上传。
+- 已安装版本的Typora UI复验最终通过：打开实际账号中的已同步测试文档，连续保存三次、关闭并重开，最新正文正确、没有临时文件残留，原ID/token保持。显式重试后，14:57:54的`upload_verified`证明本地与同一云端文档正文哈希一致，无冲突。途中编辑器异常退出，用户恢复后完成本次复验；未强制结束或编辑用户笔记。证据：`typora-installed-proof.json`、`typora-history-final.json`、`typora-retry.json`。
+- 安装证据：`.superpowers/installers-0.2.10/{install.log,installed-result.json,local-account-proof.json,acceptance-history-final.json,typora-installed-proof.json,typora-history-final.json}`。应用为unsigned-test测试包，未签名公证。
 
-## 0.2.10 打包准备
+## 0.2.10 打包与安装记录
 
 本机输入已按仓库锁文件验证，记录在 `.superpowers/nonblocking-local-files/packaging-preflight.json`：
 
@@ -62,7 +65,7 @@
 - 官方 arm64 原生归档：`.superpowers/macos-package-682abc635/runtime/cli-native.tar.gz`，归档和内部可执行文件 SHA-256 均匹配 `runtime-lock.json`。
 - macFUSE 头文件：`/usr/local/include/fuse/fuse.h`。
 
-最终源码就绪后，在仓库根目录执行以下构建；目前仅准备命令，未执行：
+已在源码提交`63fbbc1e4`构建，命令如下：
 
 ```sh
 DRIVEBRIDGE_FUSE_INCLUDE=/usr/local/include/fuse \
@@ -76,7 +79,7 @@ DRIVEBRIDGE_FUSE_INCLUDE=/usr/local/include/fuse \
 
 构建输出必须不存在；脚本拒绝覆盖。该命令生成完整 Feishu 桌面、cmount、Git 运行时的 unsigned-test 包，不是签名公证发布。
 
-安装应沿用 0.2.9 的 DMG 内安装器及维护租约流程。挂载最终只读 DMG、核对实际挂载点后，使用候选包自带的 `upgrade.sh` 调用同包安装器；不直接覆盖应用目录，不使用 sudo，不直接运行 detached pkg。若实际挂载点为 `/Volumes/DriveBridge 0.2.10`，相应命令为：
+安装应沿用 0.2.9 的 DMG 内安装器及维护租约流程。挂载最终只读 DMG、核对实际挂载点后，使用候选包自带的 `upgrade.sh` 调用同包安装器；不直接覆盖应用目录，不使用 sudo，不直接运行 detached pkg。本次实际挂载点为 `/Volumes/DriveBridge 0.2.10`，执行命令如下：
 
 ```sh
 db_candidate_installer='/Volumes/DriveBridge 0.2.10/安装 DriveBridge.app'
@@ -89,3 +92,5 @@ db_candidate_payload="$db_candidate_app/Contents/Resources/payload"
 ```
 
 该安装器核对应用 inventory，由维护协调器停止任务并持有安装租约，只替换应用文件。账号、缓存、日志和待上传数据位于应用外；仍需安装前后实际对照身份、挂载配置和待处理状态。CLI 安装 worker 本身不重新配置登录启动项，安装后应核验现有登录启动及桌面运行状态。
+
+安装包位置：`~/Downloads/DriveBridge-0.2.10/drivebridge-0.2.10-darwin-arm64-feishu-desktop-unsigned-test.dmg`。本次创建的实际账号测试文件保留在既有`个人目录/DriveBridge-test-history-20261112-2120`测试文件夹内，文件名以`save acceptance 20261113 1439 cad8f6`开头；其他云端文档未被本次测试编辑。

@@ -66,10 +66,10 @@ Files: VFS managed rename/remove, vfscache journal publication, overlay/store na
 - [x] Run complete VFS, bridge, Feishu backend, CLI/desktop and operations suites, plus race tests for changed concurrency components.
 - [x] Run frontend tests and Windows compile checks for changed shared interfaces.
 - [x] One final focused whole-change review; fix material findings with regression coverage.
-- [ ] Build candidate without replacing current app; isolated real mount tests against controlled temporary data.
+- [x] Build candidate without replacing current app; isolated real mount tests against controlled temporary data.
 - [x] Measure warm opens/listing and repeated normal/safe saves under stalled background work; initial targets p95 50ms, p99 150ms for small warm files on this machine.
-- [ ] Upgrade local app preserving pending data, verify actual mounted Typora workflow, recovery and sync.
-- [ ] Record actual evidence and any unmet acceptance criteria; do not claim completion on partial evidence.
+- [x] Upgrade local app preserving pending data; verify actual account save/read and cloud readback. Real Typora workflow passed on both isolated actual macFUSE and the installed app with the real account; the final edit preserves cloud identity and readback matches local bytes.
+- [x] Record actual evidence and any unmet acceptance criteria; do not claim completion on partial evidence.
 
 ## Task 5: Fixed cloud sync cycles (user clarification)
 
