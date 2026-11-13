@@ -373,3 +373,7 @@ nav{grid-template-columns:repeat(3,1fr)}.nav-button{flex-direction:column;gap:2p
 #source-warning[hidden]{display:block;visibility:hidden}
 #review-sources[hidden]{display:inline-flex;visibility:hidden}
 #conflict-queue>.table-wrap{max-height:300px;overflow:auto}
+
+.conversion-rules-panel{border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:24px;background:var(--surface)}
+.conversion-rules-panel h2{margin:0 0 6px}.conversion-rules-table{width:100%;min-width:780px}.conversion-rules-table th{text-align:left;white-space:nowrap}.conversion-rules-table td{padding:10px 6px;vertical-align:middle}.conversion-rules-table input,.conversion-rules-table select{width:100%;min-width:0}.conversion-rules-table input{min-width:140px}.conversion-rules-table select{min-width:95px}.conversion-rules-table input:disabled,.conversion-rules-table select:disabled{opacity:.65}.conversion-rules-actions{display:flex;gap:10px;margin-top:16px}.conversion-rules-panel code{overflow-wrap:anywhere;user-select:text}.conversion-rules-preview{margin-top:12px}.conversion-rules-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;padding:16px;background:var(--bg);border-radius:8px}.conversion-rules-preview summary{cursor:pointer}.conversion-rules-panel .error{color:var(--red)}
+@media(max-width:700px){.conversion-rules-panel{padding:16px}}

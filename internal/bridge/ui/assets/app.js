@@ -54,6 +54,7 @@
     if (!ok) { message('浏览器未允许复制，请手动选择路径后复制。', true, 'copy'); return; }
     if (button) { button.classList.toggle('done', true); button.title = '已复制'; setTimeout(() => { button.classList.toggle('done', false); button.title = '复制路径'; }, 1600); }
   }
+  const conversionRules = window.DriveBridgeRules?.create({document,api,confirm:text=>window.confirm(text)});
   const historyView = window.DriveBridgeHistory?.create({document,api,onMessage:message,confirm:text=>window.confirm(text)});
   const discovery = window.DriveBridgeDiscovery.create({document,api,onChanged:() => refresh(),copy:copyText,openLabel:() => openLabel,canOpen:() => canOpen});
   const authMonitor = window.DriveBridgeAuth.create({api,storage:window.localStorage,onProgress:renderAuthProgress,onError:(error,terminal) => {
@@ -113,6 +114,7 @@
     const conflicts = name === 'conflicts';
     for (const key of ['workspace','settings','history']) $(key).hidden = key !== (conflicts ? 'workspace' : name);
     if (name === 'history') historyView?.load();
+    if (name === 'settings') conversionRules?.load();
     document.querySelectorAll('[data-view]').forEach(e => e.classList.toggle('active', e.dataset.view === name));
     $('page-label').textContent = titles[name]; document.title = `${titles[name]} · DriveBridge`;
     $('workspace-description').textContent = conflicts ? '核对每份文件的差异，保留草稿并提交已选结果。' : '本机保存立即生效；后台每5分钟同步各文件的最新保存版本，上传期间的新修改留待下一轮。';

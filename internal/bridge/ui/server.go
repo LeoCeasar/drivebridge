@@ -128,7 +128,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/history-view.js" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/conversion-rules.js" || p == "/history-view.js" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -141,7 +141,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/history-view.js", "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
+		case "/conversion-rules.js", "/history-view.js", "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -200,6 +200,9 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		v.Platform, v.OpenFolderLabel = hostGOOS, FolderOpenLabel(hostGOOS)
 		_, v.CanOpenFolder = h.backend.(FolderOpener)
 		respond(w, 200, v)
+		return
+	case "/api/conversion-rules":
+		h.conversionRulesRoute(w, r)
 		return
 	case "/api/config":
 		switch r.Method {

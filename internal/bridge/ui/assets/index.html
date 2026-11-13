@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>DriveBridge 文件管理</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/discovery-view.js" defer></script><script src="/auth-view.js" defer></script><script src="/history-view.js" defer></script><script src="/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>DriveBridge 文件管理</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/style.css"><script src="/diff-view.js" defer></script><script src="/recovery-view.js" defer></script><script src="/batch-view.js" defer></script><script src="/discovery-view.js" defer></script><script src="/auth-view.js" defer></script><script src="/history-view.js" defer></script><script src="/conversion-rules.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <div id="app-shell" class="app-shell">
 <aside class="sidebar"><a class="brand" href="/" aria-label="DriveBridge 首页"><span class="brand-mark" aria-hidden="true">桥</span><span>DriveBridge<small>本机文件管理</small></span></a>
@@ -43,6 +43,15 @@
 </section></section>
 <section id="settings" class="page" hidden>
 <div class="page-heading"><p>设置保存在当前系统用户下，本机管理页不会取得飞书凭据。</p></div>
+<section id="conversion-rules" class="conversion-rules-panel" aria-labelledby="conversion-rules-title">
+<div class="card-head"><div class="grow"><h2 id="conversion-rules-title">后台自动替换</h2><p class="quiet">同步转换文档时，按规则替换指定字符串。可修改内置规则的目标，也可添加自己的规则。</p></div></div>
+<p class="field-help">内置规则的原始字符串、作用位置和匹配方式固定；内置规则不能删除，缺失时会自动恢复。普通字符串的目标支持文本或删除，HTML 标签还可替换为换行。</p>
+<div class="table-wrap"><table class="conversion-rules-table"><thead><tr><th>原始字符串</th><th>目标类型</th><th>替换文本</th><th>作用位置</th><th>匹配方式</th><th>操作</th></tr></thead><tbody id="conversion-rules-rows"></tbody></table></div>
+<div class="conversion-rules-actions"><button id="conversion-rules-reload" class="button" type="button">&#37325;&#26032;&#35835;&#21462;&#35268;&#21017;</button><button id="conversion-rules-add" class="button" type="button" disabled>新增规则</button><button id="conversion-rules-save" class="button primary" type="button" disabled>保存规则</button></div>
+<p id="conversion-rules-status" role="status" aria-live="polite" class="field-help">进入设置后读取本机替换规则。</p>
+<p class="field-help">配置位置：<code id="conversion-rules-path">正在读取…</code></p>
+<details class="conversion-rules-preview"><summary>查看规则 JSON</summary><pre id="conversion-rules-preview"></pre></details>
+</section>
 <section class="discovery-panel" aria-labelledby="discovery-title">
 <div class="card-head"><span class="avatar" aria-hidden="true"><span class="ico i-drive"></span></span><div class="grow"><h2 id="discovery-title">账号盘</h2><p id="discovery-status" class="quiet" role="status" aria-live="polite"></p></div><label class="discovery-account">已授权账号<select id="discovery-profile"></select></label></div>
 <p id="discovery-feedback" role="status" aria-live="polite" class="discovery-feedback" hidden></p>

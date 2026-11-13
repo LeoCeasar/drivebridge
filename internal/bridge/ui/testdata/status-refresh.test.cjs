@@ -14,10 +14,10 @@ class Element {
 }
 const elements = new Map();
 const element = id => { if (!elements.has(id)) elements.set(id,new Element()); return elements.get(id); };
-let failStatus = true, statusCalls = 0, holdStatus = null, partial = false, mounts = [];
+let failStatus = true, statusCalls = 0, holdStatus = null, partial = false, mounts = [], rulesLoads = 0;
 const context = {
   document:{getElementById:element,querySelectorAll:()=>[],createElement:()=>new Element()},
-  window:{DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeRecovery:require('../assets/recovery-view.js'),DriveBridgeBatch:batch,DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},
+  window:{DriveBridgeRules:{create:()=>({load:()=>{rulesLoads++;}})},DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeRecovery:require('../assets/recovery-view.js'),DriveBridgeBatch:batch,DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},
   location:{hash:'',pathname:'/',search:''},history:{replaceState(){}},URLSearchParams,
   FormData:class { [Symbol.iterator]() { return [][Symbol.iterator](); } },
   fetch:async(route) => {
@@ -32,8 +32,10 @@ const context = {
 const source = fs.readFileSync(path.join(__dirname,'../assets/app.js'),'utf8');
 // Exercise the real refresh function without bootstrapping an authenticated browser.
 assert.equal(source.split('  start();').length,2);
-vm.runInNewContext(source.replace('  start();','  globalThis.refreshStatus = refresh; globalThis.pollDelay = () => statusDelay;'),context);
+vm.runInNewContext(source.replace('  start();','  globalThis.refreshStatus = refresh; globalThis.pollDelay = () => statusDelay; globalThis.showView = view;'),context);
 (async () => {
+  context.showView('settings');
+  assert.equal(rulesLoads,1,'entering settings loads conversion rules');
   await context.refreshStatus();
   assert.equal(element('message').hidden,true,'automatic polling must not replace the page with a cloud/draft error banner');
   assert.match(element('connection').textContent,/状态.*稍后|暂未|更新/);
@@ -66,5 +68,6 @@ vm.runInNewContext(source.replace('  start();','  globalThis.refreshStatus = ref
   assert.match(element('connection').textContent,/部分状态/);
   assert.equal(element('conflict-count').textContent,'待更新','incomplete observations cannot promise zero conflicts');
   assert.equal(element('message').textContent,'账号配置操作失败，请重试');
+  assert.equal(rulesLoads,1,'manual refresh and status polling never reload the conversion rules editor');
   console.log('quiet polling, partial status, single-flight and user-action feedback verified');
 })().catch(error=>{console.error(error);process.exitCode=1;});
