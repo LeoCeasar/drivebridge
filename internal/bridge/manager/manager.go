@@ -307,7 +307,10 @@ func (m *Manager) updateConfig(ctx context.Context, update func(*config.Config) 
 // before a desktop host creates runtime files there. It follows the same lifecycle,
 // manager/config, and private-root lock order as other public config writers.
 func (m *Manager) InitializeConfig(ctx context.Context) error {
-	return m.admittedConfigUpdate(ctx, func(*config.Config) error { return nil })
+	if err := m.admittedConfigUpdate(ctx, func(*config.Config) error { return nil }); err != nil {
+		return err
+	}
+	return markdown.EnsureConversionRulesFile(m.options.ConfigFile)
 }
 
 func (m *Manager) AddProfile(ctx context.Context, name, brand string) (model.Profile, error) {
