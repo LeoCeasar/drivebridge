@@ -20,19 +20,20 @@ type PublisherFunc func(context.Context, model.PublishCandidate) error
 func (f PublisherFunc) Publish(ctx context.Context, c model.PublishCandidate) error { return f(ctx, c) }
 
 type Dependencies struct {
-	DeletionCommit     func(context.Context, model.Entry, func() (bool, error)) error
-	CheckIdentity      func(context.Context) error
-	OnConflict         func(context.Context, model.Conflict) error
-	Store              *store.Store
-	Cloud              *cloud.Client
-	Source             Source
-	Publisher          Publisher
-	LocalOnly          func(string) bool
-	ShouldSync         func(context.Context, model.EntryID) (bool, error)
-	ShouldSyncPath     func(context.Context, string) (bool, error)
-	ShouldRefresh      func(context.Context, model.EntryID) (bool, error)
-	ActiveEntries      func() []model.EntryID
-	RefreshDirectories func(context.Context) error
+	BeforeCreateRecovery func(context.Context, model.Entry) error
+	DeletionCommit       func(context.Context, model.Entry, func() (bool, error)) error
+	CheckIdentity        func(context.Context) error
+	OnConflict           func(context.Context, model.Conflict) error
+	Store                *store.Store
+	Cloud                *cloud.Client
+	Source               Source
+	Publisher            Publisher
+	LocalOnly            func(string) bool
+	ShouldSync           func(context.Context, model.EntryID) (bool, error)
+	ShouldSyncPath       func(context.Context, string) (bool, error)
+	ShouldRefresh        func(context.Context, model.EntryID) (bool, error)
+	ActiveEntries        func() []model.EntryID
+	RefreshDirectories   func(context.Context) error
 }
 type Options struct {
 	BackgroundTimeout, TransferTimeout, InteractiveTimeout time.Duration

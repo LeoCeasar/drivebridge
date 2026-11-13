@@ -266,7 +266,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
-	case "/local-metadata/reconcile", "/history/pending", "/history/version-local", "/history/body-local", "/history/pending-bytes", "/history/protection", "/history/sync", "/history/current", "/history/restore", "/upload-copy", "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
+	case "/local-metadata/reconcile", "/history/pending", "/history/version-local", "/history/body-local", "/history/pending-bytes", "/history/protection", "/history/sync", "/history/current", "/history/restore", "/upload-copy", "/upload-recover", "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
 		controlCtx, release, err := w.beginControl(ctx)
 		if err != nil {
 			return nil, err
@@ -354,6 +354,21 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 			return nil, ErrConfig
 		}
 		return struct{}{}, w.stopPolicy(ctx, time.Duration(input.Wait), r.URL.Path == "/recovery/stop")
+	case "/upload-recover":
+		var in model.CreateRecoveryRequest
+		if r.URL.RawQuery != "" {
+			return nil, ErrConfig
+		}
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		if err := ValidateCreateRecoveryRequest(in); err != nil {
+			return nil, err
+		}
+		if s.recoverCreation == nil {
+			return nil, ErrUnavailable
+		}
+		return s.recoverCreation(ctx, in)
 	case "/upload-copy":
 		var in struct {
 			ID model.JobID `json:"id"`

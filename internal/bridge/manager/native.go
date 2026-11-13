@@ -321,7 +321,9 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		native.Unmount()
 		return nil, ErrConfig
 	}
-	engine, err := syncer.New(syncer.Dependencies{DeletionCommit: deletionCommit, CheckIdentity: func(ctx context.Context) error {
+	engine, err := syncer.New(syncer.Dependencies{BeforeCreateRecovery: func(ctx context.Context, en model.Entry) error {
+		return m.archiveCreationRecovery(ctx, spec.Profile.ID, s, en)
+	}, DeletionCommit: deletionCommit, CheckIdentity: func(ctx context.Context) error {
 		binding, err := a.Resolve(ctx, spec.Profile.ID)
 		if err != nil {
 			return err
@@ -380,7 +382,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 			return out, ErrPending
 		}
 		return
-	}, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
+	}, recoverCreation: engine.RecoverCreation, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
 		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {

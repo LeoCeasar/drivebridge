@@ -50,6 +50,8 @@ func respond(w http.ResponseWriter, status int, v any) {
 }
 func respondError(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"unauthorized": "请重新从本机打开管理界面。", "forbidden": "此请求未通过本机会话校验。", "invalid_request": "请检查输入内容。", "not_found": "该项目已不存在，请刷新。", "version_changed": "原版、本地或云端内容已变化，草稿已保留。", "offline": "暂时无法复核云端内容，草稿已保留。", "unavailable": "服务暂时不可用，请稍后重试。", "method_not_allowed": "不支持此操作。", "unsupported_content": "此文件不能在文本合并页提交。"}
+	messages["creation_unconfirmed"] = "创建结果尚未确认，请重新核验；已有本地内容和历史已保留。"
+	messages["creation_needs_attention"] = "创建结果需要处理，请刷新状态并核对文件。"
 	messages["status_unavailable"] = "本机状态读取暂未完成，请稍后刷新。"
 	messages["mount_not_running"] = "挂载尚未运行，请先启动挂载。"
 	messages["folder_unavailable"] = "无法找到挂载目录，请确认挂载正在运行。"
@@ -70,6 +72,8 @@ func respondError(w http.ResponseWriter, status int, code string) {
 }
 func apiError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrCreateNeedsAttention):
+		respondError(w, 409, "creation_needs_attention")
 	case errors.Is(err, manager.ErrCleanupPending):
 		respondError(w, 503, "cleanup_pending")
 	case errors.Is(err, manager.ErrMountUnsynced):
@@ -80,7 +84,7 @@ func apiError(w http.ResponseWriter, err error) {
 		respondError(w, 503, "local_busy")
 	case errors.Is(err, manager.ErrArchived):
 		respondError(w, 409, "mount_archived")
-	case errors.Is(err, ErrMountNotRunning):
+	case errors.Is(err, ErrMountNotRunning), errors.Is(err, manager.ErrUnavailable), errors.Is(err, manager.ErrReadyTimeout):
 		respondError(w, 409, "mount_not_running")
 	case errors.Is(err, platform.ErrInvalidFolder):
 		respondError(w, 409, "folder_unavailable")
@@ -189,14 +193,26 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.prepareConflicts(v.Conflicts, v.Partial)
+		v.Mounts = append([]MountView(nil), v.Mounts...)
 		for i := range v.Mounts {
+			v.Mounts[i].State.Issues = append([]model.SyncIssue(nil), v.Mounts[i].State.Issues...)
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
 			for j := range v.Mounts[i].State.Issues {
 				v.Mounts[i].State.Issues[j].Code = safeCode(v.Mounts[i].State.Issues[j].Code)
+				if info := v.Mounts[i].State.Issues[j].CreateRecovery; info != nil {
+					safe := *info
+					switch safe.Reason {
+					case "location_changed", "not_found", "multiple_matches", "content_mismatch", "network_or_protocol", "request_timeout", "permission_denied", "rename_unconfirmed", "auth_required", "unauthorized", "identity_changed", "offline", "unknown_result", "rate_limited", "canceled":
+					default:
+						safe.Reason = "unknown_result"
+					}
+					v.Mounts[i].State.Issues[j].CreateRecovery = &safe
+				}
 			}
 			v.Mounts[i].StatusWarning = safeCode(v.Mounts[i].StatusWarning)
 		}
 		_, v.CanRetry = h.backend.(SyncRetrier)
+		_, v.CanRecoverUpload = h.backend.(UploadRecoverer)
 		v.Platform, v.OpenFolderLabel = hostGOOS, FolderOpenLabel(hostGOOS)
 		_, v.CanOpenFolder = h.backend.(FolderOpener)
 		respond(w, 200, v)
@@ -295,6 +311,43 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && parts[3] == "uploads" && validID(parts[4]) && parts[5] == "recover" {
+		if r.Method != http.MethodPost {
+			method(w, "POST")
+			return
+		}
+		var in struct {
+			Action             string       `json:"action"`
+			ExpectedGeneration uint64       `json:"expected_generation"`
+			ExpectedLocal      model.BlobID `json:"expected_local"`
+			ConfirmRecreate    bool         `json:"confirm_recreate"`
+		}
+		if r.URL.RawQuery != "" || decode(w, r, &in) != nil {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		req := model.CreateRecoveryRequest{JobID: model.JobID(parts[4]), Action: in.Action, ExpectedGeneration: in.ExpectedGeneration, ExpectedLocal: in.ExpectedLocal, ConfirmRecreate: in.ConfirmRecreate}
+		if manager.ValidateCreateRecoveryRequest(req) != nil {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		backend, ok := h.backend.(UploadRecoverer)
+		if !ok {
+			respondError(w, 503, "unavailable")
+			return
+		}
+		out, err := backend.RecoverUpload(r.Context(), model.MountID(parts[2]), req)
+		if err != nil {
+			if errors.Is(err, model.ErrUnknownResult) {
+				respondError(w, 409, "creation_unconfirmed")
+				return
+			}
+			apiError(w, err)
+			return
+		}
+		respond(w, 200, out)
+		return
+	}
 	if len(parts) == 6 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && parts[3] == "uploads" && validID(parts[4]) && parts[5] == "local" {
 		if r.Method != "GET" {
 			method(w, "GET")
@@ -373,7 +426,7 @@ func method(w http.ResponseWriter, allow string) {
 }
 func safeCode(s string) string {
 	switch s {
-	case "request_timeout", "remote_drift", "history_git_unavailable", "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
+	case "creation_needs_attention", "creation_unconfirmed", "creation_recreated", "request_timeout", "remote_drift", "history_git_unavailable", "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
 		return s
 	}
 	return "operation_failed"

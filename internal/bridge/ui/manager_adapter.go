@@ -167,3 +167,7 @@ func (b *ManagerBackend) UploadLocalCopy(ctx context.Context, mount model.MountI
 }
 
 var _ ResolveVersionReader = (*ManagerBackend)(nil)
+
+func (b *ManagerBackend) RecoverUpload(ctx context.Context, mount model.MountID, req model.CreateRecoveryRequest) (model.CreateRecoveryResult, error) {
+	return b.manager.RecoverUpload(ctx, mount, req)
+}

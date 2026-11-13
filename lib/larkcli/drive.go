@@ -238,6 +238,8 @@ func (d *Drive) FileMeta(ctx context.Context, token string) (FileMeta, error) {
 	return FileMeta{}, ErrMetadataUnknown
 }
 
+// UploadResult may contain unconfirmed candidate metadata with an error. Callers
+// must retain the error and independently reconcile the candidate before adoption.
 type UploadResult struct {
 	FileToken    string
 	Size         int64
@@ -247,18 +249,18 @@ type UploadResult struct {
 func (d *Drive) Upload(ctx context.Context, parent, token, name string, in io.Reader) (UploadResult, error) {
 	dir, err := os.MkdirTemp(d.tempDir, "drivebridge-upload-")
 	if err != nil {
-		return UploadResult{}, err
+		return UploadResult{}, errors.Join(ErrNotDispatched, err)
 	}
 	defer os.RemoveAll(dir)
 	p := filepath.Join(dir, "input")
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return UploadResult{}, err
+		return UploadResult{}, errors.Join(ErrNotDispatched, err)
 	}
 	size, copyErr := io.Copy(f, in)
 	closeErr := f.Close()
 	if err = errors.Join(copyErr, closeErr); err != nil {
-		return UploadResult{}, err
+		return UploadResult{}, errors.Join(ErrNotDispatched, err)
 	}
 	args := []string{"drive", "+upload", "--file", "input", "--name", name}
 	if token != "" {
@@ -266,24 +268,49 @@ func (d *Drive) Upload(ctx context.Context, parent, token, name string, in io.Re
 	} else if parent != "" {
 		args = append(args, "--folder-token", parent)
 	}
-	r, err := d.runner.Run(ctx, Request{Args: args, Dir: dir, Timeout: transferTimeout})
-	if err != nil {
-		return UploadResult{}, mutationError(err)
+	r, runErr := d.runner.Run(ctx, Request{Args: args, Dir: dir, Timeout: transferTimeout})
+	if errors.Is(runErr, ErrNotDispatched) {
+		return UploadResult{}, runErr
 	}
+	result, metadataErr := uploadEvidence(r.Data)
+	if result.Size != size || (token != "" && result.FileToken != token) {
+		metadataErr = ErrProtocol
+	}
+	if err := errors.Join(runErr, metadataErr); err != nil {
+		return result, errors.Join(ErrUnknownResult, err)
+	}
+	return result, nil
+}
+
+// Decode fields independently so one malformed field cannot erase other valid
+// evidence. Only a complete JSON value can supply candidate metadata.
+func uploadEvidence(data []byte) (UploadResult, error) {
 	var raw struct {
-		Token   string          `json:"file_token"`
+		Token   json.RawMessage `json:"file_token"`
 		Size    json.RawMessage `json:"size"`
-		URL     string          `json:"url"`
-		Version string          `json:"version"`
+		URL     json.RawMessage `json:"url"`
+		Version json.RawMessage `json:"version"`
 	}
-	if singleJSON(r.Data, &raw) != nil || raw.Token == "" {
-		return UploadResult{}, errors.Join(ErrUnknownResult, ErrProtocol)
+	if singleJSON(data, &raw) != nil {
+		return UploadResult{}, ErrProtocol
 	}
-	n, err := strictInt(raw.Size, false)
-	if err != nil || n != size || (token != "" && raw.Token != token) {
-		return UploadResult{}, errors.Join(ErrUnknownResult, ErrProtocol)
+	var result UploadResult
+	invalid := json.Unmarshal(raw.Token, &result.FileToken) != nil || result.FileToken == ""
+	var err error
+	result.Size, err = strictInt(raw.Size, false)
+	if err != nil {
+		invalid = true
 	}
-	return UploadResult{raw.Token, n, raw.URL, raw.Version}, nil
+	if len(raw.URL) > 0 && json.Unmarshal(raw.URL, &result.URL) != nil {
+		invalid = true
+	}
+	if len(raw.Version) > 0 && json.Unmarshal(raw.Version, &result.Version) != nil {
+		invalid = true
+	}
+	if invalid {
+		return result, ErrProtocol
+	}
+	return result, nil
 }
 func (d *Drive) mutation(ctx context.Context, args []string) (Response, error) {
 	r, err := d.runner.Run(ctx, Request{Args: args})

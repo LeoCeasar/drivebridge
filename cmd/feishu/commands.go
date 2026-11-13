@@ -294,6 +294,28 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		})
 		upload.AddCommand(c)
 	}
+	recoverUpload := &cobra.Command{Use: "recover NAME JOB", Short: "Recheck an uncertain creation or explicitly recreate from the latest local version", Args: exactArgs(2)}
+	recoverUpload.Flags().String("action", "", "recheck or recreate")
+	recoverUpload.Flags().Uint64("expected-generation", 0, "Current entry generation from mount status")
+	recoverUpload.Flags().String("expected-local", "", "Current local SHA-256 from mount status")
+	recoverUpload.Flags().Bool("confirm-recreate", false, "Confirm a new creation; an older cloud copy may exist elsewhere")
+	recoverUpload.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		generation, err := recoverUpload.Flags().GetUint64("expected-generation")
+		if err != nil {
+			return nil, manager.ErrConfig
+		}
+		confirmed, _ := recoverUpload.Flags().GetBool("confirm-recreate")
+		req := model.CreateRecoveryRequest{JobID: model.JobID(args[1]), Action: flagString(recoverUpload, "action"), ExpectedGeneration: generation, ExpectedLocal: model.BlobID(flagString(recoverUpload, "expected-local")), ConfirmRecreate: confirmed}
+		if err := manager.ValidateCreateRecoveryRequest(req); err != nil {
+			return nil, err
+		}
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		return m.RecoverUpload(ctx, v.ID, req)
+	})
+	upload.AddCommand(recoverUpload)
 	root.AddCommand(upload)
 	conflict := &cobra.Command{Use: "conflict", Short: "Inspect conflicts, open the merge UI, or submit an explicit merge"}
 	conflict.AddCommand(&cobra.Command{Use: "list NAME", Args: exactArgs(1), RunE: commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {

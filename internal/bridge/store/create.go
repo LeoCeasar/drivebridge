@@ -117,11 +117,24 @@ func (s *Store) BindCreated(ctx context.Context, id, token, revision string) (ou
 		if er := get(tx, "createops", id, &out); er != nil {
 			return er
 		}
+		if out.CandidateToken != "" && out.CandidateToken != token {
+			return model.ErrIdentityChanged
+		}
 		if out.Token != "" {
 			if out.Token != token || out.Revision != revision {
 				return model.ErrIdentityChanged
 			}
-			return nil
+			e, er := entryTx(tx, out.EntryID)
+			if er != nil {
+				return er
+			}
+			if er = clearCreateFailure(tx, &out, &e); er != nil {
+				return er
+			}
+			if er = saveEntry(tx, e); er != nil {
+				return er
+			}
+			return put(tx, "createops", out.ID, out)
 		}
 		if out.State != "prepared" && out.State != "unknown" {
 			return ErrInvalidState
@@ -137,6 +150,9 @@ func (s *Store) BindCreated(ctx context.Context, id, token, revision string) (ou
 		out.Token = token
 		out.Revision = revision
 		out.State = "bound"
+		if er = clearCreateFailure(tx, &out, &e); er != nil {
+			return er
+		}
 		if er = saveEntry(tx, e); er != nil {
 			return er
 		}
@@ -164,13 +180,19 @@ func (s *Store) FinishCreate(ctx context.Context, id string) error {
 			return model.ErrIdentityChanged
 		}
 		op.State = "finished"
+		if er = clearCreateFailure(tx, &op, &e); er != nil {
+			return er
+		}
+		if er = saveEntry(tx, e); er != nil {
+			return er
+		}
 		return put(tx, "createops", id, op)
 	})
 }
 func (s *Store) PendingCreates(ctx context.Context) (out []model.CreateOp, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		return each[model.CreateOp](tx, "createops", func(op model.CreateOp) error {
-			if op.State != "finished" && op.State != "not_dispatched" {
+			if op.State != "finished" && op.State != "not_dispatched" && op.State != "recreated" {
 				out = append(out, op)
 			}
 			return nil

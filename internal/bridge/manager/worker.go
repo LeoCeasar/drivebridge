@@ -28,6 +28,7 @@ type mountRuntime interface {
 	CachePaths() (string, string)
 }
 type workerServices struct {
+	recoverCreation    func(context.Context, model.CreateRecoveryRequest) (model.CreateRecoveryResult, error)
 	restoreHistory     func(context.Context, model.HistoryRestoreRequest, io.Reader, *store.HistoryRestoreBundle) (model.HistoryRestoreResult, error)
 	directoryStatus    func(context.Context) (model.DirectoryIndexStatus, error)
 	cacheBytes         func() (int64, bool)

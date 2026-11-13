@@ -37,3 +37,35 @@ assert.match(texts(el('sync-issue-list')),/本地第 3–5 行/);
 assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent===markup),'captured user text is rendered with textContent');
 assert.ok(!walk(el('sync-issue-list')).some(e=>e.innerHTML?.includes(markup)),'diagnostic text never enters HTML');
 console.log('captured diagnostic type, source lines and text are visible safely');
+
+const recovering={...issue,code:'creation_needs_attention',create_recovery:{can_recreate:true,current_generation:9,current_local:'a'.repeat(64),attempts:3,reason:'location_changed'}};
+context.renderIssues([{id:'mount',state:{running:true,issues:[recovering]}}],true,true);
+assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent==='重新核验'));
+assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'));
+assert.match(texts(el('sync-issue-list')),/3 次/);
+assert.match(texts(el('sync-issue-list')),/名称或位置已变化/);
+assert.match(texts(el('sync-issue-list')),/最新本地版本/);
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'));
+context.renderIssues([{id:'mount',state:{running:true,issues:[{...recovering,create_recovery:{...recovering.create_recovery,can_recreate:false}}]}}],true,true);
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'));
+
+(async()=>{
+ context.renderIssues([{id:'mount',state:{running:true,issues:[recovering,{...recovering,job_id:'other-job',name:'其他.md'}]}}],true,true);
+ let buttons=walk(el('sync-issue-list')).filter(e=>e.textContent==='重新创建…');
+ let requests=[],release;
+ context.window.confirm=()=>false;
+ context.fetch=async(route,options)=>{requests.push({route,options});if(route==='/api/status')return {ok:true,json:async()=>({mounts:[],conflicts:[]})};await new Promise(r=>release=r);return {ok:true,json:async()=>({accepted:true})};};
+ await buttons[0].listeners.click();assert.equal(requests.length,0,'canceling confirmation cannot send recovery');
+ let prompt='';context.window.confirm=text=>{prompt=text;return true;};
+ const pending=buttons[0].listeners.click();
+ assert.match(prompt,/旧副本.*移动/);assert.match(prompt,/最新本地版本/);
+ assert.equal(buttons[0].disabled,true);assert.equal(Boolean(buttons[1].disabled),false,'other files remain actionable');
+ assert.equal(requests[0].route,'/api/mounts/mount/uploads/job/recover');
+ assert.deepEqual(JSON.parse(requests[0].options.body),{action:'recreate',expected_generation:9,expected_local:'a'.repeat(64),confirm_recreate:true});
+ release();await pending;
+ context.renderIssues([{id:'mount',state:{running:true,issues:[recovering]}}],true,true);
+ context.fetch=async(route)=>route==='/api/status'?{ok:true,json:async()=>({mounts:[],conflicts:[]})}:{ok:false,status:409,json:async()=>({code:'creation_unconfirmed',message:'创建结果尚未确认，请重新核验。'})};
+ await walk(el('sync-issue-list')).find(e=>e.textContent==='重新核验').listeners.click();
+ assert.match(el('message').textContent,/创建结果尚未确认/,'unconfirmed results must retain their typed explanation');
+ console.log('create recovery confirmation, current snapshot and per-file isolation verified');
+})().catch(error=>{console.error(error);process.exitCode=1;});

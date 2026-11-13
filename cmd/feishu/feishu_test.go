@@ -204,3 +204,33 @@ func TestMountAddPersistsCacheRetentionAndRejectsInvalidAge(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadRecoverRejectsUnconfirmedAndMissingSnapshot(t *testing.T) {
+	file := configFixture(t)
+	base := []string{"--bridge-config", file, "upload", "recover", "team", uuid.NewString(), "--json"}
+	cases := [][]string{
+		{"--action", "recreate", "--expected-generation", "1", "--expected-local", strings.Repeat("a", 64)},
+		{"--action", "recheck", "--expected-generation", "1"},
+		{"--action", "retry", "--expected-generation", "1", "--expected-local", strings.Repeat("a", 64)},
+	}
+	for _, flags := range cases {
+		root := NewCommand(CommandOptions{})
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(append(append([]string{}, base...), flags...))
+		if err := root.Execute(); !errors.Is(err, manager.ErrConfig) {
+			t.Fatalf("%v = %v", flags, err)
+		}
+	}
+}
+
+func TestUploadRecoverValidatedRequestRequiresRunningWorker(t *testing.T) {
+	file := configFixture(t)
+	root := NewCommand(CommandOptions{})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--bridge-config", file, "upload", "recover", "team", uuid.NewString(), "--action", "recheck", "--expected-generation", "4", "--expected-local", strings.Repeat("a", 64), "--json"})
+	if err := root.Execute(); !errors.Is(err, manager.ErrUnavailable) {
+		t.Fatalf("valid recovery must call running worker: %v", err)
+	}
+}

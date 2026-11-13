@@ -22,6 +22,10 @@ func errorCode(err error) string {
 	switch {
 	case err == nil:
 		return ""
+	case errors.Is(err, store.ErrCreateNeedsAttention):
+		return "creation_needs_attention"
+	case errors.Is(err, model.ErrUnknownResult):
+		return "unknown_result"
 	case errors.Is(err, ErrArchived):
 		return "mount_archived"
 	case errors.Is(err, ErrMountUnsynced):
@@ -54,6 +58,10 @@ func errorCode(err error) string {
 }
 func errorFromCode(code string) error {
 	switch code {
+	case "creation_needs_attention":
+		return store.ErrCreateNeedsAttention
+	case "creation_unconfirmed", "unknown_result":
+		return model.ErrUnknownResult
 	case "mount_archived":
 		return ErrArchived
 	case "mount_unsynced":
@@ -123,6 +131,7 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 	if err != nil {
 		return out, err
 	}
+	awaiting := 0
 	for _, j := range jobs {
 		journal, journalErr := s.Journal(ctx, j.ID)
 		if journalErr != nil {
@@ -132,17 +141,50 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			out.LastError = journal.ErrorCode
 		}
 		switch j.State {
-		case model.StatusMerging, model.StatusUploading, model.StatusAwaitingVerification:
+		case model.StatusMerging, model.StatusUploading:
 			out.Inflight++
+		case model.StatusAwaitingVerification:
+			out.Queued++
+			awaiting++
 		default:
 			out.Queued++
 		}
-		if j.State == model.StatusPaused || j.State == model.StatusBlocked {
+		if j.State == model.StatusPaused || j.State == model.StatusBlocked || j.State == model.StatusAwaitingVerification {
 			en, err := s.Entry(ctx, j.EntryID)
 			if err != nil {
 				return out, err
 			}
 			issue := model.SyncIssue{Diagnostic: journal.Diagnostic, JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
+			if j.State == model.StatusAwaitingVerification && issue.Code == "" {
+				issue.Code = "unknown_result"
+			}
+			creation, createErr := s.CreateForJob(ctx, j.ID)
+			if createErr != nil && !errors.Is(createErr, store.ErrNotFound) {
+				return out, createErr
+			}
+			if createErr == nil && (creation.State == "unknown" || creation.State == "bound" || creation.State == "renaming" || creation.State == "prepared") {
+				reason := creation.CheckReason
+				if reason == "" {
+					reason = creation.FailureCode
+				}
+				if reason == "" {
+					reason = "unknown_result"
+				}
+				issue.CreateRecovery = &model.CreateRecoveryInfo{CanRecreate: creation.NeedsAttention && (creation.State == "prepared" || creation.State == "unknown") && creation.Token == "" && creation.CandidateToken == "" && en.Token == "" && en.RemoteCheckpoint == "" && en.LocalCheckpoint == "", CurrentGeneration: en.Generation, CurrentLocal: en.Local, Attempts: creation.CheckAttempts, Reason: reason}
+				if issue.Diagnostic == nil {
+					failure := map[string]string{"request_timeout": "首次创建请求超时", "permission_denied": "首次创建请求权限不足", "auth_required": "首次创建请求需要重新授权", "unauthorized": "首次创建请求未获授权", "identity_changed": "首次创建请求的账号身份发生变化", "network_or_protocol": "首次创建请求网络或服务响应未获确认", "offline": "首次创建请求无法连接飞书", "rate_limited": "首次创建请求受到频率限制", "canceled": "首次创建请求被中断"}[creation.FailureCode]
+					if creation.FailureCode == "" || creation.FailureCode == "unknown_result" {
+						failure = "旧记录未保留首次错误原因"
+					} else if failure == "" {
+						failure = "首次创建请求未获确认"
+					}
+					check := map[string]string{"not_found": "尚未找到先前创建的文件", "multiple_matches": "找到多个候选文件", "content_mismatch": "候选文件内容与原提交不同", "location_changed": "先前创建的文件名称或位置已变化", "network_or_protocol": "核验时网络或服务响应未获确认", "request_timeout": "核验请求超时", "permission_denied": "核验请求权限不足", "rename_unconfirmed": "云端改名结果尚未确认"}[creation.CheckReason]
+					if check != "" {
+						failure += "；最近核验：" + check
+					}
+					issue.Diagnostic = &model.SyncDiagnostic{Kind: "creation_unconfirmed", Message: failure + "。"}
+				}
+			}
 			r, err := s.ReadBlob(ctx, j.Local)
 			if err != nil {
 				return out, err
@@ -158,7 +200,9 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			issue.LocalSaved = true
 			issue.CanDownload = info.Size() <= maxUploadCopyBytes
 			out.Issues = append(out.Issues, issue)
-			out.CloudState = string(j.State)
+			if j.State == model.StatusBlocked || j.State == model.StatusPaused && out.CloudState != "blocked" {
+				out.CloudState = string(j.State)
+			}
 		}
 	}
 	conflicts, err := s.Conflicts(ctx)
@@ -171,7 +215,7 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 		return out, err
 	}
 	out.Queued += len(publications)
-	if len(publications) > 0 {
+	if len(publications) > 0 && out.CloudState == "synced" {
 		out.CloudState = "awaiting_publish"
 	}
 	namespaces, err := s.PendingNamespace(ctx)
@@ -198,6 +242,8 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 		out.CloudState = "conflict"
 	} else if out.Inflight > 0 {
 		out.CloudState = "uploading"
+	} else if awaiting > 0 && out.CloudState != "blocked" && out.CloudState != "paused" {
+		out.CloudState = "awaiting_verification"
 	} else if out.Queued > 0 && out.CloudState == "synced" {
 		out.CloudState = "queued"
 	}

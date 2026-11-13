@@ -56,14 +56,15 @@ type ConflictSummary struct {
 	MountID        model.MountID    `json:"mount_id"`
 }
 type StatusView struct {
-	Platform        string            `json:"platform,omitempty"`
-	OpenFolderLabel string            `json:"open_folder_label,omitempty"`
-	CanOpenFolder   bool              `json:"can_open_folder"`
-	Partial         bool              `json:"partial,omitempty"`
-	SchemaVersion   int               `json:"schema_version"`
-	CanRetry        bool              `json:"can_retry"`
-	Mounts          []MountView       `json:"mounts"`
-	Conflicts       []ConflictSummary `json:"conflicts"`
+	Platform         string            `json:"platform,omitempty"`
+	OpenFolderLabel  string            `json:"open_folder_label,omitempty"`
+	CanOpenFolder    bool              `json:"can_open_folder"`
+	Partial          bool              `json:"partial,omitempty"`
+	SchemaVersion    int               `json:"schema_version"`
+	CanRecoverUpload bool              `json:"can_recover_upload"`
+	CanRetry         bool              `json:"can_retry"`
+	Mounts           []MountView       `json:"mounts"`
+	Conflicts        []ConflictSummary `json:"conflicts"`
 }
 type ConfigRequest struct {
 	MountID                          model.MountID   `json:"mount_id,omitempty"`
@@ -174,4 +175,9 @@ type Options struct {
 	Backend               Backend
 	RuntimeDir, ConfigKey string
 	Notifier              Notifier
+}
+
+// UploadRecoverer is available only when a live worker can safely recover a creation.
+type UploadRecoverer interface {
+	RecoverUpload(context.Context, model.MountID, model.CreateRecoveryRequest) (model.CreateRecoveryResult, error)
 }

@@ -184,19 +184,55 @@ type NamespaceOp struct {
 	Previous    BlobID  `json:"previous"`
 }
 
+type CreateRecoveryRequest struct {
+	// Internal CAS evidence captured before cloud verification, never supplied by clients.
+	ExpectedRemote      string `json:"-"`
+	ExpectedParentToken string `json:"-"`
+	JobID               JobID  `json:"job_id"`
+	Action              string `json:"action"`
+	ExpectedGeneration  uint64 `json:"expected_generation"`
+	ExpectedLocal       BlobID `json:"expected_local"`
+	ConfirmRecreate     bool   `json:"confirm_recreate"`
+}
+
+type CreateRecoveryResult struct {
+	EntryID    EntryID `json:"entry_id"`
+	JobID      JobID   `json:"job_id"`
+	Generation uint64  `json:"generation"`
+	Recreated  bool    `json:"recreated"`
+	Accepted   bool    `json:"accepted"`
+}
+
+type CreateRecoveryInfo struct {
+	CanRecreate       bool   `json:"can_recreate"`
+	CurrentGeneration uint64 `json:"current_generation"`
+	CurrentLocal      BlobID `json:"current_local"`
+	Attempts          int    `json:"attempts"`
+	Reason            string `json:"reason"`
+}
+
 type CreateOp struct {
-	ID            string  `json:"id"`
-	JobID         JobID   `json:"job_id"`
-	EntryID       EntryID `json:"entry_id"`
-	Generation    uint64  `json:"generation"`
-	Kind          Kind    `json:"kind"`
-	ParentToken   string  `json:"parent_token"`
-	TemporaryName string  `json:"temporary_name"`
-	FinalName     string  `json:"final_name"`
-	Token         string  `json:"token"`
-	Revision      string  `json:"revision"`
-	Input         BlobID  `json:"input"`
-	State         string  `json:"state"`
+	NeedsAttention    bool      `json:"needs_attention,omitempty"`
+	CheckAttempts     int       `json:"check_attempts,omitempty"`
+	FirstUncertainAt  time.Time `json:"first_uncertain_at,omitempty"`
+	LastCheckedAt     time.Time `json:"last_checked_at,omitempty"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	CheckReason       string    `json:"check_reason,omitempty"`
+	CandidateToken    string    `json:"candidate_token,omitempty"`
+	CandidateRevision string    `json:"candidate_revision,omitempty"`
+	ReplacedBy        JobID     `json:"replaced_by,omitempty"`
+	ID                string    `json:"id"`
+	JobID             JobID     `json:"job_id"`
+	EntryID           EntryID   `json:"entry_id"`
+	Generation        uint64    `json:"generation"`
+	Kind              Kind      `json:"kind"`
+	ParentToken       string    `json:"parent_token"`
+	TemporaryName     string    `json:"temporary_name"`
+	FinalName         string    `json:"final_name"`
+	Token             string    `json:"token"`
+	Revision          string    `json:"revision"`
+	Input             BlobID    `json:"input"`
+	State             string    `json:"state"`
 }
 
 // Operation.ID is a local journal ID, never a server idempotency key.
@@ -316,15 +352,16 @@ type SyncDiagnostic struct {
 
 // SyncIssue is a durable failed upload, distinct from a version conflict.
 type SyncIssue struct {
-	Diagnostic  *SyncDiagnostic `json:"diagnostic,omitempty"`
-	JobID       JobID           `json:"job_id"`
-	EntryID     EntryID         `json:"entry_id"`
-	Name        string          `json:"name"`
-	Code        string          `json:"code"`
-	State       Status          `json:"state"`
-	LocalSaved  bool            `json:"local_saved"`
-	NewDocument bool            `json:"new_document"`
-	CanDownload bool            `json:"can_download"`
+	CreateRecovery *CreateRecoveryInfo `json:"create_recovery,omitempty"`
+	Diagnostic     *SyncDiagnostic     `json:"diagnostic,omitempty"`
+	JobID          JobID               `json:"job_id"`
+	EntryID        EntryID             `json:"entry_id"`
+	Name           string              `json:"name"`
+	Code           string              `json:"code"`
+	State          Status              `json:"state"`
+	LocalSaved     bool                `json:"local_saved"`
+	NewDocument    bool                `json:"new_document"`
+	CanDownload    bool                `json:"can_download"`
 }
 
 type MountStatus struct {

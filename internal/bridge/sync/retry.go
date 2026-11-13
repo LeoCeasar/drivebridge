@@ -71,6 +71,9 @@ func (e *Engine) Retry(ctx context.Context, id model.EntryID) error {
 	}
 	for _, j := range jobs {
 		if j.EntryID == id {
+			if op, err := e.store.CreateForJob(ctx, j.ID); err == nil && op.NeedsAttention {
+				return nil
+			}
 			if j.State == model.StatusBlocked || j.State == model.StatusPaused {
 				if err = e.store.ResumeJob(ctx, j.ID); err != nil {
 					return err

@@ -24,6 +24,19 @@ func arg(args []string, key string) string {
 	return ""
 }
 func handleDriveProcess(s string, args []string, emit func(string)) bool {
+	if s == "upload-response" {
+		emit(arg(args, "--name"))
+		return true
+	}
+	if s == "upload-canceled-response" {
+		emit(`{"file_token":"candidate","size":7,"url":"https://example.invalid/candidate","version":"3"}`)
+		time.Sleep(time.Minute)
+		return true
+	}
+	if s == "upload-failed-response" {
+		emit(`{"file_token":"candidate","size":7,"url":"https://example.invalid/candidate","version":"3"}`)
+		os.Exit(1)
+	}
 	if s == "drive-routes" {
 		switch {
 		case len(args) > 0 && args[0] == "api":
@@ -263,5 +276,70 @@ func TestPageRequiredFieldTypes(t *testing.T) {
 		if _, err := decodePage([]byte(body), "folder"); err == nil {
 			t.Fatal("incomplete page accepted", body)
 		}
+	}
+}
+
+type uploadReadFailure struct{ err error }
+
+func (r uploadReadFailure) Read([]byte) (int, error) { return 0, r.err }
+
+func TestUploadStagingFailureIsNotDispatched(t *testing.T) {
+	readErr := errors.New("source read failed")
+	for _, tc := range []struct {
+		name, tempDir string
+		in            io.Reader
+		wantErr       error
+	}{
+		{"missing-temp-directory", filepath.Join(t.TempDir(), "missing"), strings.NewReader("content"), os.ErrNotExist},
+		{"reader-failure", t.TempDir(), uploadReadFailure{readErr}, readErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A nil runner makes any attempt to dispatch fail the test immediately.
+			result, err := NewDrive(nil, tc.tempDir).Upload(context.Background(), "parent", "", "name", tc.in)
+			if !errors.Is(err, tc.wantErr) || !errors.Is(err, ErrNotDispatched) || errors.Is(err, ErrUnknownResult) || result != (UploadResult{}) {
+				t.Fatalf("staging error/result classification: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestUploadPreservesCandidateOnProtocolFailure(t *testing.T) {
+	executable := testExecutable(t, "upload-response")
+	for _, tc := range []struct {
+		name, data, boundToken string
+		want                   UploadResult
+	}{
+		{"bad-size", `{"file_token":"candidate","size":"7","url":"https://example.invalid/candidate","version":"3"}`, "", UploadResult{FileToken: "candidate", URL: "https://example.invalid/candidate", Version: "3"}},
+		{"size-mismatch", `{"file_token":"candidate","size":8}`, "", UploadResult{FileToken: "candidate", Size: 8}},
+		{"missing-size", `{"file_token":"candidate","url":"https://example.invalid/candidate"}`, "", UploadResult{FileToken: "candidate", URL: "https://example.invalid/candidate"}},
+		{"bad-url", `{"file_token":"candidate","size":7,"url":7,"version":"3"}`, "", UploadResult{FileToken: "candidate", Size: 7, Version: "3"}},
+		{"bad-version", `{"file_token":"candidate","size":7,"version":3}`, "", UploadResult{FileToken: "candidate", Size: 7}},
+		{"bound-token-mismatch", `{"file_token":"candidate","size":7}`, "bound", UploadResult{FileToken: "candidate", Size: 7}},
+		{"invalid-token", `{"file_token":7,"size":7,"version":"3"}`, "", UploadResult{Size: 7, Version: "3"}},
+		{"invalid-json", `{"file_token":"candidate","size":7} trailing`, "", UploadResult{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := NewDrive(NewDirect(executable), t.TempDir()).Upload(context.Background(), "parent", tc.boundToken, tc.data, strings.NewReader("content"))
+			if !errors.Is(err, ErrUnknownResult) || !errors.Is(err, ErrProtocol) || errors.Is(err, ErrNotDispatched) || result != tc.want {
+				t.Fatalf("candidate evidence or strict success validation: %+v %v; want %+v", result, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestUploadPreservesCandidateOnRunnerFailure(t *testing.T) {
+	for _, scenario := range []string{"upload-failed-response", "upload-canceled-response"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+			result, err := NewDrive(NewDirect(testExecutable(t, scenario)), t.TempDir()).Upload(ctx, "parent", "", "name", strings.NewReader("content"))
+			want := UploadResult{FileToken: "candidate", Size: 7, URL: "https://example.invalid/candidate", Version: "3"}
+			if !errors.Is(err, ErrUnknownResult) || errors.Is(err, ErrNotDispatched) || result != want {
+				t.Fatalf("runner failure discarded candidate: %+v %v", result, err)
+			}
+			if scenario == "upload-canceled-response" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("cancellation cause lost: %v", err)
+			}
+		})
 	}
 }

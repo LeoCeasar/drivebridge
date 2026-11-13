@@ -251,6 +251,8 @@
   }
   function issueAdvice(issue) {
     switch (issue.code) {
+      case 'creation_needs_attention': case 'creation_unconfirmed':
+        return {title:issue.code === 'creation_needs_attention' ? '创建结果需要处理' : '创建结果尚未确认',reason:'先前创建可能已经到达云端，本地正文及历史仍保留。',steps:['可重新核验先前创建的结果。','需要重新创建时，使用最新本地版本；其他位置可能仍存在先前创建的旧副本。']};
       case 'local_save_failed':
         return {title:'本机保存尚未确认',reason:'本机磁盘未能确认此次保存，当前修改仍在本机缓存中，尚不能视为持久保存。',retry:true,steps:['保留编辑器中的内容，必要时另存到其他可用磁盘；不要删除挂载或缓存。','检查磁盘剩余空间、磁盘状态，以及应用缓存目录是否可写。','恢复条件后关闭文件，保持应用运行，后台会自动重试本机保存；也可点击“重试同步”。']};
       case 'local_archive_failed':
@@ -275,7 +277,7 @@
         return {title:'同步需要处理',reason:'这项上传尚未通过安全核验，本地保存与云端完成是两个状态。',steps:['先保留或下载本地副本。','查看下方错误标识和文件路径；未确认原因前，不要删除文件或强制覆盖云端。']};
     }
   }
-  function renderIssues(mounts = [], canRetry = false) {
+  function renderIssues(mounts = [], canRetry = false, canRecoverUpload = false) {
     const items = [];
     for (const mount of mounts) {
       const state = mount.state || {}, stale = Boolean(mount.status_warning);
@@ -306,9 +308,26 @@
           const start=make('button',mount.archived?'恢复并启动同步':'启动挂载','button small');
           start.addEventListener('click',async()=>{start.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived?'restore_start':'start'}`,'POST',{});await loadConfig();await refresh();}catch(e){message(e.message,true);}finally{start.disabled=false;}});actions.append(start);
         }
+        if (issue.create_recovery) {
+          const info=issue.create_recovery;
+          const reasons={location_changed:'先前创建的文件名称或位置已变化',not_found:'尚未找到先前创建的文件',multiple_candidates:'找到多个候选文件',multiple_matches:'找到多个候选文件',request_timeout:'核验请求超时',rename_unconfirmed:'云端改名结果尚未确认',content_mismatch:'候选文件内容与原提交不同',network_or_protocol:'网络或服务响应未能完成核验',permission_denied:'账号权限不足',unknown_result:'旧版本未记录首次错误原因'};
+          card.append(make('p',`已核验 ${info.attempts || 0} 次 · ${reasons[info.reason] || '结果仍需核验'}`,'quiet'));
+          card.append(make('p','下载副本保留原任务提交内容；重新创建使用最新本地版本。','quiet'));
+          if (canRecoverUpload && issue.job_id && !mount.archived) {
+            const recover=async(action,button)=>{
+              if (action==='recreate' && !window.confirm(`确认使用“${issue.name || mount.name}”的最新本地版本重新创建？\n先前创建的旧副本可能已被移动到其他位置，重新创建后可能出现两份文件。原任务正文及历史会保留。`)) return;
+              button.disabled=true;
+              try {await api(`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/recover`,'POST',{action,expected_generation:info.current_generation,expected_local:info.current_local,confirm_recreate:action==='recreate'});message(action==='recreate'?'已接受使用最新本地版本重新创建，仍需等待云端确认。':'已请求重新核验先前创建的结果。');await refresh();}
+              catch(error){message(error.code==='version_changed'?'文件或云端状态已变化，请刷新后重新核对。':error.message,true);if(error.status===409)await refresh();}
+              finally {button.disabled=stale||!state.running;}
+            };
+            const check=make('button','重新核验','button small');check.disabled=stale||!state.running;check.addEventListener('click',()=>recover('recheck',check));actions.append(check);
+            if (info.can_recreate) {const recreate=make('button','重新创建…','button small');recreate.disabled=stale||!state.running;recreate.addEventListener('click',()=>recover('recreate',recreate));actions.append(recreate);}
+          }
+        }
         if (issue.can_download && issue.job_id && !stale) { const copy=make('a','下载本地副本','button small'); copy.href=`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/local`; copy.download=issue.name?.split('/').pop() || 'local-copy'; copy.title='下载此次提交的原始内容；图片资源仍保留在挂载目录中'; actions.append(copy); }
         if (advice.settings) {const settings=make('button','检查账号与权限','button small');settings.addEventListener('click',()=>view('settings'));actions.append(settings);}
-        if (advice.retry && canRetry && !mount.archived) {const retry=make('button','重试同步','button small');retry.disabled=stale || !state.running;retry.addEventListener('click',async()=>{retry.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{});message('已请求重试，完成后需要云端确认。');await refresh();}catch(error){message(error.message,true);}finally{retry.disabled=stale||!state.running;}});actions.append(retry);}
+        if (advice.retry && !issue.create_recovery && canRetry && !mount.archived) {const retry=make('button','重试同步','button small');retry.disabled=stale || !state.running;retry.addEventListener('click',async()=>{retry.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{});message('已请求重试，完成后需要云端确认。');await refresh();}catch(error){message(error.message,true);}finally{retry.disabled=stale||!state.running;}});actions.append(retry);}
         card.append(actions);
         const details=make('details'),summary=make('summary','诊断信息');details.append(summary,make('p',`错误标识：${issue.code || 'operation_failed'}`,'quiet'));
         if (issue.name) {
@@ -405,7 +424,7 @@
         const status = await api('/api/status');
         networkFailures = 0; statusPartial = Boolean(status.partial);
         if (status.open_folder_label) { openLabel = status.open_folder_label; canOpen = status.can_open_folder === true; }
-        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry); renderConflicts(status.conflicts,status.partial); prefetchConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
+        renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry,status.can_recover_upload); renderConflicts(status.conflicts,status.partial); prefetchConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
         statusDelay = 5000;
         $('connection').textContent = status.partial ? '已连接本机服务，部分状态稍后更新' : '已连接本机服务';
         if (messageOwner === 'status_refresh') message('');
