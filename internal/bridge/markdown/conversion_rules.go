@@ -47,6 +47,7 @@ type ConversionRules struct {
 	breaks      map[string]compiledConversion
 	fingerprint string
 	document    []byte
+	tableResize bool
 	literals    map[string]*strings.Replacer
 }
 
@@ -223,6 +224,16 @@ func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) 
 			return fail("nonempty unique id required")
 		}
 		ids[r.ID] = true
+		if r.Match == "front_matter" || r.Match == "table_resize" || r.Context == "document" || r.ID == "yaml-front-matter" || r.ID == "plain-table-resize" {
+			if r == (ConversionRule{ID: "plain-table-resize", Source: "table", Target: "preserve_cells", Context: "document", Match: "table_resize"}) {
+				out.tableResize = true
+				continue
+			}
+			if r != (ConversionRule{ID: "yaml-front-matter", Source: "---", Target: "yaml_code_block", Context: "document", Match: "front_matter"}) {
+				return fail("built-in structural rules and their lossless targets are fixed")
+			}
+			continue
+		}
 		if r.Context != "paragraph" && r.Context != "table" {
 			return fail("context must be paragraph or table")
 		}

@@ -82,7 +82,7 @@ func (e *Engine) loadDoc(ctx context.Context, id model.SnapshotID) (model.Snapsh
 	if version == 0 {
 		version = 1
 	}
-	if version != 1 && version != 2 {
+	if version != 1 && version != 2 && version != 3 {
 		return sn, model.DocView{}, model.ErrUnsupportedContent
 	}
 	v, err := markdown.DecodeWithOptions(x, sn.Revision, markdown.Options{ProjectionVersion: version, SourceURL: b.SourceURL, ReferenceMap: b.ReferenceMap})
@@ -106,6 +106,9 @@ func (e *Engine) fetchDocProjection(ctx context.Context, token string, version i
 	d, err := e.source.FetchDoc(ctx, token, "")
 	if err != nil {
 		return model.Snapshot{}, model.DocView{}, err
+	}
+	if version == 2 && markdown.HasYAMLFrontMatterXML(d.XML) {
+		version = 3
 	}
 	return e.saveDocProjection(ctx, d, version)
 }

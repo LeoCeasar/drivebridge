@@ -4,7 +4,7 @@ class Element{constructor(){this.children=[];this.listeners={};this.hidden=true;
 const html=fs.readFileSync(path.join(__dirname,'../assets/index.html'),'utf8');
 for(const id of ['sync-issues','sync-issue-list','sync-issue-count','sync-attention'])assert.ok(html.includes('id="'+id+'"'),'missing live page element '+id);
 const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-const context={document:{getElementById:el,createElement:()=>new Element(),querySelectorAll:()=>[]},window:{DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeBatch:require('../assets/batch-view.js'),DriveBridgeRecovery:{},DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},URLSearchParams};
+const context={document:{getElementById:el,createElement:()=>new Element(),querySelectorAll:()=>[]},window:{DriveBridgeAuth:require('../assets/auth-view.js'),DriveBridgeDiff:{},DriveBridgeBatch:require('../assets/batch-view.js'),DriveBridgeRecovery:require('../assets/recovery-view.js'),DriveBridgeDiscovery:{create:()=>({})},addEventListener(){}},URLSearchParams};
 let source=fs.readFileSync(path.join(__dirname,'../assets/app.js'),'utf8');
 source=source.replace('  start();','  globalThis.renderIssues=renderIssues;');
 vm.runInNewContext(source,context);
@@ -29,3 +29,11 @@ context.renderIssues([{id:'mount',state:{running:true,issues:[{...issue,code:'hi
 assert.match(texts(el('sync-issue-list')),/内置 Git/);
 assert.match(texts(el('sync-issue-list')),/重新安装应用/);
 assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'),'missing Git requires repairing the app before retrying');
+
+const markup = '<script>unsafe user text</script>';
+context.renderIssues([{id:'mount',state:{running:true,issues:[{...issue,diagnostic:{kind:'html_block',message:'Unsupported HTML block',line:3,end_line:5,text:markup,side:'local'}}]}}],true);
+assert.match(texts(el('sync-issue-list')),/错误类型：html_block/);
+assert.match(texts(el('sync-issue-list')),/本地第 3–5 行/);
+assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent===markup),'captured user text is rendered with textContent');
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.innerHTML?.includes(markup)),'diagnostic text never enters HTML');
+console.log('captured diagnostic type, source lines and text are visible safely');

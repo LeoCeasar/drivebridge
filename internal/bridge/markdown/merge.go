@@ -66,6 +66,9 @@ func merge(baseLocal, local []byte, remote model.DocView, deferAnchors, allowTab
 				return fail("unsupported_content")
 			}
 			actual = hashNode(r[i].Kind, projected)
+			if remote.ProjectionVersion >= 3 {
+				actual = operationNodeHash(r[i].Kind, projected)
+			}
 		}
 		if rb.Hash != actual || rb.Start < 0 || rb.End > len(remote.Markdown) {
 			return fail("unsupported_content")

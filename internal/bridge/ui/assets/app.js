@@ -287,6 +287,15 @@
     reconcileRows('sync-issue-list',items,({mount,issue,stale}) => {
         const state = mount.state || {}, advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
         card.append(make('h3',issue.name || mount.name),make('strong',advice.title),make('p',advice.reason));
+        const diagnostic = recovery.diagnosticView(issue);
+        if (diagnostic.message || diagnostic.location) {
+          const detail = make('section',undefined,'issue-diagnostic');
+          detail.append(make('strong',`错误类型：${diagnostic.kind}`));
+          if (diagnostic.location) detail.append(make('p',diagnostic.location));
+          if (diagnostic.message) detail.append(make('p',diagnostic.message));
+          if (diagnostic.text) detail.append(make('pre',diagnostic.text,'hunk-snippet'));
+          card.append(detail);
+        }
         if (mount.archived) card.append(make('p','此任务属于以前移除的挂载。先恢复并启动同步，处理完未同步内容后可彻底删除挂载与缓存。','quiet'));
         card.append(make('p',issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
         if (stale) card.append(make('p','这是上次记录，当前状态更新尚未完成；请先刷新。','quiet'));
@@ -318,12 +327,12 @@
     const records = [...queue.records.values()];
     $('queue-empty').hidden = records.length > 0; $('conflict-queue').classList.toggle('is-empty',records.length === 0);
     const renderRecord = r => {
-      const row = make('tr'), select = make('td'), checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.id = `queue-select-${r.id}`; checkbox.checked = r.selected; checkbox.disabled = queue.running || (!r.selected && !queue.canSubmit(r)); checkbox.setAttribute('aria-label',`选择 ${r.name || '待合并文件'}`);
+      const row = make('tr'), select = make('td'), checkbox = make('input'); checkbox.type = 'checkbox'; checkbox.id = `queue-select-${r.id}`; checkbox.checked = r.selected; checkbox.disabled = fileBusy(r) || (!r.selected && !queue.canSubmit(r)); checkbox.setAttribute('aria-label',`选择 ${r.name || '待合并文件'}`);
       checkbox.addEventListener('change',() => { queue.select(r.id,checkbox.checked); renderQueue(); $(checkbox.id)?.focus(); }); select.append(checkbox);
       const file = make('td'), open = make('button',r.name || '待合并文件','text-button queue-file'); open.disabled = r.status === 'resolved'; open.addEventListener('click',() => openConflict(r.id)); file.append(open);
       const draft = make('td',!r.input ? '未打开' : !r.input.text ? '非文本，保留副本' : r.seq !== r.savedSeq ? '页面草稿已保留' : r.savedSeq || r.input.has_draft ? '本机草稿已保存' : '来源已载入，尚未修改');
       const unknown = r.status === 'failed' && r.outcomeUnknown;
-      const label = unknown ? '结果未知，可重试' : r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status];
+      const label = unknown ? (fileBusy(r) ? '结果待确认，其他文件可继续' : '结果未知，请刷新复核') : r.status === 'queued' && r.decision === 'accept_delete' ? deletedLabel(r) : outcomeLabels[r.status];
       const result = make('td'), details = make('div',undefined,'queue-details'); result.append(make('span',label,'queue-outcome ' + r.status + (unknown ? ' unknown' : '')));
       if (r.status === 'submitting' && r.slow) details.append(make('small','云端复核较慢，仍在等待结果…','queue-detail slow'));
       if (deletionDecision(r.input) && !['queued','resolved'].includes(r.status)) details.append(make('small',r.input.local_delete_pending ? '本地删除尚未完成，请打开文件单独决定。' : '云端已删除，请打开文件单独决定。','queue-detail'));
@@ -334,12 +343,12 @@
       for (const [cell,label] of [[file,'文件'],[draft,'草稿'],[result,'提交结果']]) cell.setAttribute('data-label',label);
       row.append(select,file,draft,result); return row;
     };
-    reconcileRows('queue-rows',records,renderRecord,r => JSON.stringify([queue.running,r.id,r.name,r.selected,r.status,r.slow,r.outcomeUnknown,r.error,r.newerDraft,r.decision,r.seq,r.savedSeq,Boolean(r.input),Boolean(r.input?.remote_deleted),Boolean(r.input?.local_delete_pending),Boolean(r.input?.text),Boolean(r.input?.has_draft),queue.canSubmit(r)]));
+    reconcileRows('queue-rows',records,renderRecord,r => JSON.stringify([r.pending,r.id,r.name,r.selected,r.status,r.slow,r.outcomeUnknown,r.error,r.newerDraft,r.decision,r.seq,r.savedSeq,Boolean(r.input),Boolean(r.input?.remote_deleted),Boolean(r.input?.local_delete_pending),Boolean(r.input?.text),Boolean(r.input?.has_draft),queue.canSubmit(r)]));
     const count = status => records.filter(r => r.status === status).length;
     const selected = records.filter(r => r.selected && queue.canSubmit(r)).length;
-    $('submit-selected').textContent = queue.running ? '正在逐个提交…' : `提交已选文件（${selected}）`;
-    $('submit-selected').disabled = queue.running || !selected;
-    $('select-reviewed').disabled = queue.running || !records.some(r => queue.canSubmit(r)); $('clear-selection').disabled = queue.running || !records.some(r => r.selected);
+    $('submit-selected').textContent = `提交已选文件（${selected}）`;
+    $('submit-selected').disabled = !selected;
+    $('select-reviewed').disabled = !records.some(r => queue.canSubmit(r)); $('clear-selection').disabled = !records.some(r => r.selected);
     $('queue-summary').textContent = `共 ${records.length} 份，已选 ${selected} 份；本机已接受 ${count('queued')} 份，需要复核 ${count('needs_refresh')} 份，失败 ${count('failed')} 份。`;
   }
   function renderConflicts(conflicts, partial = false) {
@@ -472,26 +481,27 @@
     try { localStorage.setItem(`draft:${r.id}`,JSON.stringify({text:r.text,generation:r.intent.generation,revision:r.intent.remote_revision})); } catch (_) { /* Keep the in-page and backend copies. */ }
   }
   function draftState(text) { $('draft-state').textContent = text; }
+  function fileBusy(r = record()) { return Boolean(r?.pending > 0 || r?.status === 'submitting'); }
   function recoveryControls() {
-    const r = record(), state = recovery.conflictState(current,queue.running);
+    const r = record(), state = recovery.conflictState(current,fileBusy(r));
     const complete = ['queued','resolved'].includes(r?.status);
-    $('merged-text').disabled = !state.canEdit; $('merged-text').readOnly = complete || (deletionDecision(current) && queue.running);
-    $('save-draft').disabled = !state.canSaveDraft || complete || queue.running;
+    $('merged-text').disabled = !state.canEdit; $('merged-text').readOnly = complete || (deletionDecision(current) && fileBusy());
+    $('save-draft').disabled = !state.canSaveDraft || complete || fileBusy();
     $('resolve').hidden = deletionDecision(current);
-    $('resolve').disabled = queue.running || !queue.canSubmit(r);
+    $('resolve').disabled = fileBusy() || !queue.canSubmit(r);
     $('resolve').title = r?.reviewRequired || current?.stale ? '请先刷新差异并重新核对来源' : '';
     $('reset-choices').hidden = deletionDecision(current);
-    $('reset-choices').disabled = !state.canEdit || queue.running || complete;
-    $('refresh-conflict').disabled = queue.running || complete;
+    $('reset-choices').disabled = !state.canEdit || fileBusy() || complete;
+    $('refresh-conflict').disabled = fileBusy() || complete;
     $('remote-deleted').hidden = !deletionDecision(current);
     $('deletion-title').textContent = current?.local_delete_pending ? '这是尚未上传的本地文件，之前的删除尚未完成。' : '云端文件已删除或已移出同步目录';
     $('deletion-description').textContent = current?.local_delete_pending ? '可以保留本地版本并上传，或确认删除本地文件并取消上传。文本可先在下方编辑。' : '可以保留本地版本并在云端重新创建文件，或确认跟随云端删除本地文件。文本可先在下方编辑。';
     $('restore-local').textContent = current?.local_delete_pending ? '保留本地版本并上传' : '保留本地版本并重新上传';
     $('accept-delete').textContent = current?.local_delete_pending ? '确认本地删除（取消上传）' : '跟随云端删除';
-    $('restore-local').disabled = $('accept-delete').disabled = queue.running || !queue.canDecide(r);
+    $('restore-local').disabled = $('accept-delete').disabled = fileBusy() || !queue.canDecide(r);
     $('review-sources').hidden = !r?.reviewRequired || current?.stale || (!current?.text && !deletionDecision(current)) || complete;
-    $('review-sources').disabled = queue.running || r?.sourcesChanged;
-    $('later').disabled = queue.running;
+    $('review-sources').disabled = fileBusy() || r?.sourcesChanged;
+    $('later').disabled = fileBusy();
     $('export-copies').hidden = !current?.can_export_copies;
     $('export-copies').disabled = !state.canExport;
     const warning = state.warning || (r?.sourcesChanged ? '来源已有更新，草稿保持原样。请先刷新差异，再核对新来源。' : r?.reviewRequired ? '草稿保持原样。请对照当前来源核对已恢复的草稿，再点击“已核对新来源”允许提交。' : '');
@@ -500,12 +510,12 @@
   const draftIO = {save:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/draft`,'PUT',{content:bytes(s.text)}),resolve:s => api(`/api/conflicts/${encodeURIComponent(s.id)}/resolve`,'POST',{conflict_id:s.id,expected_generation:s.intent.generation,expected_remote_revision:s.intent.remote_revision,...(s.action ? {action:s.action} : {}),...(s.text === undefined ? {} : {content:bytes(s.text)})})};
   async function saveDraft(id = current?.id) {
     const r = queue.records.get(id); if (!r?.input?.text || ['queued','resolved'].includes(r.status)) return true;
-    if (queue.running) return false;
+    if (fileBusy(r)) return false;
     clearTimeout(draftTimer); stash(r);
     try { await queue.save(id,draftIO); if (current?.id === id) draftState(r.seq === r.savedSeq ? '草稿已保存到本机' : '新编辑已保留，等待保存'); renderQueue(); return true; }
     catch(e) { if (current?.id === id) { draftState('页面草稿已保留，等待恢复连接'); message(e.message + ' 编辑仍保留在此页面，请恢复连接后保存。',true); } renderQueue(); return false; }
   }
-  function scheduleSave() { const id = current?.id; clearTimeout(draftTimer); draftTimer = setTimeout(() => { if (!queue.running) saveDraft(id); },650); }
+  function scheduleSave() { const id = current?.id; clearTimeout(draftTimer); draftTimer = setTimeout(() => { if (!fileBusy(queue.records.get(id))) saveDraft(id); },650); }
   function edited() { const r = record(); if (!r) return; queue.edit(r.id,$('merged-text').value); r.manual = manual = true; stash(); draftState('正在编辑，稍后自动保存'); document.querySelectorAll('.choice').forEach(e => e.disabled = true); scheduleSave(); renderQueue(); }
   $('merged-text').addEventListener('input',edited); $('save-draft').addEventListener('click',() => saveDraft());
   function rebuild() {
@@ -554,7 +564,7 @@
       jump.title = '定位到三份来源的对应文本'; jump.addEventListener('click',() => jumpHunk(h.id));
       const group = make('div',undefined,'hunk-choices');
       for (const [key,label] of [['Local','采用本地'],['Remote','采用云端'],['Base','还原原版']]) {
-        const button = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); button.disabled = manual || queue.running || !current.text || record()?.status === 'queued';
+        const button = make('button',label,'choice' + ((choices.get(h.id) || 'Local') === key ? ' active' : '')); button.disabled = manual || fileBusy() || !current.text || record()?.status === 'queued';
         button.addEventListener('click',() => { choices.set(h.id,key); rebuild(); renderHunks(); jumpHunk(h.id); }); group.append(button);
       }
       heading.append(jump,group); row.append(heading);
@@ -573,6 +583,7 @@
     current = r.input; current.hunks ||= []; choices = r.choices; manual = r.manual; activeHunk = null; mergeOpen = true;
     $('merge').hidden = false; view('conflicts');
     $('merge-name').textContent = r.name; $('merge-version').textContent = current.local_delete_pending ? `本地代次 ${current.generation}，尚未上传到云端。` : current.remote_deleted ? '云端文件已不在原目录，本地修改已保留。' : `本地代次 ${current.generation}，云端修订 ${current.remote_revision || '下载观测'}`;
+    $('merge-version').textContent += ` · 原因：${recovery.conflictReason(current.reason)}${current.reason ? '（' + current.reason + '）' : ''}`;
     $('merge-hint').hidden = deletionDecision(current);
     $('merge-hint').textContent = current.reason === 'unsupported_content'
       ? '草稿已保留。当前修改包含暂不支持写回的结构，或无法准确定位的内容；请保留表格、图片等结构后核对正文。提交仍会进行安全检查。'
@@ -588,7 +599,7 @@
   async function openConflict(id, reload = false) {
     const requestSeq = ++openSeq;
     clearTimeout(draftTimer);
-    if (record()?.seq !== record()?.savedSeq && !queue.running) saveDraft();
+    if (record()?.seq !== record()?.savedSeq && !fileBusy()) saveDraft();
     const existing = queue.records.get(id);
     if (existing?.input && ((!reload && (!existing.revision || existing.revision === existing.input.revision)) || existing.status === 'queued')) { showConflict(existing); return; }
     try {
@@ -600,10 +611,10 @@
       if (!data.text) message(data.local_delete_pending ? '该文件不是可编辑文本。可直接保留本地版本并上传，或确认本地删除并取消上传。' : data.remote_deleted ? '该文件不是可编辑文本。可直接保留本地版本并重新上传，或确认跟随云端删除。' : '该文件不是可编辑文本。原版和双方副本仍保留，请保存副本后处理。');
     } catch(e) { if (requestSeq === openSeq) message(e.message,true); }
   }
-  $('refresh-conflict').addEventListener('click',() => { if (current && !queue.running) openConflict(current.id,true); });
+  $('refresh-conflict').addEventListener('click',() => { if (current && !fileBusy()) openConflict(current.id,true); });
   $('review-sources').addEventListener('click',() => { if (current && queue.review(current.id)) { stash(); recoveryControls(); renderConflicts(); draftState('保留草稿，已核对当前来源'); } });
   $('export-copies').addEventListener('click',async () => {
-    if (!current || queue.running) return;
+    if (!current || fileBusy()) return;
     const id = current.id; $('export-copies').disabled = true;
     try {
       if (!(await saveDraft())) return;
@@ -615,7 +626,7 @@
       box.append(paths); box.hidden = false;
     } catch(e) { message(e.message,true); } finally { recoveryControls(); }
   });
-  $('reset-choices').addEventListener('click',async () => { const id = current?.id; if (!id || queue.running || !(await saveDraft()) || current?.id !== id || queue.running) return; record().manual = manual = false; record().choices = choices = new Map(); rebuild(); renderHunks(); });
+  $('reset-choices').addEventListener('click',async () => { const id = current?.id; if (!id || fileBusy() || !(await saveDraft()) || current?.id !== id || fileBusy()) return; record().manual = manual = false; record().choices = choices = new Map(); rebuild(); renderHunks(); });
   function batchChanged(r) {
     if (r) {
       if (r.status === 'queued' && !r.newerDraft) { try { localStorage.removeItem(`draft:${r.id}`); } catch (_) {} }
@@ -629,7 +640,6 @@
     if (current) renderHunks();
   }
   async function submitFiles(ids) {
-    if (queue.running) return;
     clearTimeout(draftTimer); stash();
     await queue.submit(draftIO,batchChanged,ids);
     message('本次提交已处理，请查看每份文件的结果。本机接受的结果仍需等待云端确认。');
@@ -638,7 +648,7 @@
   }
   $('resolve').addEventListener('click',() => { if (current && queue.canSubmit(record())) submitFiles([current.id]); });
   async function decideDeletion(action) {
-    const r = record(); if (queue.running || !queue.canDecide(r)) return;
+    const r = record(); if (fileBusy() || !queue.canDecide(r)) return;
     if (action === 'accept_delete' && !window.confirm(r.input.local_delete_pending ? '确定删除此尚未上传的本地文件并取消上传？本地文件和修改将被删除。可先保存副本。' : '确定跟随云端删除此文件？本地文件和待同步的本地修改将被删除。可先保存副本。')) return;
     clearTimeout(draftTimer); stash(r);
     await queue.decide(r.id,action,draftIO,batchChanged);

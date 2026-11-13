@@ -28,7 +28,7 @@ const error = (status,code) => Object.assign(new Error('request failed'),{status
   assert.equal(q.review('stale-first'),true);
   assert.equal(q.canSubmit(unavailable),true);
 
-  // Partial failure must continue serially, retain every draft, and use captured versions.
+  // Partial failure must continue independently, retain every draft, and use captured versions.
   const mixed = createQueue();
   for (const id of ['ok','changed','offline','failed']) { mixed.load(input(id)); mixed.edit(id,'merge ' + id); mixed.select(id,true); }
   const events = []; let concurrent = 0, maxConcurrent = 0;
@@ -36,11 +36,11 @@ const error = (status,code) => Object.assign(new Error('request failed'),{status
     save: async s => { events.push(['save',s.id,s.text]); },
     resolve: async s => { concurrent++; maxConcurrent = Math.max(maxConcurrent,concurrent); events.push(['resolve',s.id,s.intent.generation,s.intent.remote_revision,s.text]); await Promise.resolve(); concurrent--; if (s.id === 'changed') throw error(409,'version_changed'); if (s.id === 'offline') throw new TypeError('network disconnected'); if (s.id === 'failed') throw error(503,'refresh_required'); }
   });
-  assert.equal(maxConcurrent,1);
+  assert.equal(maxConcurrent,3);
   assert.deepEqual([...mixed.records.values()].map(r=>r.status),['queued','needs_refresh','failed','needs_refresh']);
   assert.equal(mixed.records.get('changed').text,'merge changed');
   assert.equal(mixed.records.get('offline').text,'merge offline');
-  assert.deepEqual(events.slice(0,4),[['save','ok','merge ok'],['resolve','ok',4,'r1','merge ok'],['save','changed','merge changed'],['resolve','changed',4,'r1','merge changed']]);
+  for (const id of ['ok','changed','offline','failed']) assert.deepEqual(events.filter(e => e[1] === id),[['save',id,'merge '+id],['resolve',id,4,'r1','merge '+id]]);
   assert.equal(events.at(-1)[1],'failed');
   assert.equal(mixed.records.get('ok').selected,false);
 
@@ -86,5 +86,5 @@ const error = (status,code) => Object.assign(new Error('request failed'),{status
   assert.equal(restored.canSubmit(backendDraft),false);
   assert.equal(restored.review('server-draft'),true);
   assert.equal(restored.canSubmit(backendDraft),true);
-  console.log('batch queue preserves per-file intent, partial outcomes, serial requests, and newer edits');
+  console.log('batch queue preserves per-file intent, partial outcomes, bounded requests, and newer edits');
 })().catch(e=>{console.error(e);process.exitCode=1;});

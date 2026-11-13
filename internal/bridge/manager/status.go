@@ -142,7 +142,7 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			if err != nil {
 				return out, err
 			}
-			issue := model.SyncIssue{JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
+			issue := model.SyncIssue{Diagnostic: journal.Diagnostic, JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
 			r, err := s.ReadBlob(ctx, j.Local)
 			if err != nil {
 				return out, err

@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -62,7 +63,23 @@ func (e *Engine) pause(ctx context.Context, j model.Job, err error) error {
 	if code == "unsupported_content" || code == "permission_denied" || code == "identity_changed" || code == "history_git_unavailable" {
 		state = model.StatusBlocked
 	}
-	saveErr := e.store.PauseJob(context.WithoutCancel(ctx), j.ID, state, code)
+	diagnostic := &model.SyncDiagnostic{Kind: code, Message: diagnosticMessage(code)}
+	if code == "unsupported_content" {
+		// Capture source detail once, from the immutable job input. Status reads only
+		// the journal; it never fetches or reparses remote content.
+		var body []byte
+		if r, readErr := e.store.ReadBlob(context.WithoutCancel(ctx), j.Local); readErr == nil {
+			captured, readErr := io.ReadAll(io.LimitReader(r, markdown.MaxMarkdownBytes+1))
+			closeErr := r.Close()
+			if readErr == nil && closeErr == nil && len(captured) <= markdown.MaxMarkdownBytes {
+				body = captured
+			}
+		}
+		if detail := markdown.DiagnoseContent(body, err); detail != nil {
+			diagnostic = detail
+		}
+	}
+	saveErr := e.store.PauseJobWithDiagnostic(context.WithoutCancel(ctx), j.ID, state, code, diagnostic)
 	return errors.Join(err, saveErr)
 }
 func (e *Engine) conflict(ctx context.Context, j model.Job, remote model.Snapshot, reason string) error {
@@ -79,4 +96,33 @@ func (e *Engine) conflict(ctx context.Context, j model.Job, remote model.Snapsho
 	}
 	err = e.store.SaveConflict(ctx, model.Conflict{EntryID: current.ID, Generation: current.Generation, Base: j.BaseLocal, Local: current.Local, Remote: remote.ContentBlob(), RemoteRevision: remote.ConflictVersion(), Draft: current.Local, Reason: reason})
 	return errors.Join(model.ErrVersionChanged, err)
+}
+
+// Transport errors may contain CLI arguments or credentials. Persist a safe
+// classified explanation instead of serializing their raw Error strings.
+func diagnosticMessage(code string) string {
+	switch code {
+	case "unsupported_content":
+		return "内容无法安全转换或写回，请检查文件结构。"
+	case "permission_denied":
+		return "当前账号或本机目录权限不足，无法完成同步。"
+	case "identity_changed":
+		return "账号身份发生变化，需要重新核验。"
+	case "history_git_unavailable":
+		return "自动合并组件暂不可用。"
+	case "insufficient_space":
+		return "本机存储空间不足，无法完成同步。"
+	case "io_error":
+		return "本机读写失败，无法完成同步。"
+	case "remote_drift":
+		return "云端版本持续变化，后台将稍后重试。"
+	case "unknown_result":
+		return "请求结果尚未确认，需等待云端回读核验。"
+	case "rate_limited":
+		return "云端暂时限制请求频率，后台将稍后重试。"
+	case "canceled":
+		return "同步请求已取消，修改保留在本机。"
+	default:
+		return "网络连接或服务响应未通过核验，后台将重试。"
+	}
 }

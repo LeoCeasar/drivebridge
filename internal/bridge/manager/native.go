@@ -410,22 +410,12 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		_, _, err := engine.Resolve(ctx, r)
 		return err
 	}, retry: func(ctx context.Context) error {
-		if err := v.RetryManagedLocalSaves(ctx); err != nil {
-			return err
-		}
+		localErr := v.RetryManagedLocalSaves(ctx)
 		jobs, err := s.Pending(ctx)
 		if err != nil {
-			return err
+			return errors.Join(localErr, err)
 		}
-		seen := map[model.EntryID]bool{}
-		var failures error
-		for _, j := range jobs {
-			if !seen[j.EntryID] {
-				seen[j.EntryID] = true
-				failures = errors.Join(failures, engine.Retry(ctx, j.EntryID))
-			}
-		}
-		return failures
+		return errors.Join(localErr, retryPendingEntries(ctx, jobs, engine.Retry))
 	}}, nil
 }
 
@@ -450,4 +440,38 @@ func resumeVerifiedCredentials(ctx context.Context, s *store.Store) error {
 		}
 	}
 	return nil
+}
+
+// retryPendingEntries retries each file once, independently of other files' cloud
+// latency or failure. Match the automatic sync loop's bounded concurrency.
+func retryPendingEntries(ctx context.Context, jobs []model.Job, retry func(context.Context, model.EntryID) error) error {
+	seen := map[model.EntryID]bool{}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failures error
+	for _, j := range jobs {
+		if seen[j.EntryID] {
+			continue
+		}
+		seen[j.EntryID] = true
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return errors.Join(failures, ctx.Err())
+		case sem <- struct{}{}:
+		}
+		wg.Add(1)
+		go func(id model.EntryID) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := retry(ctx, id); err != nil {
+				mu.Lock()
+				failures = errors.Join(failures, err)
+				mu.Unlock()
+			}
+		}(j.EntryID)
+	}
+	wg.Wait()
+	return failures
 }

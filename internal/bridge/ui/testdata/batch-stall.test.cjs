@@ -35,7 +35,7 @@ const options = {slowMs:20,stallMs:80};
     assert.equal(b.outcomeUnknown,true);
     assert.match(b.error,/本机可能已经接受/);
     assert.equal(b.text,'merge b','draft kept');
-    assert.equal(q.canSubmit(b),true,'a stalled file can be retried');
+    assert.equal(q.canSubmit(b),false,'a stalled file stays reserved until its old writer settles');
     assert.equal(await q.save('b',{save:async()=>assert.fail('must not write while the old request is pending')}),false);
 
     // The late answer still lands: success becomes accepted and notifies the page.
@@ -58,17 +58,18 @@ const options = {slowMs:20,stallMs:80};
     assert.equal(q.canSubmit(b),false);
   }
 
-  // Acceptance is never downgraded, and an older attempt cannot override a newer retry.
+  // An unknown request cannot be duplicated; once its refusal arrives, the retained draft can retry.
   {
     const q = createQueue(options); selected(q,'b');
     const first = gate();
     await q.submit({save:async()=>{},resolve:async()=>first.promise},()=>{});
     const b = q.records.get('b');
+    assert.equal(q.canSubmit(b),false);
+    assert.equal(await q.submit({save:async()=>assert.fail('duplicate writer'),resolve:async()=>{}},()=>{},['b']),false);
+    first.reject(error(503,'offline')); await sleep(5);
     assert.equal(q.canSubmit(b),true); q.select('b',true);
     await q.submit({save:async()=>{},resolve:async()=>{}},()=>{});
     assert.equal(b.status,'queued');
-    first.reject(error(503,'offline')); await sleep(5);
-    assert.equal(b.status,'queued','late failure of attempt 1 must not undo the accepted retry');
     assert.equal(b.pending,0);
   }
 
@@ -83,7 +84,7 @@ const options = {slowMs:20,stallMs:80};
     q.sync([]);
     assert.equal(b.status,'queued'); assert.equal(b.inferred,true); assert.equal(b.outcomeUnknown,false);
     q.sync([{id:'b',name:'b.md'}]);
-    assert.equal(b.status,'failed'); assert.equal(b.inferred,false); assert.equal(q.canSubmit(b),true);
+    assert.equal(b.status,'failed'); assert.equal(b.inferred,false); assert.equal(q.canSubmit(b),false,'server polling cannot release an unfinished writer');
     hung.resolve(); await sleep(5);
     assert.equal(b.status,'queued');
   }

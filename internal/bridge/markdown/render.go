@@ -16,7 +16,8 @@ func esc(s string) string { var b bytes.Buffer; _ = xml.EscapeText(&b, []byte(s)
 func nodeXML(n ast.Node, src []byte) (string, error) {
 	return nodeXMLWithRules(n, src, currentConversionRules())
 }
-func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (string, error) {
+func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result string, err error) {
+	defer func() { err = locateContent(err, n, src) }()
 	children := func() (string, error) {
 		var b strings.Builder
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {

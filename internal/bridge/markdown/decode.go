@@ -118,6 +118,9 @@ func parseXML(b []byte) ([]*xnode, error) {
 }
 func Decode(b []byte, r string) (model.DocView, error) { return DecodeWithOptions(b, r, Options{}) }
 func DecodeWithOptions(b []byte, r string, o Options) (model.DocView, error) {
+	if o.ProjectionVersion == 0 && HasYAMLFrontMatterXML(b) {
+		o.ProjectionVersion = 3
+	}
 	if o.ProjectionVersion != 1 {
 		return decodeReadable(b, r, o)
 	}
@@ -672,13 +675,13 @@ func semanticHash(kind, x string) string {
 	if e != nil || len(n) != 1 {
 		return ""
 	}
-	return hashNode(kind, n[0])
+	return operationNodeHash(kind, n[0])
 }
 
 // A closing Markdown fence needs a separator newline. For a remote code block
 // lacking a terminal LF it is projection syntax, removed exactly once on write.
 func unprojectCode(old, fresh *xnode) *xnode {
-	if old.tag != "pre" || fresh.tag != "pre" {
+	if old.tag != "pre" || fresh.tag != "pre" || isYAMLFrontMatterNode(fresh) {
 		return fresh
 	}
 	oc, nc := elements(old), elements(fresh)

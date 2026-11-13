@@ -4,7 +4,7 @@
   if (typeof module === 'object' && module.exports) module.exports = rules;
   else root.DriveBridgeRules = rules;
 })(typeof window === 'object' ? window : globalThis, function () {
-  const defaultIDs = new Set(['simple-break-paragraph','simple-break-table']);
+  const defaultIDs = new Set(['simple-break-paragraph','simple-break-table','yaml-front-matter','plain-table-resize']);
   const restartMessage = '重启 DriveBridge 后生效；当前同步继续使用现有规则';
   function create({document,api,confirm=()=>false}) {
     const $ = id => document.getElementById(id);
@@ -32,15 +32,16 @@
     function render() {
       controls.length=0; $('conversion-rules-rows').replaceChildren();
       for(const rule of draft.rules) {
-        const row=make('tr'), fixed=defaultIDs.has(rule.id);
+        const row=make('tr'), fixed=defaultIDs.has(rule.id), yaml=rule.id==='yaml-front-matter', structural=yaml||rule.id==='plain-table-resize';
         const source=field(row,make('input'),'原始字符串',()=>fixed); source.value=rule.source; source.maxLength=65536;
-        const mode=field(row,select([['text','文本'],['newline','换行'],['delete','删除']],modes.get(rule.id) ?? (rule.target==='\n'?'newline':rule.target===''?'delete':'text')),'替换目标类型');
+        const mode=field(row,select(structural?[[rule.target,yaml?'保留 YAML 元数据':'保留表格单元格']]:[['text','文本'],['newline','换行'],['delete','删除']],structural?rule.target:modes.get(rule.id) ?? (rule.target==='\n'?'newline':rule.target===''?'delete':'text')),'替换目标类型',()=>structural);
         modes.set(rule.id,mode.value);
-        const target=field(row,make('input'),'替换文本',()=>mode.value!=='text'); target.value=mode.value==='text'?rule.target:''; target.maxLength=65536;
-        const context=field(row,select([['paragraph','段落'],['table','表格']],rule.context),'作用位置',()=>fixed);
-        const match=field(row,select([['literal','普通字符串'],['exact','完整 HTML 标签'],['simple_html_break','HTML 换行标签']],rule.match),'匹配方式',()=>fixed);
+        const target=field(row,make('input'),'替换文本',()=>structural||mode.value!=='text'); target.value=structural?(yaml?'YAML 代码块（无损保留）':'保留单元格内容与安全布局'):mode.value==='text'?rule.target:''; target.maxLength=65536;
+        const context=field(row,select(structural?[['document',yaml?'文档开头':'文档结构']]:[['paragraph','段落'],['table','表格']],rule.context),'作用位置',()=>fixed);
+        const match=field(row,select(structural?[[rule.match,yaml?'YAML 元数据区块':'普通表格增删行列']]:[['literal','普通字符串'],['exact','完整 HTML 标签'],['simple_html_break','HTML 换行标签']],rule.match),'匹配方式',()=>fixed);
         const remove=field(row,make('button','删除'),'删除此规则',()=>fixed); remove.type='button'; remove.className='button small';
         if(fixed) { source.title=context.title=match.title='内置规则的匹配边界固定；可以修改替换目标。'; remove.title='内置规则不能删除；可将目标设为“删除”以移除匹配内容。'; }
+        if(structural) { source.title=mode.title=target.title=context.title=match.title=remove.title='内置结构规则固定；完整保留内容，不支持删除或改写。'; $('conversion-rules-rows').append(row); continue; }
         const newline=mode.children[1]; newline.disabled=rule.match==='literal';
         source.addEventListener('input',()=>{rule.source=source.value; changed();});
         target.addEventListener('input',()=>{if(mode.value==='text') rule.target=target.value; changed();});

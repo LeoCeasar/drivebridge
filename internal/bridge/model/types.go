@@ -303,16 +303,28 @@ type DirectoryIndexStatus struct {
 	Failed     int `json:"failed"`
 }
 
+// SyncDiagnostic describes a captured failure. Source lines are one-based and
+// present only when the failing content can be located in an immutable input.
+type SyncDiagnostic struct {
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+	Line    int    `json:"line,omitempty"`
+	EndLine int    `json:"end_line,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Side    string `json:"side,omitempty"`
+}
+
 // SyncIssue is a durable failed upload, distinct from a version conflict.
 type SyncIssue struct {
-	JobID       JobID   `json:"job_id"`
-	EntryID     EntryID `json:"entry_id"`
-	Name        string  `json:"name"`
-	Code        string  `json:"code"`
-	State       Status  `json:"state"`
-	LocalSaved  bool    `json:"local_saved"`
-	NewDocument bool    `json:"new_document"`
-	CanDownload bool    `json:"can_download"`
+	Diagnostic  *SyncDiagnostic `json:"diagnostic,omitempty"`
+	JobID       JobID           `json:"job_id"`
+	EntryID     EntryID         `json:"entry_id"`
+	Name        string          `json:"name"`
+	Code        string          `json:"code"`
+	State       Status          `json:"state"`
+	LocalSaved  bool            `json:"local_saved"`
+	NewDocument bool            `json:"new_document"`
+	CanDownload bool            `json:"can_download"`
 }
 
 type MountStatus struct {

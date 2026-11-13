@@ -2,6 +2,8 @@
   "version": 1,
   "rules": [
     {"id":"simple-break-paragraph","source":"<br>","target":"\n","context":"paragraph","match":"simple_html_break"},
-    {"id":"simple-break-table","source":"<br>","target":"; ","context":"table","match":"simple_html_break"}
+    {"id":"simple-break-table","source":"<br>","target":"; ","context":"table","match":"simple_html_break"},
+    {"id":"yaml-front-matter","source":"---","target":"yaml_code_block","context":"document","match":"front_matter"},
+    {"id":"plain-table-resize","source":"table","target":"preserve_cells","context":"document","match":"table_resize"}
   ]
 }

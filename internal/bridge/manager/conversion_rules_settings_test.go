@@ -35,7 +35,7 @@ func TestConversionRulesSettingsReadsEffectiveDefaultsAndKeepsRuntimeSnapshot(t 
 		Version int                       `json:"version"`
 		Rules   []markdown.ConversionRule `json:"rules"`
 	}
-	if err := json.Unmarshal(view.Document, &doc); err != nil || doc.Version != 1 || len(doc.Rules) != 2 || doc.Rules[0].Target != "\n" {
+	if err := json.Unmarshal(view.Document, &doc); err != nil || doc.Version != 1 || len(doc.Rules) != 4 || doc.Rules[0].Target != "\n" {
 		t.Fatalf("effective defaults: %s, %v", view.Document, err)
 	}
 	disk, err := os.ReadFile(view.Path)
@@ -57,7 +57,7 @@ func TestConversionRulesSettingsReadsEffectiveDefaultsAndKeepsRuntimeSnapshot(t 
 	if markdown.ActiveConversionRulesFingerprint() != before {
 		t.Fatal("save reconfigured the running snapshot")
 	}
-	if err := json.Unmarshal(saved.Document, &doc); err != nil || len(doc.Rules) != 3 || doc.Rules[2].Target != "NEW" || doc.Rules[0].Target != "\n" {
+	if err := json.Unmarshal(saved.Document, &doc); err != nil || len(doc.Rules) != 5 || doc.Rules[4].Target != "NEW" || doc.Rules[0].Target != "\n" {
 		t.Fatalf("effective custom rules: %s, %v", saved.Document, err)
 	}
 	fresh, err := m.ConversionRules(context.Background())

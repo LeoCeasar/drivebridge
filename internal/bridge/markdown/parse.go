@@ -24,6 +24,7 @@ const MaxMarkdownBytes = 10 * 1024 * 1024
 type ContentError struct{ Reason, Detail string }
 
 func (e *ContentError) Error() string { return e.Reason + ": " + e.Detail }
+func (e *ContentError) Unwrap() error { return model.ErrUnsupportedContent }
 func unsupported(s string) error      { return &ContentError{"unsupported_content", s} }
 
 // Options supplies transport-owned context. ReferenceMap is retained, never replayed.
@@ -88,12 +89,16 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 	if e := validate(b); e != nil {
 		return nil, e
 	}
-	trimmed := bytes.TrimSpace(b)
-	if bytes.HasPrefix(trimmed, []byte("---\n")) || bytes.HasPrefix(trimmed, []byte("---\r\n")) || bytes.HasPrefix(trimmed, []byte("+++\n")) {
-		return nil, unsupported("front matter")
+	frontEnd, err := yamlFrontMatterEnd(b)
+	if err != nil {
+		return nil, err
 	}
-	root := parser().Parser().Parse(text.NewReader(b))
+	root := parser().Parser().Parse(text.NewReader(maskYAMLFrontMatter(b, frontEnd)))
 	var a []atom
+	if frontEnd > 0 {
+		x := yamlFrontMatterXML(b[:frontEnd])
+		a = append(a, atom{Block: model.Block{Kind: "pre", Start: 0, End: frontEnd, Hash: yamlFrontMatterHash(b[:frontEnd])}, xml: x})
+	}
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
 		if spacingBreak(n, b) {
 			continue
@@ -114,6 +119,9 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 		return nil, &ContentError{"merge_complexity", "too many blocks"}
 	}
 	for i := range a {
+		if a[i].node == nil {
+			continue
+		}
 		pos := a[i].node.Pos()
 		if pos < 0 || pos > len(b) {
 			return nil, unsupported("missing source position")
@@ -124,6 +132,9 @@ func parseMarkdown(b []byte, d *model.DocView) ([]atom, error) {
 		a[i].Start = pos
 	}
 	for i := range a {
+		if a[i].node == nil {
+			continue
+		}
 		end := len(b)
 		if i+1 < len(a) {
 			end = a[i+1].Start

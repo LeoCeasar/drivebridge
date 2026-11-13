@@ -64,8 +64,12 @@ func normalizeForMergeOnce(source []byte, htmlRules, literalRules bool) ([]byte,
 	if bytes.Count(source, []byte{'\n'}) > plainMaxLines {
 		return nil, unsupported("normalization line limit")
 	}
+	frontEnd, err := yamlFrontMatterEnd(source)
+	if err != nil {
+		return nil, err
+	}
 	rules := currentConversionRules()
-	root := parser().Parser().Parse(text.NewReader(source))
+	root := parser().Parser().Parse(text.NewReader(maskYAMLFrontMatter(source, frontEnd)))
 	var parts []normalizedPart
 	projectedSize := len(source)
 	addPart := func(p normalizedPart) error {
@@ -87,7 +91,7 @@ func normalizeForMergeOnce(source []byte, htmlRules, literalRules bool) ([]byte,
 		}
 		return "paragraph"
 	}
-	err := ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	err = ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}

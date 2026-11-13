@@ -65,5 +65,24 @@ const input=(id,more={})=>({id,name:id+'.md',text:true,remote_deleted:true,reaso
  ui.showConflict(text);assert.equal(element('draft-state').textContent,'已跟随云端删除');assert.equal(element('deletion-title').textContent,'云端文件已删除或已移出同步目录');
  const missing=ui.queue.load(input('missing'));ui.showConflict(missing);ui.renderConflicts([]);ui.recoveryControls();
  assert.equal(element('conflict-count').textContent,0);assert.equal(element('restore-local').disabled,true);assert.equal(element('accept-delete').disabled,true);
+ // A different pending file must not disable this file's review and submit controls.
+ const busy=ui.queue.load(input('busy',{remote_deleted:false,reason:'overlapping_edits'}));
+ let releaseBusy;
+ const busySubmission=ui.queue.submit({save:async()=>{},resolve:()=>new Promise(resolve=>{releaseBusy=resolve;})},()=>{},['busy']);
+ await new Promise(setImmediate);
+ assert.equal(ui.queue.running,true);assert.equal(busy.pending,1);
+ const eligible=ui.queue.load(input('eligible',{remote_deleted:false,reason:'overlapping_edits',can_export_copies:true}));
+ ui.showConflict(eligible);
+ assert.equal(element('resolve').disabled,false,'another pending file must not disable submit');
+ assert.equal(element('save-draft').disabled,false,'another pending file must not disable saving');
+ assert.equal(element('refresh-conflict').disabled,false,'another pending file must not disable refresh');
+ assert.match(element('merge-version').textContent,/双方.*相同段落/);
+ ui.queue.select(eligible.id,true);ui.renderConflicts();
+ assert.equal(element('submit-selected').disabled,false,'eligible selection can submit during a pending request');
+ busy.status='failed';busy.outcomeUnknown=true;ui.showConflict(busy);
+ assert.equal(element('resolve').disabled,true,'detached pending request cannot be resubmitted');
+ assert.equal(element('save-draft').disabled,true,'late draft write cannot race a new save');
+ assert.equal(element('refresh-conflict').disabled,true,'pending captured sources cannot be refreshed');
+ releaseBusy();await busySubmission;
  console.log('deletion banner, native confirmation, binary restore request and inactive resolved controls verified');
 })().catch(e=>{console.error(e);process.exitCode=1;});

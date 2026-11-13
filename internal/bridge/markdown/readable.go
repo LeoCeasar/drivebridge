@@ -34,7 +34,7 @@ func AssetPath(token, name, mime string) string {
 }
 
 func decodeReadable(b []byte, r string, o Options) (model.DocView, error) {
-	if o.ProjectionVersion != 0 && o.ProjectionVersion != 2 {
+	if o.ProjectionVersion != 0 && o.ProjectionVersion != 2 && o.ProjectionVersion != 3 {
 		return model.DocView{}, unsupported("unknown projection version")
 	}
 	d, err := decodeLegacy(b, r, o)
@@ -42,6 +42,9 @@ func decodeReadable(b []byte, r string, o Options) (model.DocView, error) {
 		return d, err
 	}
 	d.ProjectionVersion = 2
+	if o.ProjectionVersion == 3 {
+		d.ProjectionVersion = 3
+	}
 	var md []byte
 	seen := map[string]bool{}
 	var assets func(*xnode)
@@ -69,6 +72,17 @@ func decodeReadable(b []byte, r string, o Options) (model.DocView, error) {
 		}
 		n := roots[0]
 		assets(n)
+		frontMatter := i == 0 && o.ProjectionVersion == 3 && isYAMLFrontMatterNode(n)
+		if frontMatter {
+			original, e = yamlFrontMatterText(n)
+			if e != nil {
+				return d, e
+			}
+			block.Opaque = false
+			block.Readable = false
+			block.Kind = "pre"
+			block.Hash = yamlFrontMatterHash([]byte(original))
+		}
 		if block.Opaque {
 			original = readableXML(n)
 			block.Readable = true
@@ -82,6 +96,9 @@ func decodeReadable(b []byte, r string, o Options) (model.DocView, error) {
 		// Legacy list items stay adjacent; all other blocks have a blank separator.
 		if i > 0 {
 			sep := "\n\n"
+			if i == 1 && o.ProjectionVersion == 3 && HasYAMLFrontMatterXML(d.Blocks[0].RawXML) && bytes.HasSuffix(md, []byte("\n")) {
+				sep = "\n"
+			}
 			if strings.HasSuffix(block.Kind, "/li") && d.Blocks[i-1].Kind == block.Kind {
 				sep = "\n"
 			}
@@ -90,7 +107,7 @@ func decodeReadable(b []byte, r string, o Options) (model.DocView, error) {
 		block.Start = len(md)
 		md = append(md, original...)
 		block.End = len(md)
-		if i == len(d.Blocks)-1 && terminal {
+		if i == len(d.Blocks)-1 && terminal && !frontMatter {
 			md = append(md, '\n')
 			block.End++
 		}

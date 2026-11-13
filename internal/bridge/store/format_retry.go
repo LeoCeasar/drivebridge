@@ -109,6 +109,7 @@ func (s *Store) retryTextConflict(ctx context.Context, expected model.Conflict, 
 			r.Job.State = model.StatusUploading
 		}
 		r.ErrorCode = ""
+		r.Diagnostic = nil
 		r.ResumeState = ""
 		r.HumanResolution = false
 		if err = saveJob(tx, r); err != nil {

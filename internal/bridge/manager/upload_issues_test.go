@@ -29,7 +29,7 @@ func TestBlockedUploadStatusNamesFileAndPreservesCopy(t *testing.T) {
 	if _, _, err = s.Prepare(context.Background(), job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.PauseJob(context.Background(), job.ID, model.StatusBlocked, "unsupported_content"); err != nil {
+	if err = s.PauseJobWithDiagnostic(context.Background(), job.ID, model.StatusBlocked, "unsupported_content", &model.SyncDiagnostic{Kind: "html_block", Message: "HTML block cannot be written back", Line: 2, EndLine: 3, Text: "<div>blocked</div>", Side: "local"}); err != nil {
 		t.Fatal(err)
 	}
 	status, err := m.Status(context.Background(), id)
@@ -39,15 +39,16 @@ func TestBlockedUploadStatusNamesFileAndPreservesCopy(t *testing.T) {
 	raw, _ := json.Marshal(status)
 	var view struct {
 		Issues []struct {
-			JobID       string `json:"job_id"`
-			Name        string `json:"name"`
-			Code        string `json:"code"`
-			LocalSaved  bool   `json:"local_saved"`
-			NewDocument bool   `json:"new_document"`
+			Diagnostic  *model.SyncDiagnostic `json:"diagnostic"`
+			JobID       string                `json:"job_id"`
+			Name        string                `json:"name"`
+			Code        string                `json:"code"`
+			LocalSaved  bool                  `json:"local_saved"`
+			NewDocument bool                  `json:"new_document"`
 		} `json:"issues"`
 	}
 	json.Unmarshal(raw, &view)
-	if len(view.Issues) != 1 || view.Issues[0].Name != "folder/manual.md" || view.Issues[0].Code != "unsupported_content" || !view.Issues[0].LocalSaved || !view.Issues[0].NewDocument {
+	if len(view.Issues) != 1 || view.Issues[0].Name != "folder/manual.md" || view.Issues[0].Code != "unsupported_content" || !view.Issues[0].LocalSaved || !view.Issues[0].NewDocument || view.Issues[0].Diagnostic == nil || view.Issues[0].Diagnostic.Line != 2 || view.Issues[0].Diagnostic.Text != "<div>blocked</div>" {
 		t.Fatalf("blocked task missing actionable file detail: %s", raw)
 	}
 }

@@ -29,7 +29,7 @@ func replacementXMLMode(old, new atom, allowTableResize bool) (string, error) {
 		return "", unsupported("replacement XML")
 	}
 	a, b := roots[0], fresh[0]
-	if a.tag == "pre" && b.tag == "pre" {
+	if a.tag == "pre" && b.tag == "pre" && !isYAMLFrontMatterNode(a) && !isYAMLFrontMatterNode(b) {
 		oc, nc := elements(a), elements(b)
 		if len(oc) == 1 && len(nc) == 1 {
 			oldCode, newCode := plainText(oc[0]), plainText(nc[0])
@@ -41,7 +41,9 @@ func replacementXMLMode(old, new atom, allowTableResize bool) (string, error) {
 			}
 		}
 	}
-	b = unprojectCode(a, b)
+	if !isYAMLFrontMatterNode(a) {
+		b = unprojectCode(a, b)
+	}
 	if a.tag != b.tag {
 		return "", unsupported("parent shape")
 	}
@@ -71,7 +73,7 @@ func graft(a, b *xnode) error {
 	switch a.tag {
 	case "pre":
 		for _, x := range a.attrs {
-			if x.Name.Local == "caption" || x.Name.Local == "wrap" {
+			if (x.Name.Local == "caption" && b.attr("caption") == "" && !isYAMLFrontMatterNode(a)) || (x.Name.Local == "wrap" && b.attr("wrap") == "") {
 				b.attrs = append(b.attrs, x)
 			}
 		}

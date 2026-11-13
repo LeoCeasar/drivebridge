@@ -31,7 +31,7 @@ func MatchesEncodedIntent(intent []byte, remote model.DocView) bool {
 		if _, err := xmlMarkdown(n); err != nil {
 			return false
 		}
-		if semanticXML(n) != semanticXML(wanted[i]) {
+		if isYAMLFrontMatterNode(n) != isYAMLFrontMatterNode(wanted[i]) || semanticXML(n) != semanticXML(wanted[i]) {
 			return false
 		}
 	}
@@ -49,12 +49,16 @@ func ProjectOperationHash(op model.Operation, before model.DocView) (model.Opera
 	if p.XML == "" || op.Kind == model.OperationBlockDelete {
 		return op, nil
 	}
-	view, err := DecodeWithOptions([]byte(p.XML), "", Options{ProjectionVersion: before.ProjectionVersion})
+	version := before.ProjectionVersion
+	if version == 2 && HasYAMLFrontMatterXML([]byte(p.XML)) {
+		version = 3
+	}
+	view, err := DecodeWithOptions([]byte(p.XML), "", Options{ProjectionVersion: version})
 	if err != nil || len(view.Blocks) != 1 {
 		return op, model.ErrUnsupportedContent
 	}
 	b := view.Blocks[0]
-	if !b.Opaque && !b.Readable {
+	if !b.Opaque && !b.Readable && !HasYAMLFrontMatterXML([]byte(p.XML)) {
 		return op, nil
 	}
 	if op.Kind == model.OperationBlockReplace {

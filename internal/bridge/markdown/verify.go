@@ -25,7 +25,7 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 			index = i
 		}
 	}
-	if index < 0 && before.ProjectionVersion == 2 && after.ProjectionVersion == 2 && op.Kind == model.OperationBlockReplace {
+	if index < 0 && before.ProjectionVersion >= 2 && after.ProjectionVersion >= 2 && op.Kind == model.OperationBlockReplace {
 		return verifyNestedParagraph(before, after, op, p)
 	}
 	position := index

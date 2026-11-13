@@ -15,6 +15,7 @@ import (
 )
 
 type jobRecord struct {
+	Diagnostic         *model.SyncDiagnostic   `json:"diagnostic,omitempty"`
 	LocalReceipt       bool                    `json:"local_receipt,omitempty"`
 	StagedAt           time.Time               `json:"staged_at,omitempty"`
 	PreparationRestart bool                    `json:"preparation_restart,omitempty"`
@@ -415,6 +416,7 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
+	Diagnostic         *model.SyncDiagnostic
 	LocalReceipt       bool
 	StagedAt           time.Time
 	PreparationRestart bool
@@ -430,7 +432,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{LocalReceipt: r.LocalReceipt, StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
+		j = JobJournal{Diagnostic: r.Diagnostic, LocalReceipt: r.LocalReceipt, StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return

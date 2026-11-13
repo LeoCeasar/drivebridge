@@ -139,7 +139,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 			}
 			// A clean text merge that cannot map to safe cloud operations is a
 			// conversion problem, never a request to manually merge the text.
-			return e.pause(ctx, j, model.ErrUnsupportedContent)
+			return e.pause(ctx, j, markdown.ExplainPlanFailure(merge.Markdown, current, merge.ConflictReason))
 		}
 		// A fresh recheck still is not CAS. It narrows the last check/write window.
 		check, checked, err := e.fetchDocProjection(ctx, en.Token, current.ProjectionVersion)

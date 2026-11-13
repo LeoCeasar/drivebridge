@@ -14,7 +14,7 @@ import (
 // IDs and never borrow the explicit-human flag to weaken verification.
 func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (model.MergeResult, error) {
 	unchanged := unchangedDocCheckpoint(base, baseline, remote)
-	result, err := merge(base, local, remote, true, unchanged)
+	result, err := merge(base, local, remote, true, unchanged && currentConversionRules().tableResize)
 	if err != nil || result.ConflictReason != "ambiguous_mapping" || !bytes.Equal(base, baseline.Markdown) || !bytes.Equal(base, remote.Markdown) || len(baseline.Blocks) != len(remote.Blocks) {
 		return result, err
 	}

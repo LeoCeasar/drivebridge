@@ -36,7 +36,25 @@ func PlanResolvedStepWithBase(baseLocal, local []byte, baseRemote, remote model.
 		}
 	}
 	if !rich {
-		return PlanResolvedStep(baseLocal, local, remote)
+		// Human-reviewed intent uses the same checkpoint-aware safe conversion
+		// as automatic merges. In particular, an unchanged plain table may
+		// change dimensions without discarding unrelated lists or paragraphs.
+		r, e := PlanStepWithBase(baseLocal, local, baseRemote, remote)
+		if e != nil {
+			return r, e
+		}
+		if r.ConflictReason != "" {
+			return PlanResolvedStep(baseLocal, local, remote)
+		}
+		for i := range r.Operations {
+			var p model.OperationPayload
+			if json.Unmarshal(r.Operations[i].Payload, &p) != nil {
+				return model.MergeResult{}, model.ErrUnsupportedContent
+			}
+			p.ExplicitResolution = true
+			r.Operations[i].Payload, _ = json.Marshal(p)
+		}
+		return r, nil
 	}
 	if baseRemote.ProjectionVersion < 2 && remote.ProjectionVersion < 2 {
 		return PlanResolvedStep(baseLocal, local, remote)
@@ -230,7 +248,7 @@ func planReadable(base, local []byte, baseline, current model.DocView) (model.Me
 	}
 	// Re-derive all trusted sidecar fields before using any nested remote ID.
 	for di, d := range []model.DocView{baseline, current} {
-		fresh, e := DecodeWithOptions(d.XML, d.Revision, Options{ProjectionVersion: 2, SourceURL: d.SourceURL, ReferenceMap: d.ReferenceMap})
+		fresh, e := DecodeWithOptions(d.XML, d.Revision, Options{ProjectionVersion: d.ProjectionVersion, SourceURL: d.SourceURL, ReferenceMap: d.ReferenceMap})
 		if e != nil || !bytes.Equal(fresh.Markdown, d.Markdown) || len(fresh.Blocks) != len(d.Blocks) {
 			return fail("unsupported_content")
 		}

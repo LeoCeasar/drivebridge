@@ -35,3 +35,15 @@ console.log('recovery controls preserve offline editing and gate unavailable act
 
 assert.match(require('../assets/recovery-view.js').errorLabels.history_git_unavailable,/合并.*不可用/);
 assert.match(require('../assets/recovery-view.js').errorLabels.remote_drift,/云端仍在更新.*稍后重试/);
+
+{
+  const {diagnosticView,conflictReason} = require('../assets/recovery-view.js');
+  assert.deepEqual(diagnosticView({diagnostic:{kind:'html_block',message:'unsupported HTML',line:4,end_line:6,text:'<script>alert(1)</script>',side:'local'}}),{kind:'html_block',message:'unsupported HTML',location:'本地第 4–6 行',text:'<script>alert(1)</script>'});
+  assert.equal(diagnosticView({code:'permission_denied',diagnostic:{kind:'permission_denied',message:'denied'}}).location,'');
+  assert.equal(diagnosticView({code:'unsupported_content'}).kind,'unsupported_content');
+  assert.equal(diagnosticView({diagnostic:{line:-1,end_line:4}}).location,'');
+  assert.match(conflictReason('both_changed'),/双方/);
+  assert.match(conflictReason('ambiguous_mapping'),/定位/);
+  assert.match(conflictReason('remote_deleted'),/云端/);
+  assert.equal(conflictReason('<script>'), '版本或内容需要核对');
+}

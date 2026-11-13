@@ -77,6 +77,12 @@ func (s *Store) AppendOperation(ctx context.Context, id model.JobID, op model.Op
 // PauseJob is permitted only before dispatch or after all dispatched operations
 // have readback records. An unknown mutation stays awaiting_verification.
 func (s *Store) PauseJob(ctx context.Context, id model.JobID, state model.Status, code string) error {
+	return s.PauseJobWithDiagnostic(ctx, id, state, code, nil)
+}
+
+// PauseJobWithDiagnostic atomically records the failure and captured source detail.
+// It has the same dispatch safety requirements as PauseJob.
+func (s *Store) PauseJobWithDiagnostic(ctx context.Context, id model.JobID, state model.Status, code string, diagnostic *model.SyncDiagnostic) error {
 	if state != model.StatusBlocked && state != model.StatusPaused {
 		return ErrInvalidState
 	}
@@ -107,6 +113,7 @@ func (s *Store) PauseJob(ctx context.Context, id model.JobID, state model.Status
 		}
 		r.ResumeState = r.Job.State
 		r.ErrorCode = code
+		r.Diagnostic = diagnostic
 		r.Job.State = state
 		e, err := entryTx(tx, r.Job.EntryID)
 		if err != nil {
@@ -142,6 +149,7 @@ func (s *Store) ResumeJob(ctx context.Context, id model.JobID) error {
 			return ErrInvalidState
 		}
 		r.ErrorCode = ""
+		r.Diagnostic = nil
 		r.ResumeState = ""
 		e, err := entryTx(tx, r.Job.EntryID)
 		if err != nil {

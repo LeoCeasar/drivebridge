@@ -145,7 +145,7 @@ func TestOpaqueChangedBlocksUpload(t *testing.T) {
 	conflict(t, merged(t, string(d.Markdown), strings.Replace(string(d.Markdown), "Unsupported", "Changed", 1), d))
 }
 func TestEncodeSubsetAndUnsafe(t *testing.T) {
-	for _, s := range []string{"<script>bad</script>", "![image](https://x)", "- [x] task", "---\ntitle: yes\n---\n", "```mermaid\na-->b\n```", "$$x+y$$", "$x+y$"} {
+	for _, s := range []string{"<script>bad</script>", "![image](https://x)", "- [x] task", "```mermaid\na-->b\n```", "$$x+y$$", "$x+y$"} {
 		if x, e := Encode([]byte(s)); e == nil {
 			t.Errorf("accepted %q as %s", s, x)
 		}
