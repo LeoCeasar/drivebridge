@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
@@ -132,6 +134,60 @@ func windowsNativeReplace(t *testing.T, from, to string) {
 	}
 }
 
+// MoveFileEx uses legacy Windows replacement semantics and cannot replace an
+// open destination, even with FILE_SHARE_DELETE. FileRenameInfoEx explicitly
+// requests POSIX semantics so the destination's old readers remain valid.
+func windowsPosixReplace(t *testing.T, from, to string) {
+	t.Helper()
+	handle, err := windows.CreateFile(pForWindows(t, from), windows.DELETE|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		t.Fatal("native POSIX rename source:", err)
+	}
+	defer windows.CloseHandle(handle)
+	name, err := windows.UTF16FromString(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		Flags          uint32
+		RootDirectory  windows.Handle
+		FileNameLength uint32
+		FileName       [1]uint16
+	}
+	offset := int(unsafe.Offsetof(header.FileName))
+	buffer := make([]byte, max(int(unsafe.Sizeof(header)), offset+len(name)*2))
+	binary.LittleEndian.PutUint32(buffer, windows.FILE_RENAME_REPLACE_IF_EXISTS|windows.FILE_RENAME_POSIX_SEMANTICS)
+	binary.LittleEndian.PutUint32(buffer[unsafe.Offsetof(header.FileNameLength):], uint32((len(name)-1)*2))
+	for n, c := range name {
+		binary.LittleEndian.PutUint16(buffer[offset+n*2:], c)
+	}
+	if err = windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(len(buffer))); err != nil {
+		t.Fatal("native FileRenameInfoEx POSIX replacement:", err)
+	}
+}
+
+func windowsNativeRenameControl(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	from, to := filepath.Join(root, "new.md"), filepath.Join(root, "old.md")
+	windowsNativeSave(t, to, "NTFS original")
+	reader := windowsSharedReader(t, to)
+	windowsNativeSave(t, from, "NTFS replacement")
+	if err := windows.MoveFileEx(pForWindows(t, from), pForWindows(t, to), windows.MOVEFILE_REPLACE_EXISTING); err == nil {
+		t.Fatal("NTFS control unexpectedly admitted legacy replacement of an open destination")
+	}
+	windowsNativeRead(t, to, "NTFS original")
+	windowsNativeRead(t, from, "NTFS replacement")
+	windowsPosixReplace(t, from, to)
+	windowsOldReader(t, reader, "NTFS original")
+	windowsNativeRead(t, to, "NTFS replacement")
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func windowsSharedReader(t *testing.T, path string) *os.File {
 	t.Helper()
 	return windowsSharedOpen(t, path, windows.GENERIC_READ)
@@ -203,6 +259,7 @@ func windowsNativeEvidence(t *testing.T, h *harness, name string, fields map[str
 
 func TestWindowsNativeSaveParity(t *testing.T) {
 	windowsNativeOptIn(t)
+	t.Run("NTFS_rename_control", windowsNativeRenameControl)
 	h := newHarness(t)
 	h.read("document.md")
 	original := h.entry("document.md")
@@ -239,7 +296,7 @@ func TestWindowsNativeSaveParity(t *testing.T) {
 	latest = "native open-reader replacement\n\nstable anchor 中文😀\n\ntail\n"
 	temp := filepath.Join(root, "open-reader.tmp")
 	windowsNativeSave(t, temp, latest)
-	windowsNativeReplace(t, temp, doc)
+	windowsPosixReplace(t, temp, doc)
 	windowsOldReader(t, reader, old)
 	if err := reader.Close(); err != nil {
 		t.Fatal(err)
@@ -274,6 +331,8 @@ func TestWindowsNativeSaveParity(t *testing.T) {
 	windowsNativeEvidence(t, h, "windows-native-save", map[string]any{
 		"iterations": iterations, "direct_and_safe_saves": iterations * 2,
 		"open_reader_retained_old_content_after_replacement": true,
+		"open_reader_replacement_api":                        "FileRenameInfoEx REPLACE_IF_EXISTS|POSIX_SEMANTICS",
+		"ntfs_legacy_and_posix_control_passed":               true,
 		"restart_replayed_unarchived_checkpoint":             true, "token_preserved": true,
 		"background_archive_held_seconds": held.Seconds(), "max_save_ms": float64(maxSave) / float64(time.Millisecond),
 		"final_sha256": hex.EncodeToString(sum[:]),

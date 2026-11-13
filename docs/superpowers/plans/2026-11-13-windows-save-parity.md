@@ -30,37 +30,37 @@
 
 Files: `internal/bridge/history/git.go`, `runtime.go`, Windows process tests.
 
-- [ ] Add a Windows command-boundary regression covering version probe, archive and streaming Git body process startup.
-- [ ] Verify RED, reuse `platform.BackgroundCommand`, run focused history tests and Windows compile.
+- [x] Add a Windows command-boundary regression covering version probe, archive and streaming Git body process startup.
+- [x] Verify RED, reuse `platform.BackgroundCommand`, run focused history tests and Windows compile.
 
 ## Task B: Local deletion with reader generations
 
 Files: `vfs/managed_remove.go`, `vfs/dir.go`, managed admission helpers, cmount/integration deletion tests.
 
-- [ ] Turn the isolated Open→Unlink→Release probe into desired-behavior regression; include old reader content, absence after reopen, and writer protection.
-- [ ] Permit readers only for checkpoint-backed local namespace deletion; retain transactional publication and recoverable committed errors.
-- [ ] Cover empty-directory driver reader; keep remote-deletion policy unchanged.
-- [ ] Run complete affected VFS/Store/Overlay/Integration packages after focused GREEN.
+- [x] Turn the isolated Open→Unlink→Release probe into desired-behavior regression; include old reader content, absence after reopen, and writer protection.
+- [x] Permit readers only for checkpoint-backed local namespace deletion; retain transactional publication and recoverable committed errors.
+- [x] Cover empty-directory driver reader; keep remote-deletion policy unchanged.
+- [x] Run complete affected VFS/Store/Overlay/Integration packages after focused GREEN.
 
 ## Task C: Local checkpoint failure visibility
 
 Files: vfscache local journal/checkpoint and status tests; VFS/manager status forwarding and UI issue mapping as needed.
 
-- [ ] Inject local WAL fsync failure and assert local-unsaved/error state rather than archived/synced success.
-- [ ] Retry a closed failed save locally, keep bytes/history, clear error only after successful checkpoint.
-- [ ] Keep background archive errors distinct and cover explicit flush failures.
+- [x] Inject local WAL fsync failure and assert local-unsaved/error state rather than archived/synced success.
+- [x] Retry a closed failed save locally, keep bytes/history, clear error only after successful checkpoint.
+- [x] Keep background archive errors distinct and cover explicit flush failures.
 
 ## Task D: Windows native and CI gates
 
 Files: `internal/bridge/integration/*windows*test.go`, Windows test workflow and evidence documentation.
 
-- [ ] Add real WinFsp tests for repeated saves, open-reader replacement/deletion, directory deletion, cache generation refresh, and restart/recovery where supported.
+- [x] Add real WinFsp tests for repeated saves, open-reader replacement/deletion, directory deletion, cache generation refresh, and restart/recovery where supported.
 - [ ] Run current Windows Store/Overlay/Sync/History/VFS suites with actual packaged Git.
-- [ ] Configure a hosted Windows driver gate with pinned WinFsp and explicit opt-ins; preserve native evidence artifacts.
+- [x] Configure a hosted Windows driver gate with pinned WinFsp and explicit opt-ins; preserve native evidence artifacts.
 - [ ] Execute the remote Windows job if available, inspect failures and fix them; GUI editor/manual and power-loss gaps remain explicit.
 
 ## Task E: Integration
 
-- [ ] Run affected module suites, concurrency checks and full Windows driver compilation.
-- [ ] One focused final review, record fixes and remaining native environment limits.
+- [x] Run affected module suites, concurrency checks and full Windows driver compilation.
+- [x] One focused final review, record fixes and remaining native environment limits.
 - [ ] Commit validated code and test evidence; do not claim unexecuted Windows GUI acceptance.
