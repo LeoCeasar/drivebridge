@@ -34,3 +34,13 @@
 - 最终复核只做一轮，两个边界问题均以回归测试修复；没有清空历史、草稿或未知 journal。
 
 原生安装后结果另行追加。
+
+## 本机安装与验收
+
+- 安装 macOS arm64 开发版 0.2.19，源 revision `85d0bfe9b`、VCS modified=false；安装前 23 个清单文件 SHA256 校验通过，维护租约安装返回 0。
+- 挂载已恢复：running=true、queued=0、conflicts=0、last_error 为空。原来的一条 awaiting_verification 记录仍保留，未被清空或重新强制发送。
+- 安装版 CLI `feishu upload retry ... --json` 实测约 0.049 秒返回 `accepted: true`，后续由后台处理；没有等待旧任务云端确认。
+- 当前用户 conversion-rules.json 的升级前后 SHA256 一致；Chrome 实际账号与目录页面显示八项有效默认规则，新增四项说明与只读边界正确。
+- 新管理页面已连接本机服务，后台继续运行。安装镜像校验完成后已卸载；未触碰用户缓存、历史和未同步内容。
+
+产物：`.superpowers/installers-0.2.19/macos-arm64/`。这是 unsigned-test 开发版，未声明签名公证或 Windows 真机验收。
