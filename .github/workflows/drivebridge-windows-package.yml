@@ -12,11 +12,17 @@ on:
         required: false
         default: false
         type: boolean
+      verified_run_id:
+        description: Reuse successful Windows gates only for SDK/workflow/docs-only changes
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
+  actions: read
 jobs:
   windows-package:
-    if: ${{ !inputs.tests_only }}
+    if: ${{ always() && !inputs.tests_only && (needs.windows-save-tests.result == 'success' || inputs.verified_run_id != '') }}
     needs: windows-save-tests
     runs-on: windows-2022
     timeout-minutes: 40
@@ -29,15 +35,42 @@ jobs:
       DOTNET_ROLL_FORWARD: Major
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate reused Windows verification
+        if: inputs.verified_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERIFIED_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid verification run ID' }
+          $baseline = gh run view $env:VERIFIED_RUN_ID --repo $env:GITHUB_REPOSITORY --json headSha,jobs | ConvertFrom-Json
+          if ($LASTEXITCODE -or $baseline.headSha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot read verification baseline' }
+          $passed = @($baseline.jobs | Where-Object { $_.name -eq 'windows-save-tests' -and $_.conclusion -eq 'success' })
+          if ($passed.Count -ne 1) { throw 'Baseline Windows verification did not pass' }
+          $changed = @(git diff --name-only $baseline.headSha HEAD)
+          if ($LASTEXITCODE) { throw 'Cannot compare verification baseline' }
+          foreach ($path in $changed) {
+            if ($path -ne 'global.json' -and $path -ne '.github/workflows/drivebridge-windows-package.yml' -and !$path.StartsWith('docs/')) {
+              throw "Runtime or test sources changed: $path; run full Windows verification"
+            }
+          }
+          Write-Host "Reusing passed native verification $env:VERIFIED_RUN_ID; only SDK/workflow/docs changed"
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Verify stable .NET SDK selection
+        run: |
+          $sdk = (& dotnet --version | Out-String).Trim()
+          if ($LASTEXITCODE -or $sdk -notmatch '^10\.\d+\.\d+$') { throw "Expected stable .NET 10 SDK, selected: $sdk" }
+          Write-Host "Selected stable .NET SDK: $sdk"
       - name: Install pinned native packaging tools
         run: |
           $ErrorActionPreference = 'Stop'
@@ -92,6 +125,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   windows-save-tests:
+    if: inputs.verified_run_id == ''
     runs-on: windows-2022
     timeout-minutes: 35
     defaults:
