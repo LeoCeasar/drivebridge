@@ -117,7 +117,7 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 			token = result.FileToken
 		}
 		if errors.Is(err, cloud.ErrNotDispatched) {
-			if resetErr := e.store.RejectUndispatchedCreate(ctx, op.ID); resetErr != nil {
+			if resetErr := e.store.RejectUndispatchedCreate(context.WithoutCancel(ctx), op.ID); resetErr != nil {
 				return en, errors.Join(err, resetErr)
 			}
 			return en, e.pause(ctx, j, err)
@@ -188,7 +188,7 @@ func (e *Engine) create(ctx context.Context, j model.Job, en model.Entry) (model
 		}
 		renameErr := e.source.Rename(ctx, op.Token, en.Kind, op.FinalName)
 		if errors.Is(renameErr, cloud.ErrNotDispatched) {
-			return en, errors.Join(renameErr, e.store.RejectCreateRename(ctx, op.ID))
+			return en, errors.Join(renameErr, e.store.RejectCreateRename(context.WithoutCancel(ctx), op.ID))
 		}
 		list, err = e.source.List(ctx, op.ParentToken)
 		if err != nil {

@@ -93,6 +93,9 @@ func (d *Docx) Create(ctx context.Context, parent, title string, xml []byte) (Do
 	}
 
 	r, runErr := d.runner.Run(ctx, Request{Args: args, Stdin: xml})
+	if errors.Is(runErr, ErrNotDispatched) {
+		return Document{}, runErr
+	}
 	doc, metadataErr := creationEvidence(r)
 	if err := errors.Join(runErr, metadataErr); err != nil {
 		return doc, errors.Join(ErrUnknownResult, err)
@@ -182,7 +185,7 @@ func (d *Docx) Apply(ctx context.Context, token, revision string, op DocMutation
 	r, err := d.runner.Run(ctx, Request{Args: args, Stdin: []byte(op.XML)})
 	result := ApplyResult{Result: r.Result, Warnings: r.Warnings, Data: r.Data}
 	if err != nil {
-		return result, errors.Join(ErrUnknownResult, err)
+		return result, mutationError(err)
 	}
 	if r.Result != "success" {
 		return result, errors.Join(ErrUnknownResult, ErrProtocol)

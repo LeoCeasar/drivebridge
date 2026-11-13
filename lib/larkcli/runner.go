@@ -20,7 +20,14 @@ type Request struct {
 	Args  []string
 	Stdin []byte
 	Dir   string
+	// Timeout includes credential-lock waiting and execution. Non-positive values
+	// select the finite business default; an earlier context deadline wins.
+	Timeout time.Duration
 }
+
+const businessTimeout = 2 * time.Minute
+const transferTimeout = 15 * time.Minute
+
 type Response struct {
 	Data     json.RawMessage
 	Warnings []string
@@ -146,26 +153,37 @@ func businessArgs(args []string) ([]string, error) {
 	return out, nil
 }
 func (r *Runner) Run(ctx context.Context, req Request) (resp Response, err error) {
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = businessTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if r.managed && (r.identity.AppID == "" || r.identity.UserOpenID == "") {
-		return resp, ErrIdentity
+		return resp, errors.Join(ErrNotDispatched, ErrIdentity)
 	}
 	args, err := businessArgs(req.Args)
 	if err != nil {
-		return resp, err
+		return resp, errors.Join(ErrNotDispatched, err)
 	}
+	started := false
 	err = r.locked(ctx, false, func() error {
 		cmd := r.command(ctx, args, req.Dir)
 		cmd.Stdin = bytes.NewReader(req.Stdin)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		runErr := cmd.Run()
+		var runErr error
+		started, runErr = runBusinessCommand(cmd)
 		resp, err = decodeResponse(stdout.Bytes(), stderr.Bytes(), runErr)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return err
 	})
+	if err != nil && !started {
+		err = errors.Join(ErrNotDispatched, err)
+	}
 	return resp, err
 }
 

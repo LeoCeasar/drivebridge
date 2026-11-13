@@ -815,7 +815,7 @@ func TestNewSaveSupersedesUnsentUnsupportedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry = stageContent(t, s, entry, "<div>unsupported raw HTML</div>\n")
+	entry = stageContent(t, s, entry, "<div class=protected>unsupported raw HTML</div>\n")
 	if err = e.SyncEntry(bg, entry.ID); err == nil {
 		t.Fatal("unsupported content accepted")
 	}

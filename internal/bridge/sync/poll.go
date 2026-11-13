@@ -28,22 +28,36 @@ func (e *Engine) Run(ctx context.Context) error {
 		<-refreshDone
 		<-cacheDone
 	}()
+	dispatcher := newBackgroundDispatcher(ctx, e)
+	e.dispatchMu.Lock()
+	e.dispatcher = dispatcher
+	e.dispatchMu.Unlock()
+	defer func() {
+		dispatcher.close()
+		e.dispatchMu.Lock()
+		if e.dispatcher == dispatcher {
+			e.dispatcher = nil
+		}
+		e.dispatchMu.Unlock()
+	}()
 	jobs := time.NewTicker(time.Second)
 	defer jobs.Stop()
 	dirs := time.NewTicker(e.opt.DirectoryInterval)
 	defer dirs.Stop()
 	for {
-		if err := e.backgroundCycle(ctx); err != nil && ctx.Err() != nil {
+		if err := dispatcher.tick(); err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case r := <-dispatcher.results:
+			dispatcher.completed(r)
+		case r := <-dispatcher.requests:
+			dispatcher.accept(r)
 		case <-jobs.C:
 		case <-dirs.C:
-			if e.deps.RefreshDirectories != nil {
-				_ = e.deps.RefreshDirectories(ctx)
-			}
+			dispatcher.metadataWanted = true
 		}
 	}
 }

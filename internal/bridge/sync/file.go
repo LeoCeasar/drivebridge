@@ -65,7 +65,7 @@ func (e *Engine) syncFile(ctx context.Context, j model.Job, en model.Entry) erro
 	_, uploadErr := e.source.UploadFile(ctx, "", en.Token, name, reader)
 	closeErr := reader.Close()
 	if errors.Is(uploadErr, cloud.ErrNotDispatched) {
-		if err = e.store.ResetUndispatched(ctx, j.ID); err != nil {
+		if err = e.store.ResetUndispatched(context.WithoutCancel(ctx), j.ID); err != nil {
 			return err
 		}
 		return e.pause(ctx, j, uploadErr)

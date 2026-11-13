@@ -14,6 +14,8 @@ import (
 // Resolve rechecks the captured remote and stages a new local generation. The
 // subsequent upload still has the documented check/write race; this is not CAS.
 func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Entry, model.Job, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.opt.InteractiveTimeout)
+	defer cancel()
 	defer e.beginForeground()()
 	conflicts, err := e.store.Conflicts(ctx)
 	if err != nil {
@@ -119,6 +121,8 @@ func (e *Engine) Resolve(ctx context.Context, r model.ResolveRequest) (model.Ent
 // draft. On a cloud error it still returns the saved local/captured remote view;
 // callers must label that remote stale and Resolve will recheck it before upload.
 func (e *Engine) RefreshConflict(ctx context.Context, id model.ConflictID) (model.Conflict, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.opt.InteractiveTimeout)
+	defer cancel()
 	defer e.beginForeground()()
 	list, err := e.store.Conflicts(ctx)
 	if err != nil {

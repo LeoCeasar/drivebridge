@@ -17,7 +17,7 @@ func TestPureParseConversionRulesExportsEffectiveImmutableSnapshotWithoutConfigu
 	}
 	exported := rules.EffectiveDocumentJSON()
 	var doc conversionRuleDocument
-	if err := json.Unmarshal(exported, &doc); err != nil || len(doc.Rules) != 5 || doc.Rules[0].Target != "\n" || doc.Rules[4].Source != "BEFORE" {
+	if err := json.Unmarshal(exported, &doc); err != nil || len(doc.Rules) != 9 || doc.Rules[0].Target != "\n" || doc.Rules[8].Source != "BEFORE" {
 		t.Fatalf("effective rules: %s, %v", exported, err)
 	}
 	exported[0] = '!'

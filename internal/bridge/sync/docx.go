@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/cloud"
@@ -65,7 +66,12 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		}
 	}
 	drift := 0
+	started := time.Now()
+	quantum, bounded := ctx.Value(quantumKey{}).(dispatchQuantum)
 	for step := 0; step < 10000; step++ {
+		if bounded && step > 0 && (step >= quantum.operations || time.Since(started) >= quantum.duration) {
+			return errDispatchYield
+		}
 		journal, err = e.store.Journal(ctx, j.ID)
 		if err != nil {
 			return err
@@ -196,7 +202,7 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 		_, applyErr := e.source.ApplyDoc(ctx, en.Token, current.Revision, []model.Operation{op})
 		if errors.Is(applyErr, cloud.ErrNotDispatched) {
 			result, _ := json.Marshal(stepResult{AfterSnapshot: sn.ID, NotDispatched: true})
-			if err = e.store.RecordOperation(ctx, j.ID, index, result); err != nil {
+			if err = e.store.RecordOperation(context.WithoutCancel(ctx), j.ID, index, result); err != nil {
 				return err
 			}
 			return e.pause(ctx, j, applyErr)

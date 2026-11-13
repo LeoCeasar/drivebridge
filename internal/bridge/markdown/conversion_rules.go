@@ -21,8 +21,8 @@ import (
 //go:embed conversion-rules.default.json
 var defaultConversionRulesJSON []byte
 
-// ConversionRule converts a complete HTML AST token, never a source substring.
-// Target is safe inline Markdown, or a single newline for a break.
+// ConversionRule describes an HTML AST token, literal text, or fixed structural
+// policy. HTML targets are safe inline Markdown, or a single newline for a break.
 type ConversionRule struct {
 	ID      string `json:"id"`
 	Source  string `json:"source"`
@@ -43,12 +43,13 @@ type compiledConversion struct {
 // ConversionRules is an immutable, validated runtime snapshot.
 // Its contents are deliberately private, including all lookup maps.
 type ConversionRules struct {
-	exact       map[string]compiledConversion
-	breaks      map[string]compiledConversion
-	fingerprint string
-	document    []byte
-	tableResize bool
-	literals    map[string]*strings.Replacer
+	exact        map[string]compiledConversion
+	breaks       map[string]compiledConversion
+	fingerprint  string
+	document     []byte
+	tableResize  bool
+	literals     map[string]*strings.Replacer
+	safeDefaults map[string]bool
 }
 
 var defaultConversionRules = mustDefaultConversionRules()
@@ -215,7 +216,7 @@ func mustDefaultConversionRules() *ConversionRules {
 	return rules
 }
 func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) {
-	out := &ConversionRules{exact: map[string]compiledConversion{}, breaks: map[string]compiledConversion{}, literals: map[string]*strings.Replacer{}}
+	out := &ConversionRules{exact: map[string]compiledConversion{}, breaks: map[string]compiledConversion{}, literals: map[string]*strings.Replacer{}, safeDefaults: map[string]bool{}}
 	literalRules := map[string][]ConversionRule{}
 	ids := map[string]bool{}
 	for _, r := range d.Rules {
@@ -224,6 +225,13 @@ func compileConversionRules(d conversionRuleDocument) (*ConversionRules, error) 
 			return fail("nonempty unique id required")
 		}
 		ids[r.ID] = true
+		if expected, ok := safeDefaultRule(r.ID); ok {
+			if r != expected {
+				return fail("built-in structural rules and their lossless targets are fixed")
+			}
+			out.safeDefaults[r.ID] = true
+			continue
+		}
 		if r.Match == "front_matter" || r.Match == "table_resize" || r.Context == "document" || r.ID == "yaml-front-matter" || r.ID == "plain-table-resize" {
 			if r == (ConversionRule{ID: "plain-table-resize", Source: "table", Target: "preserve_cells", Context: "document", Match: "table_resize"}) {
 				out.tableResize = true

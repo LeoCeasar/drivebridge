@@ -88,5 +88,23 @@ const field=(row,index)=>row.children[index].children[0];
   assert.match(field(yamlRow,2).value,/无损保留/);
   await get('conversion-rules-save').fire('click');
   assert.deepEqual(saved.document.rules.slice(2),initial.document.rules.slice(2),'saving preserves both complete structural rules');
+  initial.document.rules.push(
+    {id:'basic-inline-html',source:'strong|b|em|i',target:'native_emphasis',context:'document',match:'basic_inline_html'},
+    {id:'simple-html-paragraph',source:'p|div',target:'native_paragraph',context:'document',match:'simple_html_paragraph'},
+    {id:'indented-code',source:'indented_code',target:'native_code_block',context:'document',match:'indented_code'},
+    {id:'ordinary-dollar-text',source:'$',target:'preserve_text',context:'document',match:'ordinary_dollar_text'}
+  );
+  await get('conversion-rules-reload').fire('click');
+  for(const row of rows().slice(4)) {
+    for(let i=0;i<6;i++) assert.equal(field(row,i).disabled,true,'safe defaults are fixed policies');
+    assert.doesNotMatch(field(row,2).value,/native_|preserve_text/,'policy targets have friendly labels');
+    assert.equal(field(row,1).children.length,1,'policies have no deletion target');
+  }
+  assert.match(field(rows()[4],0).value,/<strong>/);
+  assert.match(field(rows()[5],2).value,/段落/);
+  assert.match(field(rows()[6],2).value,/代码/);
+  assert.match(field(rows()[7],2).value,/保留/);
+  await get('conversion-rules-save').fire('click');
+  assert.deepEqual(saved.document,initial.document,'friendly labels preserve structured JSON');
   console.log('conversion rules preserve newline targets, custom IDs, drafts and focus across load/save errors');
 })().catch(e=>{console.error(e);process.exitCode=1;});

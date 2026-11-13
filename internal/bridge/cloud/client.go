@@ -93,6 +93,9 @@ func canonicalError(err error) error {
 		return nil
 	}
 	mapped := []error{err}
+	if errors.Is(err, larkcli.ErrNotDispatched) {
+		mapped = append(mapped, ErrNotDispatched)
+	}
 	if errors.Is(err, larkcli.ErrUnknownResult) {
 		mapped = append(mapped, model.ErrUnknownResult)
 	}
@@ -233,8 +236,8 @@ func (c *Client) DeleteFile(ctx context.Context, token string) error {
 	return canonicalError(c.drive.Delete(ctx, token, "file"))
 }
 
-// ErrNotDispatched proves that the managed guard rejected an invocation before
-// starting its CLI child. It never describes a process/transport failure.
+// ErrNotDispatched proves a guard, credential wait, or transport start rejected
+// an invocation before its CLI child started.
 var ErrNotDispatched = errors.New("managed RPC rejected before dispatch")
 
 func (c *Client) check(ctx context.Context) error {

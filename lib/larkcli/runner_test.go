@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -82,6 +83,30 @@ func TestCLIProcess(t *testing.T) {
 		emit(string(v))
 	case "cancel":
 		time.Sleep(time.Minute)
+	case "descendant":
+		if len(args) > 0 && args[0] == "grandchild" {
+			_ = os.WriteFile(args[1]+".ready", []byte("ready"), 0600)
+			time.Sleep(700 * time.Millisecond)
+			_ = os.WriteFile(args[1], []byte("late write"), 0600)
+			break
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestCLIProcess", "--", "grandchild", args[0])
+		if runtime.GOOS == "windows" {
+			// The marker-aware TestMain supplies test flags for the copied .exe.
+			cmd = exec.Command(os.Args[0], "grandchild", args[0])
+		}
+		cmd.Env = append(os.Environ(), "DB_TEST_SCENARIO=descendant")
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if cmd.Start() != nil {
+			os.Exit(98)
+		}
+		for {
+			if _, err := os.Stat(args[0] + ".ready"); err == nil {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		emit(`{}`)
 	case "invalid":
 		fmt.Print(`{"ok":true,"identity":"tenant","data":{}}`)
 	default:

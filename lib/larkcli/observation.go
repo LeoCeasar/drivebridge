@@ -96,7 +96,7 @@ func (d *Drive) ObserveFile(ctx context.Context, token string) (obs *FileObserva
 		}
 	}()
 	started := time.Now().UTC()
-	r, err := d.runner.Run(ctx, Request{Args: []string{"drive", "+download", "--file-token", token, "--output", "download", "--overwrite"}, Dir: dir})
+	r, err := d.runner.Run(ctx, Request{Args: []string{"drive", "+download", "--file-token", token, "--output", "download", "--overwrite"}, Dir: dir, Timeout: transferTimeout})
 	if err != nil {
 		return nil, err
 	}

@@ -66,7 +66,7 @@ func (d *Drive) OpenDocMedia(ctx context.Context, token string) (out io.ReadClos
 	if !privateMediaDir(root) {
 		return nil, ErrProtocol
 	}
-	response, err := d.runner.Run(ctx, Request{Args: []string{"docs", "+media-download", "--token", token, "--output", "media"}, Dir: dir})
+	response, err := d.runner.Run(ctx, Request{Args: []string{"docs", "+media-download", "--token", token, "--output", "media"}, Dir: dir, Timeout: transferTimeout})
 	if err != nil {
 		return nil, err
 	}

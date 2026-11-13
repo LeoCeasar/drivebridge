@@ -373,6 +373,9 @@ func TestEmptyDraftIsDistinctFromNoDraft(t *testing.T) {
 	}
 }
 func TestStatusNeverReturnsCredentialLikeErrorText(t *testing.T) {
+	if safeCode("request_timeout") != "request_timeout" {
+		t.Fatal("safe timeout reason lost")
+	}
 	if got := safeCode("secretlowercasebearertoken"); got == "secretlowercasebearertoken" {
 		t.Fatal("untrusted status error passed through")
 	}

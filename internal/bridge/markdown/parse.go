@@ -215,7 +215,7 @@ func nodeKind(n ast.Node) string {
 		return "p"
 	case *ast.Heading:
 		return fmt.Sprintf("h%d", v.Level)
-	case *ast.FencedCodeBlock:
+	case *ast.FencedCodeBlock, *ast.CodeBlock:
 		return "pre"
 	case *ast.Blockquote:
 		return "blockquote"

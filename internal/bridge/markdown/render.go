@@ -20,6 +20,9 @@ func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result st
 	defer func() { err = locateContent(err, n, src) }()
 	children := func() (string, error) {
 		var b strings.Builder
+		if err := validateBasicHTMLChildren(n, src, rules); err != nil {
+			return "", err
+		}
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			s, e := nodeXMLWithRules(c, src, rules)
 			if e != nil {
@@ -39,7 +42,7 @@ func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result st
 		raw := v.Segment.Value(src)
 		// Formula delimiters outside code are outside the editable subset.
 		for i, c := range raw {
-			if c == '$' && (i == 0 || raw[i-1] != '\\') {
+			if c == '$' && (i == 0 || raw[i-1] != '\\') && (rules == nil || !rules.safeDefaults["ordinary-dollar-text"] || !ordinaryDollar(raw, i)) {
 				return "", unsupported("formula delimiter")
 			}
 		}
@@ -55,6 +58,11 @@ func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result st
 		}
 		return b.String(), nil
 	case *ast.RawHTML:
+		if rules != nil && rules.safeDefaults["basic-inline-html"] {
+			if _, _, tag, ok := basicHTMLTag(v.Segments.Value(src)); ok {
+				return tag, nil
+			}
+		}
 		context := "paragraph"
 		for parent := n.Parent(); parent != nil; parent = parent.Parent() {
 			if _, ok := parent.(*east.TableCell); ok {
@@ -68,6 +76,11 @@ func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result st
 		}
 		return converted.xml, nil
 	case *ast.HTMLBlock:
+		if rules != nil && (rules.safeDefaults["simple-html-paragraph"] || rules.safeDefaults["basic-inline-html"]) {
+			if converted, ok := safeHTMLBlock(v, src, rules); ok {
+				return converted, nil
+			}
+		}
 		converted, ok := rules.lookup(bytes.TrimSpace(v.Lines().Value(src)), "paragraph")
 		if !ok || v.HasClosure() {
 			return "", unsupported("HTMLBlock")
@@ -96,6 +109,12 @@ func nodeXMLWithRules(n ast.Node, src []byte, rules *ConversionRules) (result st
 			b.WriteString(strings.ReplaceAll(s, "\n", " "))
 		}
 		return "<code>" + esc(b.String()) + "</code>", nil
+	case *ast.CodeBlock:
+		if rules == nil || !rules.safeDefaults["indented-code"] {
+			return "", unsupported("CodeBlock")
+		}
+		code := strings.ReplaceAll(string(v.Lines().Value(src)), "\r\n", "\n")
+		return "<pre><code>" + strings.ReplaceAll(esc(code), "&#xA;", "<br/>") + "</code></pre>", nil
 	case *ast.FencedCodeBlock:
 		lang := string(v.Language(src))
 		if strings.EqualFold(lang, "mermaid") {

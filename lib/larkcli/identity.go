@@ -3,6 +3,7 @@ package larkcli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"time"
 )
 
@@ -16,12 +17,16 @@ type IdentityMetadata struct {
 }
 
 func (r *Runner) lifecycleJSON(ctx context.Context, args []string, out any) error {
-	return r.locked(ctx, r.managed && r.identity.AppID == "", func() error {
+	ctx, cancel := context.WithTimeout(ctx, businessTimeout)
+	defer cancel()
+	started := false
+	err := r.locked(ctx, r.managed && r.identity.AppID == "", func() error {
 		cmd := r.command(ctx, args, "")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		err := cmd.Run()
+		var err error
+		started, err = runBusinessCommand(cmd)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -34,6 +39,10 @@ func (r *Runner) lifecycleJSON(ctx context.Context, args []string, out any) erro
 		}
 		return singleJSON(stdout.Bytes(), out)
 	})
+	if err != nil && !started {
+		return errors.Join(ErrNotDispatched, err)
+	}
+	return err
 }
 func (r *Runner) InspectConfig(ctx context.Context) (ConfigMetadata, error) {
 	var raw struct {

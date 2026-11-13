@@ -34,6 +34,20 @@ func TestCanonicalErrorMapping(t *testing.T) {
 	if !errors.Is(canonicalError(larkcli.ErrUnknownResult), model.ErrUnknownResult) || !errors.Is(canonicalError(larkcli.ErrIdentity), model.ErrIdentityChanged) {
 		t.Fatal("wire errors escaped canonical mapping")
 	}
+	if !errors.Is(canonicalError(larkcli.ErrNotDispatched), ErrNotDispatched) {
+		t.Fatal("pre-start transport result lost")
+	}
+}
+
+func TestCreateDocPreStartFailureDoesNotBecomeUnknownWrite(t *testing.T) {
+	c, err := New(managed(t, filepath.Join(t.TempDir(), "missing-cli")), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.CreateDoc(context.Background(), "parent", "title", []byte("<p>body</p>"))
+	if !errors.Is(err, ErrNotDispatched) || errors.Is(err, model.ErrUnknownResult) {
+		t.Fatalf("pre-start creation became an unknown write: %v", err)
+	}
 }
 
 func TestEvidenceQualifiedCapabilitySubmitsOnlyOneMutation(t *testing.T) {

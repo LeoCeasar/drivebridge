@@ -266,9 +266,9 @@ func (d *Drive) Upload(ctx context.Context, parent, token, name string, in io.Re
 	} else if parent != "" {
 		args = append(args, "--folder-token", parent)
 	}
-	r, err := d.runner.Run(ctx, Request{Args: args, Dir: dir})
+	r, err := d.runner.Run(ctx, Request{Args: args, Dir: dir, Timeout: transferTimeout})
 	if err != nil {
-		return UploadResult{}, errors.Join(ErrUnknownResult, err)
+		return UploadResult{}, mutationError(err)
 	}
 	var raw struct {
 		Token   string          `json:"file_token"`
@@ -288,7 +288,7 @@ func (d *Drive) Upload(ctx context.Context, parent, token, name string, in io.Re
 func (d *Drive) mutation(ctx context.Context, args []string) (Response, error) {
 	r, err := d.runner.Run(ctx, Request{Args: args})
 	if err != nil {
-		return r, errors.Join(ErrUnknownResult, err)
+		return r, mutationError(err)
 	}
 	return r, nil
 }
@@ -327,7 +327,7 @@ func (d *Drive) Rename(ctx context.Context, token, kind, name string) error {
 	}{name})
 	_, err := d.runner.Run(ctx, Request{Args: []string{"drive", "files", "patch", "--file-token", token, "--type", kind, "--data", "-"}, Stdin: body})
 	if err != nil {
-		return errors.Join(ErrUnknownResult, err)
+		return mutationError(err)
 	}
 	return nil
 }

@@ -278,7 +278,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		mount.AddCommand(c)
 	}
 	root.AddCommand(mount)
-	upload := &cobra.Command{Use: "upload", Short: "Inspect or reconcile queued cloud writes"}
+	upload := &cobra.Command{Use: "upload", Short: "Inspect queued cloud writes or request a background retry"}
 	for _, action := range []string{"status", "retry"} {
 		action := action
 		c := &cobra.Command{Use: action + " NAME", Args: exactArgs(1)}
@@ -290,7 +290,7 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 			if action == "status" {
 				return m.UploadStatus(ctx, v.ID)
 			}
-			return map[string]bool{"reconciled": true}, m.Retry(ctx, v.ID)
+			return map[string]bool{"accepted": true}, m.Retry(ctx, v.ID)
 		})
 		upload.AddCommand(c)
 	}

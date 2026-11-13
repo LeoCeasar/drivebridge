@@ -35,17 +35,22 @@ type Dependencies struct {
 	RefreshDirectories func(context.Context) error
 }
 type Options struct {
-	WriteBack                       time.Duration
-	EmptyFileUploadVerified         bool // trusted capability evidence, not a config override
-	Now                             func() time.Time
-	Concurrency                     int
-	PollInterval, DirectoryInterval time.Duration
+	BackgroundTimeout, TransferTimeout, InteractiveTimeout time.Duration
+	SliceOperations                                        int
+	SliceDuration                                          time.Duration
+	WriteBack                                              time.Duration
+	EmptyFileUploadVerified                                bool // trusted capability evidence, not a config override
+	Now                                                    func() time.Time
+	Concurrency                                            int
+	PollInterval, DirectoryInterval                        time.Duration
 	// ForegroundGrace is how long background cloud work yields after an
 	// interactive conflict request. Zero selects the default; negative disables
 	// the gate entirely.
 	ForegroundGrace time.Duration
 }
 type Engine struct {
+	dispatchMu sync.RWMutex
+	dispatcher *backgroundDispatcher
 	schedule   backgroundSchedule
 	cycleGate  chan struct{}
 	store      *store.Store
@@ -71,6 +76,21 @@ func New(d Dependencies, o Options) (*Engine, error) {
 	}
 	if _, err := d.Store.Scope(context.Background()); err != nil {
 		return nil, err
+	}
+	if o.BackgroundTimeout <= 0 {
+		o.BackgroundTimeout = 90 * time.Second
+	}
+	if o.TransferTimeout <= 0 {
+		o.TransferTimeout = 20 * time.Minute
+	}
+	if o.InteractiveTimeout <= 0 {
+		o.InteractiveTimeout = 45 * time.Second
+	}
+	if o.SliceOperations <= 0 {
+		o.SliceOperations = 3
+	}
+	if o.SliceDuration <= 0 {
+		o.SliceDuration = 30 * time.Second
 	}
 	if o.WriteBack < 0 {
 		return nil, errors.New("write-back delay must not be negative")
@@ -110,9 +130,26 @@ func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration 
 	if err := e.check(ctx); err != nil {
 		return err
 	}
-	unlock, err := e.entryLock(ctx, id)
-	if err != nil {
-		return err
+	var unlock func()
+	var err error
+	if _, background := ctx.Value(quantumKey{}).(dispatchQuantum); background {
+		candidate := make(chan struct{}, 1)
+		candidate <- struct{}{}
+		raw, _ := e.locks.LoadOrStore(id, candidate)
+		ch := raw.(chan struct{})
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ch:
+			unlock = func() { ch <- struct{}{} }
+		default:
+			return errEntryBusy
+		}
+	} else {
+		unlock, err = e.entryLock(ctx, id)
+		if err != nil {
+			return err
+		}
 	}
 	defer unlock()
 	if e.deps.ShouldSync != nil {

@@ -373,7 +373,7 @@ func method(w http.ResponseWriter, allow string) {
 }
 func safeCode(s string) string {
 	switch s {
-	case "remote_drift", "history_git_unavailable", "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
+	case "request_timeout", "remote_drift", "history_git_unavailable", "", "offline", "auth_required", "permission_denied", "version_changed", "identity_changed", "worker_unavailable", "blocked", "pending", "unsupported_content", "network_or_protocol", "rate_limited", "canceled", "empty_file_unsupported", "unknown_result", "capability_unverified", "driver_unavailable", "unauthorized", "config", "starting":
 		return s
 	}
 	return "operation_failed"

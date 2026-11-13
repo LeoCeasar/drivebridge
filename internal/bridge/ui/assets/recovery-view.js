@@ -47,7 +47,7 @@
     if (hours === 0) return '仅按容量释放';
     return hours % 24 === 0 ? `${hours / 24} 天未使用后释放` : `${Math.max(1,Math.round(hours))} 小时未使用后释放`;
   }
-  const errorLabels = {remote_drift:'云端仍在更新，后台稍后重试',history_git_unavailable:'自动合并组件暂不可用',local_save_failed:'本机保存尚未确认',local_archive_failed:'本地修改等待后台整理',offline:'暂时无法连接飞书',auth_required:'账号需要重新授权',permission_denied:'当前账号权限不足',version_changed:'内容已被更改，需要核对',identity_changed:'账号身份需要重新核对',worker_unavailable:'同步服务暂不可用',blocked:'同步已阻塞',unsupported_content:'有文件无法自动同步',operation_failed:'上次操作未完成'};
+  const errorLabels = {request_timeout:'云端请求超时，后台稍后重试',remote_drift:'云端仍在更新，后台稍后重试',history_git_unavailable:'自动合并组件暂不可用',local_save_failed:'本机保存尚未确认',local_archive_failed:'本地修改等待后台整理',offline:'暂时无法连接飞书',auth_required:'账号需要重新授权',permission_denied:'当前账号权限不足',version_changed:'内容已被更改，需要核对',identity_changed:'账号身份需要重新核对',worker_unavailable:'同步服务暂不可用',blocked:'同步已阻塞',unsupported_content:'有文件无法自动同步',operation_failed:'上次操作未完成'};
   const api = {diagnosticView,conflictReason,conflictState,canRetry,hasRetryWork,cloudChip,formatBytes,retentionLabel,errorLabels};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DriveBridgeRecovery = api;

@@ -41,6 +41,8 @@ func classify(err error) string {
 		return "io_error"
 	case errors.Is(err, os.ErrPermission):
 		return "permission_denied"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "request_timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	}
@@ -120,6 +122,8 @@ func diagnosticMessage(code string) string {
 		return "请求结果尚未确认，需等待云端回读核验。"
 	case "rate_limited":
 		return "云端暂时限制请求频率，后台将稍后重试。"
+	case "request_timeout":
+		return "云端请求等待超时，修改已保留，后台将稍后重试。"
 	case "canceled":
 		return "同步请求已取消，修改保留在本机。"
 	default:
