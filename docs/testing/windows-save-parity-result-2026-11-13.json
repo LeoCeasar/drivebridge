@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "tested_commit": "0bf2776ae6cecc66f2d62fde1088e4bec1325ae6",
+  "workflow_url": "https://github.com/LeoCeasar/drivebridge/actions/runs/43391746796",
+  "workflow_conclusion": "success",
+  "environment": {
+    "ref": "refs/heads/fix/windows-save-parity",
+    "runner_image": "20261101.353.1",
+    "schema_version": 1,
+    "winfsp_install_exit": 0,
+    "native_scope": "headless Windows OS API tests with synthetic provider; no credentials or GUI acceptance",
+    "winfsp_msi_sha256": "073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a",
+    "commit": "0bf2776ae6cecc66f2d62fde1088e4bec1325ae6",
+    "go_version": "go version go1.25.0 windows/amd64",
+    "winfsp_dll_version": "2.1.25156.ddca7bd",
+    "runner_os": "Windows",
+    "git_version": "git version 2.56.1.windows.1"
+  },
+  "windows_unit_suites": {
+    "packages_passed": 11,
+    "passing_test_events": 1423,
+    "skipped_test_events": 154,
+    "failing_test_events": 0
+  },
+  "required_native_gates": {
+    "windows-native-delete-e713cd08-7406-4705-9862-02d3289f5bc1.json": {
+      "completed_at": "2026-11-13T08:23:28.4501606Z",
+      "delete_admission_observations": [
+        {
+          "path": "data.bin",
+          "readers_at_namespace_commit": 1,
+          "writers_at_namespace_commit": 0,
+          "namespace_reservations": 1
+        },
+        {
+          "path": "empty-directory",
+          "readers_at_namespace_commit": 1,
+          "writers_at_namespace_commit": 0,
+          "namespace_reservations": 1
+        }
+      ],
+      "deleted_path_absent_before_recreate": true,
+      "driver": "WinFsp kernel / production cmount",
+      "empty_directory_before_driver_release": true,
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "goarch": "amd64",
+      "goos": "windows",
+      "old_reader_preserved_after_unlink": true,
+      "ordinary_deletefile_before_driver_release": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "recreated_path_has_new_content": true,
+      "schema_version": 1,
+      "writable_handle_protected_with_delete_sharing": true
+    },
+    "windows-native-generations-23d4bab4-2d6b-4980-827a-f09b164de555.json": {
+      "attr_timeout_seconds": 60,
+      "completed_at": "2026-11-13T08:23:29.0816265Z",
+      "driver": "WinFsp kernel / production cmount",
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "goarch": "amd64",
+      "goos": "windows",
+      "growing_refresh": true,
+      "native_size_and_content_checked": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "same_size_refresh": true,
+      "schema_version": 1,
+      "shrinking_refresh": true
+    },
+    "windows-native-save-8b2b968a-e388-4b08-aef9-44948f94a473.json": {
+      "background_archive_held_seconds": 29.435636,
+      "completed_at": "2026-11-13T08:23:27.1245982Z",
+      "direct_and_safe_saves": 200,
+      "driver": "WinFsp kernel / production cmount",
+      "execution": "headless Windows OS APIs; no GUI editor acceptance",
+      "fault_scope": "background Store archive paused; local journal and physical disk available; orderly VFS stop/reopen, not power loss",
+      "final_sha256": "6be601f90602aee32444d19045fd010ee69d452150aafcd27ee89daffd35f9eb",
+      "goarch": "amd64",
+      "goos": "windows",
+      "iterations": 100,
+      "max_save_ms": 1111.7448,
+      "ntfs_legacy_and_posix_control_passed": true,
+      "open_reader_replacement_api": "FileRenameInfoEx REPLACE_IF_EXISTS|POSIX_SEMANTICS",
+      "open_reader_retained_old_content_after_replacement": true,
+      "provider": "synthetic; no credentials; no cloud mutations",
+      "restart_replayed_unarchived_checkpoint": true,
+      "schema_version": 1,
+      "token_preserved": true
+    }
+  },
+  "local_regressions": {
+    "shared_go_suites": "passed",
+    "affected_race_suites": "passed",
+    "delete_callback_regressions": 6,
+    "node_tests_passed": 20,
+    "packaging_tests_passed": 50,
+    "mac_native_gates_passed": 3,
+    "windows_cmount_desktop_cross_compile": "passed"
+  },
+  "limits": [
+    "Headless Windows OS API and synthetic provider tests; no Windows GUI editor acceptance.",
+    "Orderly stop/reopen of an unarchived checkpoint, not physical power loss.",
+    "Legacy MoveFileEx cannot replace an explicitly open destination on the system disk control; FileRenameInfoEx POSIX semantics validated separately.",
+    "Upstream unmanaged cmd/cmount.TestMount EPERM on local macOS also reproduced against original base; remaining adapter tests and Windows full suite passed.",
+    "No installed application or user cloud data changed by this task."
+  ]
+}

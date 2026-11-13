@@ -55,12 +55,16 @@ Files: vfscache local journal/checkpoint and status tests; VFS/manager status fo
 Files: `internal/bridge/integration/*windows*test.go`, Windows test workflow and evidence documentation.
 
 - [x] Add real WinFsp tests for repeated saves, open-reader replacement/deletion, directory deletion, cache generation refresh, and restart/recovery where supported.
-- [ ] Run current Windows Store/Overlay/Sync/History/VFS suites with actual packaged Git.
+- [x] Run current Windows Store/Overlay/Sync/History/VFS suites with actual packaged Git.
 - [x] Configure a hosted Windows driver gate with pinned WinFsp and explicit opt-ins; preserve native evidence artifacts.
-- [ ] Execute the remote Windows job if available, inspect failures and fix them; GUI editor/manual and power-loss gaps remain explicit.
+- [x] Execute the remote Windows job if available, inspect failures and fix them; GUI editor/manual and power-loss gaps remain explicit.
 
 ## Task E: Integration
 
 - [x] Run affected module suites, concurrency checks and full Windows driver compilation.
 - [x] One focused final review, record fixes and remaining native environment limits.
-- [ ] Commit validated code and test evidence; do not claim unexecuted Windows GUI acceptance.
+- [x] Commit validated code and test evidence; do not claim unexecuted Windows GUI acceptance.
+
+## Final evidence
+
+Windows workflow [43391746796](https://github.com/LeoCeasar/drivebridge/actions/runs/43391746796) passed at production/test commit `0bf2776ae`. See `docs/testing/windows-native-save-parity.md` and the adjacent retained result JSON. One final review found a pending-reader construction race; a deterministic RED/GREEN regression and the subsequent complete VFS/integration race suites verified its repair. GUI editor and power-loss limits remain explicit. Integration is a fast-forward onto the unchanged base main; remaining commits contain only documentation and retained evidence, so the tested Go/workflow tree remains identical.

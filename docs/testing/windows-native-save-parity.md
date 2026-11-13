@@ -78,3 +78,23 @@ control and exercises `FileRenameInfoEx` with `REPLACE_IF_EXISTS` and
 This distinction follows the [Microsoft rename contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information);
 the application cannot grant POSIX semantics to a third-party editor that uses
 only the legacy API. GUI editor acceptance remains a separate test.
+
+## Completed Windows result (2026-11-13)
+
+[Workflow 43391746796](https://github.com/LeoCeasar/drivebridge/actions/runs/43391746796)
+completed successfully at commit `0bf2776ae`. The 11 package suites recorded
+1,423 passing test events, 154 platform/opt-in skips and zero failing events.
+All three required native gates passed without skips, along with the NTFS
+rename control. The save gate completed 200 direct/safe saves while background
+archival was paused for 29.44 seconds; the maximum measured save was 1,112 ms
+on the hosted runner. Restart preserved the latest checkpoint, resource ID
+and Token. Deletion observed WinFsp's own reader still open at commit and
+preserved active-writer protection. Same-size, growing and shrinking refreshes
+returned the expected native bytes and sizes with a 60-second attribute timeout.
+
+The [retained result summary](windows-save-parity-result-2026-11-13.json)
+includes the three native reports and pinned runtime versions independently
+of GitHub artifact expiration. Raw RED/GREEN JSONL, driver installation logs
+and runtime inventory remain in the workflow artifact. No Windows GUI editor
+or physical power-loss claim is made. This task does not build installers or
+replace the installed macOS application.
