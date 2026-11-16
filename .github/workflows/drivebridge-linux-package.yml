@@ -1,0 +1,207 @@
+name: DriveBridge Linux test packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version X.Y.Z (unsigned test build)
+        required: true
+        default: '0.2.21'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux-package:
+    name: Linux ${{ matrix.arch }} tests and desktop packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      DB_VERSION: ${{ inputs.version }}
+      DB_ARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate version and native runner
+        run: |
+          [[ "$DB_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Version must be numeric X.Y.Z' >&2; exit 1; }
+          python3 packaging/drivebridge/package.py preflight --platform linux --arch "$DB_ARCH" --desktop --unsigned --tools go python3
+          mkdir -m 700 "$RUNNER_TEMP/linux-evidence"
+          echo "DB_RUNTIME=$RUNNER_TEMP/drivebridge-runtime" >> "$GITHUB_ENV"
+          echo "DB_GIT=$RUNNER_TEMP/drivebridge-private-git" >> "$GITHUB_ENV"
+          echo "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR=$RUNNER_TEMP/linux-evidence" >> "$GITHUB_ENV"
+      - name: Install Linux desktop packaging and FUSE dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev \
+            zlib1g-dev libpcre2-dev libssl-dev libcurl4-openssl-dev libexpat1-dev \
+            gettext dpkg-dev rpm tar xz-utils fuse3 kmod
+          # A real kernel device is mandatory; do not substitute a node or skip a mount.
+          if [[ ! -c /dev/fuse ]]; then sudo modprobe fuse; fi
+          [[ -c /dev/fuse && -r /dev/fuse && -w /dev/fuse ]] || { echo 'Usable /dev/fuse is required' >&2; exit 1; }
+          command -v fusermount3
+          pkg-config --exists gtk+-3.0 gio-2.0 ayatana-appindicator3-0.1
+          python3 packaging/drivebridge/package.py preflight --platform linux --arch "$DB_ARCH" --desktop --unsigned --tools go dpkg-deb rpmbuild tar pkg-config fusermount3
+      - name: Prepare checksum-verified official CLI and native private Git
+        run: |
+          python3 packaging/drivebridge/fetch-runtime.py --platform linux --arch "$DB_ARCH" --output "$DB_RUNTIME"
+          python3 packaging/drivebridge/git_runtime.py --platform linux --architecture "$DB_ARCH" --output "$DB_GIT"
+          "$DB_GIT/bin/git" --version
+          echo "DRIVEBRIDGE_TEST_GIT=$DB_GIT/bin/git" >> "$GITHUB_ENV"
+          echo "$DB_GIT/bin" >> "$GITHUB_PATH"
+          cp "$DB_GIT/runtime.json" "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/git-runtime.json"
+          python3 - <<'PY'
+          import json, os, pathlib, platform, subprocess
+          report = {
+              'schema_version': 1, 'commit': os.environ['GITHUB_SHA'],
+              'runner_os': platform.system(), 'architecture': os.environ['DB_ARCH'],
+              'runner_image': os.environ.get('ImageVersion', ''),
+              'go_version': subprocess.check_output(['go', 'version'], text=True).strip(),
+              'git_version': subprocess.check_output([os.environ['DB_GIT'] + '/bin/git', '--version'], text=True).strip(),
+              'native_scope': 'Real Linux mount2 kernel calls with synthetic provider; no credentials or cloud data',
+              'limits': [
+                  'Unsigned test packages; no release signing or publishing',
+                  'DEB/RPM install/upgrade/removal deliberately blocked by existing multi-user lifecycle guard; use portable TAR.GZ',
+                  'Linux application-owned login unavailable; use official CLI authentication and manual remote mapping',
+                  'Tray compilation and headless capabilities only; GUI visibility, login startup, installation and upgrade acceptance unverified',
+              ],
+          }
+          (pathlib.Path(os.environ['DRIVEBRIDGE_NATIVE_EVIDENCE_DIR']) / 'environment.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
+      - name: Run shared sync Markdown manager UI store and CLI suites
+        run: |
+          go test -json -count=1 -timeout 12m \
+            ./lib/larkcli ./internal/bridge/config ./internal/bridge/platform \
+            ./internal/bridge/markdown ./internal/bridge/store ./internal/bridge/overlay \
+            ./internal/bridge/sync ./internal/bridge/history ./internal/bridge/manager \
+            ./internal/bridge/ui ./internal/bridge/integration ./cmd/feishu \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/linux-tests.jsonl"
+      - name: Run shared UI behavior and packaging policy tests
+        run: |
+          node --test internal/bridge/ui/testdata/*.test.cjs \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/ui-tests.log"
+          python3 -m unittest discover -s packaging/drivebridge/tests \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaging-tests.log"
+          bash -n packaging/drivebridge/build-linux.sh packaging/drivebridge/common.sh
+      - name: Require real mount2 native filesystem save and recovery smoke
+        env:
+          DRIVEBRIDGE_NATIVE: '1'
+          DRIVEBRIDGE_REQUIRE_NATIVE: '1'
+          DRIVEBRIDGE_NATIVE_ALLOW_MOUNT: '1'
+          DRIVEBRIDGE_NATIVE_ENGINE: mount2
+        run: |
+          go test -json -count=1 -timeout 4m -run '^TestNativeMount$' ./internal/bridge/integration \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/linux-native-tests.jsonl"
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['DRIVEBRIDGE_NATIVE_EVIDENCE_DIR'])
+          events = [json.loads(line) for line in (root / 'linux-native-tests.jsonl').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Test') == 'TestNativeMount' and e.get('Action') == 'pass' for e in events), 'Native mount test must pass'
+          assert not any(e.get('Test') == 'TestNativeMount' and e.get('Action') == 'skip' for e in events), 'Native mount test cannot skip'
+          reports = list(root.glob('native-*.json'))
+          assert len(reports) == 1, 'Expected one real native mount report'
+          result = json.loads(reports[0].read_text())
+          assert result['goos'] == 'linux' and result['goarch'] == os.environ['DB_ARCH'] and result['engine'] == 'mount2'
+          assert 'os-atomic-rename-keeps-token' in result['checks']
+          assert all(any(f'archive-{fault}-and-retry-without-rewrite' in check for check in result['checks']) for fault in ('EIO', 'ENOSPC'))
+          PY
+      - name: Verify desktop tray build behavior without a graphical session
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go test -json -count=1 -timeout 3m -tags desktop,drivebridge_feishu ./internal/bridge/tray \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/desktop-tray-tests.jsonl"
+      - name: Build unsigned native Feishu desktop DEB RPM and portable TAR.GZ
+        run: |
+          bash packaging/drivebridge/build-linux.sh --arch "$DB_ARCH" --version "$DB_VERSION" \
+            --edition feishu --desktop --unsigned \
+            --lark-package "$DB_RUNTIME/lark-package" \
+            --lark-native-archive "$DB_RUNTIME/cli-native.tar.gz" \
+            --git-runtime "$DB_GIT" --output "$GITHUB_WORKSPACE/dist/linux-test-package" \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/package-build.log"
+      - name: Verify packaged mount2 desktop capability and exact inventory
+        run: |
+          payload="$RUNNER_TEMP/drivebridge-payload"
+          mkdir "$payload"
+          tar -xzf "dist/linux-test-package/drivebridge-$DB_VERSION-linux-$DB_ARCH-feishu-desktop-unsigned-test.tar.gz" -C "$payload"
+          python3 packaging/drivebridge/package.py verify --root "$payload"
+          "$payload/bin/drivebridge" --help > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaged-cli-help.txt"
+          "$payload/bin/drivebridge" feishu --help > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaged-feishu-help.txt"
+          "$payload/bin/drivebridge" feishu edition > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaged-edition.json"
+          "$payload/bin/drivebridge" mount2 --help > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaged-mount2-help.txt"
+          "$payload/bin/drivebridge-desktop" desktop capabilities > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/desktop-capabilities.json"
+          "$payload/libexec/git/bin/git" --version
+          XDG_DATA_HOME="$RUNNER_TEMP/drivebridge-launcher-data" \
+            XDG_CONFIG_HOME="$RUNNER_TEMP/drivebridge-launcher-config" \
+            sh "$payload/install-desktop.sh" > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/launcher-registration.log"
+          sh "$payload/launch-desktop.sh" desktop --help > "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/portable-launcher-help.txt"
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'drivebridge-payload'
+          manifest = json.loads((root / 'manifest.json').read_text())
+          assert manifest['architecture'] == os.environ['DB_ARCH'] and manifest['platform'] == 'linux'
+          assert manifest['version'] == os.environ['DB_VERSION'] and manifest['edition'] == 'feishu'
+          assert manifest['mount'] is True and manifest['mount_engine'] == 'mount2' and manifest['desktop'] is True
+          assert manifest['signature'] == 'unsigned_test' and manifest['native_login']['available'] is False
+          assert manifest['history']['git_runtime'] is True
+          evidence = pathlib.Path(os.environ['DRIVEBRIDGE_NATIVE_EVIDENCE_DIR'])
+          assert json.loads((evidence / 'packaged-edition.json').read_text())['edition'] == 'feishu'
+          data = pathlib.Path(os.environ['RUNNER_TEMP']) / 'drivebridge-launcher-data'
+          entry = data / 'applications/org.drivebridge.desktop.desktop'
+          assert entry.is_file() and str(root / 'bin/drivebridge-desktop') in entry.read_text()
+          assert (entry.stat().st_mode & 0o077) == 0, 'Launcher must be private to current user'
+          assert not (data / 'autostart').exists()
+          assert not (pathlib.Path(os.environ['RUNNER_TEMP']) / 'drivebridge-launcher-config').exists()
+          (evidence / 'registered-launcher.desktop').write_text(entry.read_text())
+          caps = json.loads((pathlib.Path(os.environ['DRIVEBRIDGE_NATIVE_EVIDENCE_DIR']) / 'desktop-capabilities.json').read_text())
+          assert caps['native_tray_compiled'] is True and caps['platform'] == 'linux' and caps['architecture'] == os.environ['DB_ARCH']
+          PY
+      - name: Summarize test package boundaries
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          Linux unsigned Feishu desktop test packages: native amd64/arm64 builds, pinned official CLI and private Git runtime.
+
+          Required native smoke uses real FUSE mount2 with a synthetic provider (save, fsync, rename, archive error/recovery); no accounts or cloud data.
+
+          DEB/RPM installation, upgrade and removal are intentionally blocked by the existing multi-user lifecycle guard. Use the portable TAR.GZ for isolated per-user testing. Linux application-owned login is unavailable; use official CLI authentication and manual remote mapping. Tray GUI visibility, graphical login startup, installer lifecycle and upgrade acceptance remain unverified. No signing or publication is performed.
+          SUMMARY
+      - name: Retain Linux portable bundle and payload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivebridge-${{ inputs.version }}-linux-${{ matrix.arch }}-feishu
+          path: |
+            dist/linux-test-package/*.tar.gz
+            dist/linux-test-package/payload-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain Linux verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivebridge-linux-${{ matrix.arch }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/linux-evidence/
+          if-no-files-found: error
+          retention-days: 14
