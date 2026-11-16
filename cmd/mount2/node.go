@@ -475,6 +475,9 @@ func (n *Node) Rename(ctx context.Context, oldName string, newParent fusefs.Inod
 	if !ok {
 		return syscall.ENOTDIR
 	}
+	if err := waitManagedRenameReady(ctx, oldDir, oldName, newDir, newName); err != nil {
+		return n.fsys.translateError(err)
+	}
 	return translateError(oldDir.Rename(oldName, newName, newDir))
 }
 

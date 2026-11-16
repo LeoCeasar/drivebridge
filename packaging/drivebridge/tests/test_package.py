@@ -36,6 +36,21 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'mount2'):
                 p.check_commands('bridge', 'linux', False)
 
+    def test_hidden_mount2_is_validated_by_its_own_usage(self):
+        root = 'Usage:\n  bridge [command]\nAvailable Commands:\n  feishu Managed commands\n'
+        def help_text(args):
+            if args[1:] == ['mount2', '--help']:
+                return 'Mount using FUSE.\nUsage:\n  bridge mount2 remote:path /path [flags]\n'
+            return root
+        with mock.patch.object(p, 'run', side_effect=help_text):
+            p.check_commands('bridge', 'linux', False)
+
+    def test_unknown_mount2_help_topic_cannot_count_as_mount_support(self):
+        root = 'Usage:\n  bridge [command]\nAvailable Commands:\n  feishu Managed commands\n'
+        with mock.patch.object(p, 'run', return_value=root):
+            with self.assertRaisesRegex(ValueError, 'mount2'):
+                p.check_commands('bridge', 'linux', False)
+
     def test_schema_matches_payload_manifest(self):
         schema = json.loads((pathlib.Path(__file__).parents[1] / 'manifest.schema.json').read_text())
         self.assertIn('files', schema['required'])

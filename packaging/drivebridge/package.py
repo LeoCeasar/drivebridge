@@ -92,9 +92,13 @@ def check_commands(binary, target, cli_only):
     run([binary, 'feishu', '--help'])
     if not cli_only:
         command = 'mount2' if target == 'linux' else 'mount'
-        if not re.search(r'(?m)^\s+' + command + r'\s', root):
+        help_text = run([binary, command, '--help'])
+        visible = re.search(r'(?m)^\s+' + command + r'\s', root)
+        # mount2 is deliberately hidden from root help. Cobra can also return
+        # root help for an unknown topic, so require this command's own usage.
+        own_usage = re.search(r'(?m)^\s+\S+\s+' + re.escape(command) + r'(?:\s|$)', help_text)
+        if not visible and not own_usage:
             raise ValueError('binary lacks required mount command: ' + command)
-        run([binary, command, '--help'])
 
 
 def check_edition(binary, edition):

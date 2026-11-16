@@ -105,6 +105,14 @@ jobs:
           python3 -m unittest discover -s packaging/drivebridge/tests \
             2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/packaging-tests.log"
           bash -n packaging/drivebridge/build-linux.sh packaging/drivebridge/common.sh
+      - name: Verify managed close and rename readiness boundaries
+        run: |
+          go test -json -count=20 -timeout 2m -run '^TestManagedRenameReady|^TestManagedRenameRejectsWriter' ./vfs \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/rename-readiness-tests.jsonl"
+          go test -json -count=5 -timeout 2m -run '^TestRenameWait' ./cmd/mount2 \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/mount2-rename-tests.jsonl"
+          CGO_ENABLED=1 go test -race -count=1 -timeout 2m -run '^TestManagedRenameReady' ./vfs \
+            2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/rename-readiness-race.log"
       - name: Require real mount2 native filesystem save and recovery smoke
         env:
           DRIVEBRIDGE_NATIVE: '1'
@@ -112,20 +120,21 @@ jobs:
           DRIVEBRIDGE_NATIVE_ALLOW_MOUNT: '1'
           DRIVEBRIDGE_NATIVE_ENGINE: mount2
         run: |
-          go test -json -count=1 -timeout 4m -run '^TestNativeMount$' ./internal/bridge/integration \
+          go test -json -count=10 -timeout 4m -run '^TestNativeMount$' ./internal/bridge/integration \
             2>&1 | tee "$DRIVEBRIDGE_NATIVE_EVIDENCE_DIR/linux-native-tests.jsonl"
           python3 - <<'PY'
           import json, os, pathlib
           root = pathlib.Path(os.environ['DRIVEBRIDGE_NATIVE_EVIDENCE_DIR'])
           events = [json.loads(line) for line in (root / 'linux-native-tests.jsonl').read_text().splitlines() if line.startswith('{')]
-          assert any(e.get('Test') == 'TestNativeMount' and e.get('Action') == 'pass' for e in events), 'Native mount test must pass'
+          assert sum(e.get('Test') == 'TestNativeMount' and e.get('Action') == 'pass' for e in events) == 10, 'Ten native mount iterations must pass'
           assert not any(e.get('Test') == 'TestNativeMount' and e.get('Action') == 'skip' for e in events), 'Native mount test cannot skip'
           reports = list(root.glob('native-*.json'))
-          assert len(reports) == 1, 'Expected one real native mount report'
-          result = json.loads(reports[0].read_text())
-          assert result['goos'] == 'linux' and result['goarch'] == os.environ['DB_ARCH'] and result['engine'] == 'mount2'
-          assert 'os-atomic-rename-keeps-token' in result['checks']
-          assert all(any(f'archive-{fault}-and-retry-without-rewrite' in check for check in result['checks']) for fault in ('EIO', 'ENOSPC'))
+          assert len(reports) == 10, 'Expected ten real native mount reports'
+          for report in reports:
+              result = json.loads(report.read_text())
+              assert result['goos'] == 'linux' and result['goarch'] == os.environ['DB_ARCH'] and result['engine'] == 'mount2'
+              assert 'os-atomic-rename-keeps-token' in result['checks']
+              assert all(any(f'archive-{fault}-and-retry-without-rewrite' in check for check in result['checks']) for fault in ('EIO', 'ENOSPC'))
           PY
       - name: Verify desktop tray build behavior without a graphical session
         env:
