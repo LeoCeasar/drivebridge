@@ -4,6 +4,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 class Element {
  constructor(){this.children=[];this.listeners={};this.hidden=true;this.disabled=false;this.value='';this.textContent='';this.classList={toggle(){}};}
+ contains(item){return item===this||this.children.some(child=>child.contains(item));}
  append(...x){this.children.push(...x);}replaceChildren(...x){this.children=x;}addEventListener(k,f){this.listeners[k]=f;}setAttribute(){}querySelector(){return {disabled:false};}scrollIntoView(){}
 }
 const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
@@ -40,6 +41,25 @@ assert.ok(walk(el('mount-rows')).some(e=>e.textContent==='暂停同步'&&!e.disa
 context.renderMounts([{...mount,status_warning:'',state:{running:true,cloud_state:'blocked',last_error:'unsupported_content'},authorization:{...progress,state:'failed',error:'expired'}}]);
 assert.ok(!/授权或登录等待已超时/.test(text(el('mount-rows'))),'a healthy restarted worker supersedes a past workflow failure, even if a file later fails');
 assert.match(text(el('mount-rows')),/无法自动同步/);
+// Returning from the consent tab leaves focus on its anchor. Workflow changes
+// must still replace expired actions and reveal the completed mount controls.
+for (const occupied of ['focus','details']) {
+ context.document.activeElement=null;
+ const waiting={...mount,authorization:{...progress,flow_id:'flow-'+occupied}};
+ context.renderMounts([waiting]);
+ const row=el('mount-rows').children[0],link=walk(row).find(e=>e.textContent==='继续授权');
+ if(occupied==='focus')context.document.activeElement=link;
+ else row.querySelector=selector=>selector==='details[open]'?{open:true}:null;
+ context.renderMounts([{...waiting,authorization:{...waiting.authorization,state:'failed',error:'expired'}}]);
+ assert.ok(!walk(el('mount-rows')).some(e=>e.textContent==='继续授权'),occupied+': expired consent must disappear even in occupied rows');
+ context.renderMounts([waiting]);
+ const currentRow=el('mount-rows').children[0];
+ if(occupied==='focus')context.document.activeElement=walk(currentRow).find(e=>e.textContent==='继续授权');
+ else currentRow.querySelector=selector=>selector==='details[open]'?{open:true}:null;
+ context.renderMounts([{...waiting,status_warning:'',state:{running:true,cloud_state:'synced'},authorization:{...waiting.authorization,state:'ready'}}]);
+ assert.ok(walk(el('mount-rows')).some(e=>e.textContent==='暂停同步'&&!e.disabled),occupied+': completed mount controls must replace waiting controls');
+}
+context.document.activeElement=null;
 // An auth failure gets an actionable explanation, not a file editing-permission hint.
 context.renderIssues([{id:'missing',name:'账号盘',state:{last_error:'unauthorized'}}]);
 assert.match(text(el('sync-issue-list')),/重新授权/);assert.ok(!/所有者恢复编辑权限/.test(text(el('sync-issue-list'))));

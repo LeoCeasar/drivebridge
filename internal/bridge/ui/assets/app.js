@@ -226,16 +226,18 @@
   const rowCaches = new Map();
   // Keep existing positions; sort only new arrivals. Unchanged rows remain the
   // same DOM objects, including their menus, focus, selections and scroll state.
-  function reconcileRows(id,items,build,signature = item => JSON.stringify(item)) {
+  function reconcileRows(id,items,build,signature = item => JSON.stringify(item),transition = () => '') {
     let cache = rowCaches.get(id); if (!cache) { cache = new Map(); rowCaches.set(id,cache); }
     const incoming = new Map(items.map(item => [item.id,item]));
     for (const key of cache.keys()) if (!incoming.has(key)) cache.delete(key);
     for (const item of [...items].sort((a,b) => (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id))) if (!cache.has(item.id)) cache.set(item.id,{});
     const rows = [];
     for (const [key,entry] of cache) {
-      const item = incoming.get(key), sig = signature(item);
+      const item = incoming.get(key), sig = signature(item), boundary = transition(item);
       const occupied = entry.row?.contains?.(document.activeElement) || entry.row?.querySelector?.('details[open]')?.open === true;
-      if (!entry.row || (entry.sig !== sig && !occupied)) { entry.row = build(item); entry.sig = sig; }
+      // Preserve focus for ordinary counters; authorization transitions must retire
+      // stale links and controls even when consent left focus in this row.
+      if (!entry.row || (entry.sig !== sig && (!occupied || entry.boundary !== boundary))) { entry.row = build(item); entry.sig = sig; entry.boundary = boundary; }
       rows.push(entry.row);
     }
     const parent = $(id), currentRows = [...parent.children];
@@ -291,7 +293,8 @@
       row.append(name, local, cloud, counters, action); return row;
     };
     const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry,mountAuthorization(mount)?.label,Boolean(mount.authorization?.state === 'waiting_authorization' && Date.now() - Date.parse(mount.authorization.started_at || '') >= 30000)]);
-    reconcileRows('mount-rows',mounts.filter(m => !m.archived),renderMount,signature);
+    const transition = mount => { const auth = mountAuthorization(mount); return JSON.stringify([auth?.progress.flow_id,auth?.progress.state,auth?.label,auth?.url,auth?.reauthorize]); };
+    reconcileRows('mount-rows',mounts.filter(m => !m.archived),renderMount,signature,transition);
     reconcileRows('archived-mount-rows',mounts.filter(m => m.archived),renderMount,signature);
   }
   function renderGlobalStatus(status) {

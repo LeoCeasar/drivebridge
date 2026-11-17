@@ -429,3 +429,16 @@ func TestVerifyIdentityRejectsChangedAccountEvenWhenUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEnrollmentExpectedIdentityCannotAuthorizeBusinessRequests(t *testing.T) {
+	r, err := NewEnrollment(EnrollmentOptions{Executable: "must-not-run", AuthRef: "ref", AuthRoot: t.TempDir(), AppID: "app", ExpectedIdentity: Identity{AppID: "app", Brand: "feishu", UserOpenID: "user"}, Coordinator: new(testCoordinator)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.ManagedIdentity(); ok {
+		t.Fatal("expected identity became business authorization")
+	}
+	if _, err = r.Run(context.Background(), Request{Args: []string{"drive"}}); !errors.Is(err, ErrIdentity) {
+		t.Fatal("lifecycle runner dispatched business request", err)
+	}
+}

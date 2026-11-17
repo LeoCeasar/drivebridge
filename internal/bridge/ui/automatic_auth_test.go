@@ -217,3 +217,16 @@ func TestMountAuthorizationProjectionIsScopedAndSanitized(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigEmptyMountsRemainJSONArray(t *testing.T) {
+	h, _, client, _, _ := fixture(t)
+	res := request(t, client, h, "GET", "/api/config", nil, "", "")
+	defer res.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["mounts"].([]any); !ok {
+		t.Fatal("first-run mount list must remain an array for browser startup", body["mounts"])
+	}
+}

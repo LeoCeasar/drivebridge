@@ -50,6 +50,7 @@ type ManagedOptions struct {
 type Runner struct {
 	executable, authRef, authRoot string
 	identity                      Identity
+	expectedIdentity              Identity
 	coordinator                   Coordinator
 	managed                       bool
 }

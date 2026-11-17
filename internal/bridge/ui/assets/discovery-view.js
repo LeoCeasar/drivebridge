@@ -40,7 +40,7 @@
       $('discovery-status').classList.toggle('error',!!v?.error);
       $('discovery-runtime-help').hidden = v?.state !== 'needs_runtime' && v?.error !== 'needs_runtime';
       const browser = v?.browser; $('discovery-login-window').hidden = !browser;
-      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : v?.state === 'complete' && v?.snapshot?.complete ? '已保留上次登录与目录清单，后台将自动恢复会话并复核。' : '请打开应用独立登录窗口，使用已授权的飞书账号登录。'; $('discovery-login-component').textContent = v?.state === 'needs_runtime' ? '请安装 Microsoft Edge WebView2 Runtime，再点击打开应用登录窗口；已有账号和文件会保留。' : browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
+      if (browser) { $('discovery-login-session').textContent = loginResult(v).visible ? '应用登录会话已验证并保存。' : browser.connected ? '应用登录窗口已就绪，正在等待身份核验与目录发现。' : v?.state === 'complete' && v?.snapshot?.complete ? '已保留上次登录与目录清单，后台将自动恢复会话并复核。' : '请打开应用独立登录窗口，使用账号盘绑定的飞书账号登录。'; $('discovery-login-component').textContent = v?.state === 'needs_runtime' ? '请安装 Microsoft Edge WebView2 Runtime，再点击打开应用登录窗口；已有账号和文件会保留。' : browser.helper_available ? '完成登录后将自动核验身份、发现目录并挂载；若等待较久，可展开“登录遇到问题”重新检查。' : '应用登录组件暂不可用，请安装最新完整应用包后重试。'; }
       const result = loginResult(v); $('discovery-login-result').hidden = !result.visible;
       $('discovery-result-title').textContent = result.title; $('discovery-result-summary').textContent = result.summary; $('discovery-result-guidance').textContent = result.guidance;
       $('discovery-last-scan').textContent = scanTime(v);

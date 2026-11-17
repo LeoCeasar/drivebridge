@@ -39,7 +39,8 @@ func publicAutomaticLogin(view manager.AutomaticLoginView) manager.AutomaticLogi
 // Project each account's workflow independently. Copy the slice and progress so
 // polling cannot mutate cached backend snapshots or expose another profile's link.
 func publicMounts(mounts []MountView) []MountView {
-	out := append([]MountView(nil), mounts...)
+	out := make([]MountView, len(mounts))
+	copy(out, mounts)
 	for i := range out {
 		progress := out[i].Authorization
 		out[i].Authorization = nil

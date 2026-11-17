@@ -91,7 +91,11 @@ func (r *Runner) VerifyIdentity(ctx context.Context) (IdentityMetadata, error) {
 	}
 	// Compare known identifiers before readiness: an unavailable different account
 	// must still fail closed as an identity change. Missing evidence is not a change.
-	if (r.identity.AppID != "" && r.identity.AppID != raw.AppID) || (r.identity.UserOpenID != "" && u.OpenID != "" && r.identity.UserOpenID != u.OpenID) || (r.identity.Brand != "" && r.identity.Brand != raw.Brand) {
+	expected := r.identity
+	if r.expectedIdentity.AppID != "" {
+		expected = r.expectedIdentity
+	}
+	if (expected.AppID != "" && expected.AppID != raw.AppID) || (expected.UserOpenID != "" && u.OpenID != "" && expected.UserOpenID != u.OpenID) || (expected.Brand != "" && expected.Brand != raw.Brand) {
 		return IdentityMetadata{}, ErrIdentity
 	}
 	if u.Status == "missing" || u.Status == "not_configured" {

@@ -166,7 +166,23 @@ func (s *Service) runner(e enrollment) (protocol, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.factory(larkcli.EnrollmentOptions{Executable: s.options.Executable, AuthRoot: root, AuthRef: e.AuthRef, AppID: e.AppID, Coordinator: s.coordinator})
+	expected := larkcli.Identity{Brand: e.Brand, AppID: e.AppID}
+	if e.ExpectedHash != "" {
+		registry, err := s.readRegistry()
+		if err != nil {
+			return nil, err
+		}
+		for _, record := range registry.Identities {
+			if record.IdentityHash == e.ExpectedHash && record.AppID == e.AppID && record.Brand == e.Brand {
+				expected.UserOpenID = record.UserOpenID
+				break
+			}
+		}
+		if expected.UserOpenID == "" {
+			return nil, model.ErrIdentityChanged
+		}
+	}
+	return s.factory(larkcli.EnrollmentOptions{Executable: s.options.Executable, AuthRoot: root, AuthRef: e.AuthRef, AppID: e.AppID, ExpectedIdentity: expected, Coordinator: s.coordinator})
 }
 func (s *Service) Start(ctx context.Context, id model.ProfileID) (AuthFlow, error) {
 	return s.start(ctx, id, false)
@@ -648,7 +664,7 @@ func (s *Service) Status(ctx context.Context, id model.ProfileID) (Identity, err
 	if err != nil {
 		return Identity{}, err
 	}
-	driver, err := s.factory(larkcli.EnrollmentOptions{Executable: s.options.Executable, AuthRef: b.AuthRef, AuthRoot: b.AuthRoot, AppID: b.AppID, Coordinator: s.coordinator})
+	driver, err := s.factory(larkcli.EnrollmentOptions{Executable: s.options.Executable, AuthRef: b.AuthRef, AuthRoot: b.AuthRoot, AppID: b.AppID, ExpectedIdentity: larkcli.Identity{Brand: b.Brand, AppID: b.AppID, UserOpenID: b.UserOpenID}, Coordinator: s.coordinator})
 	if err != nil {
 		return Identity{}, err
 	}

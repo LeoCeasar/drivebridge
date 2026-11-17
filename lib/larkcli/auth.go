@@ -12,6 +12,7 @@ import (
 )
 
 type EnrollmentOptions struct {
+	ExpectedIdentity                     Identity
 	Executable, AuthRef, AuthRoot, AppID string
 	Coordinator                          Coordinator
 }
@@ -21,7 +22,17 @@ func NewEnrollment(o EnrollmentOptions) (*Runner, error) {
 	if o.Executable == "" || o.AuthRef == "" || !filepath.IsAbs(o.AuthRoot) || !validCoordinator(o.Coordinator) {
 		return nil, ErrIdentity
 	}
-	return &Runner{executable: o.Executable, authRef: o.AuthRef, authRoot: o.AuthRoot, coordinator: o.Coordinator, identity: Identity{AppID: o.AppID}, managed: true}, nil
+	expected := o.ExpectedIdentity
+	if expected.AppID != "" && expected.AppID != o.AppID {
+		return nil, ErrIdentity
+	}
+	if expected.Brand != "" && expected.Brand != "feishu" && expected.Brand != "lark" {
+		return nil, ErrIdentity
+	}
+	expected.AppID = o.AppID
+	// Expected identity is verification evidence only. Keep the lifecycle runner
+	// unable to supply a business ManagedIdentity, even for a bound account.
+	return &Runner{executable: o.Executable, authRef: o.AuthRef, authRoot: o.AuthRoot, coordinator: o.Coordinator, identity: Identity{AppID: o.AppID}, expectedIdentity: expected, managed: true}, nil
 }
 
 // AuthEvent is a whitelist. Device codes, tokens, secrets and free text are discarded.
