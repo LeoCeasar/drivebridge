@@ -50,6 +50,10 @@ func (b *ManagerBackend) Config(ctx context.Context) (ConfigView, error) {
 		}
 		view := MountView{Archived: m.Archived, BackgroundPullExcludedExtensions: rules, ID: m.ID, Name: m.Name, RemoteID: m.RemoteID, Mountpoint: m.Mountpoint, CacheMaxBytes: m.CacheMaxBytes, CacheMaxAge: age}
 		describeMount(&view, c.Remotes, c.Profiles)
+		if progress, ok := b.manager.AutomaticLoginForProfile(view.ProfileID); ok && !view.Archived {
+			safe := publicAutomaticLogin(progress)
+			view.Authorization = &safe
+		}
 		v.Mounts = append(v.Mounts, view)
 	}
 	return v, nil

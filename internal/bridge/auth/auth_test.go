@@ -680,3 +680,17 @@ func TestReconcilePreservesRealIdentityFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompletedAuthorizationPreservesCredentialStorageFailure(t *testing.T) {
+	s, _, f, id, _ := fixture(t)
+	enroll(t, s, f, id)
+	flow, err := s.Start(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.verifyErr = larkcli.ErrCredentialStorage
+	f.auth.finish()
+	if _, err = s.Complete(context.Background(), flow.ID); !errors.Is(err, larkcli.ErrCredentialStorage) || errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal("lost credential-storage diagnostic", err)
+	}
+}

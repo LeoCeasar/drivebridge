@@ -3,6 +3,7 @@
 //
 // Scenarios: DRIVEBRIDGE_UI_PREVIEW_EMPTY=1 shows a first-run workspace and
 // DRIVEBRIDGE_UI_PREVIEW_STALE=1 marks conflict sources as not re-verified.
+// DRIVEBRIDGE_UI_PREVIEW_AUTH=waiting_authorization|failed previews credential recovery.
 package main
 
 import (
@@ -89,6 +90,19 @@ func (b *backend) mounts() []ui.MountView {
 	account := ui.MountView{ID: mountID, Name: "账号盘-" + string(profileID), DisplayName: "DriveBridge — 工作飞书", AccountName: "工作飞书", AccountRoot: true, ProfileID: profileID, Mountpoint: `C:\Users\demo\DriveBridge\` + string(profileID), CacheMaxBytes: 5 << 30, CacheMaxAge: "168h", BackgroundPullExcludedExtensions: []string{".log", ".db"}, State: model.MountStatus{SchemaVersion: 1, MountID: mountID, Running: b.running[mountID], LocalSaved: true, CloudState: "conflict", Conflicts: open, Queued: 2, CacheBytes: &usedAccount, DirectoryIndex: &model.DirectoryIndexStatus{Known: 128, Cached: 96, Refreshing: 1}}}
 	if !b.running[mountID] {
 		account.State.CloudState = "stopped"
+	}
+	if phase := os.Getenv("DRIVEBRIDGE_UI_PREVIEW_AUTH"); phase != "" {
+		account.State.Running = false
+		account.State.LastError = "identity_changed"
+		account.State.CloudState = "synced"
+		account.State.Issues = nil
+		account.State.Conflicts = 0
+		account.StatusWarning = "pending"
+		account.StatusUpdatedAt = time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+		account.Authorization = &manager.AutomaticLoginView{StartedAt: time.Now().Add(-time.Minute), FlowID: "preview-flow", ProfileID: profileID, State: phase, Flow: auth.AuthFlow{URL: "https://accounts.feishu.cn/", ExpiresAt: time.Now().Add(5 * time.Minute)}}
+		if phase == "failed" {
+			account.Authorization.Error = "expired"
+		}
 	}
 	folder := ui.MountView{ID: folderID, Name: "团队文档", Mountpoint: `D:\Sync\团队文档`, CacheMaxBytes: 10 << 30, CacheMaxAge: "720h", BackgroundPullExcludedExtensions: []string{}, State: model.MountStatus{SchemaVersion: 1, MountID: folderID, Running: b.running[folderID], LocalSaved: true, CloudState: "synced", CacheBytes: &usedFolder, DirectoryIndex: &model.DirectoryIndexStatus{Known: 40, Cached: 40}}}
 	if !b.running[folderID] {

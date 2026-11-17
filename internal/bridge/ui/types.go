@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"github.com/rclone/rclone/internal/bridge/auth"
+	"github.com/rclone/rclone/internal/bridge/manager"
 	"github.com/rclone/rclone/internal/bridge/model"
 )
 
@@ -21,21 +22,22 @@ type RemoteView struct {
 	FolderToken  string          `json:"folder_token"`
 }
 type MountView struct {
-	Archived                         bool              `json:"archived,omitempty"`
-	BackgroundPullExcludedExtensions []string          `json:"background_pull_excluded_extensions"`
-	StatusWarning                    string            `json:"status_warning,omitempty"`
-	StatusUpdatedAt                  string            `json:"status_updated_at,omitempty"`
-	CacheMaxBytes                    int64             `json:"cache_max_bytes"`
-	CacheMaxAge                      string            `json:"cache_max_age"`
-	ID                               model.MountID     `json:"id"`
-	Name                             string            `json:"name"`
-	DisplayName                      string            `json:"display_name,omitempty"`
-	AccountName                      string            `json:"account_name,omitempty"`
-	AccountRoot                      bool              `json:"account_root,omitempty"`
-	ProfileID                        model.ProfileID   `json:"profile_id,omitempty"`
-	RemoteID                         model.RemoteID    `json:"remote_id"`
-	Mountpoint                       string            `json:"mountpoint"`
-	State                            model.MountStatus `json:"state"`
+	Authorization                    *manager.AutomaticLoginView `json:"authorization,omitempty"`
+	Archived                         bool                        `json:"archived,omitempty"`
+	BackgroundPullExcludedExtensions []string                    `json:"background_pull_excluded_extensions"`
+	StatusWarning                    string                      `json:"status_warning,omitempty"`
+	StatusUpdatedAt                  string                      `json:"status_updated_at,omitempty"`
+	CacheMaxBytes                    int64                       `json:"cache_max_bytes"`
+	CacheMaxAge                      string                      `json:"cache_max_age"`
+	ID                               model.MountID               `json:"id"`
+	Name                             string                      `json:"name"`
+	DisplayName                      string                      `json:"display_name,omitempty"`
+	AccountName                      string                      `json:"account_name,omitempty"`
+	AccountRoot                      bool                        `json:"account_root,omitempty"`
+	ProfileID                        model.ProfileID             `json:"profile_id,omitempty"`
+	RemoteID                         model.RemoteID              `json:"remote_id"`
+	Mountpoint                       string                      `json:"mountpoint"`
+	State                            model.MountStatus           `json:"state"`
 }
 type ConfigView struct {
 	Platform   string `json:"platform"`

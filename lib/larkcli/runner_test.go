@@ -408,6 +408,14 @@ func TestVerifyIdentityClassifiesUnavailableUser(t *testing.T) {
 			if err == nil || errors.Is(err, ErrIdentity) {
 				t.Fatalf("%s was reported as identity mismatch: %v", name, err)
 			}
+			want := map[string]error{"missing": ErrAuthRequired, "storage": ErrCredentialStorage, "expired": ErrAuthRequired, "verification": ErrVerification}[name]
+			if !errors.Is(err, want) {
+				t.Fatalf("%s: %v", name, err)
+			}
+			var typed *Error
+			if errors.As(err, &typed) && strings.Contains(fmt.Sprintf("%+v", *typed), "SECRET") {
+				t.Fatal("raw typed diagnostic leaked")
+			}
 			if strings.Contains(fmt.Sprintf("%+v", err), "SECRET") {
 				t.Fatal("raw diagnostics leaked")
 			}

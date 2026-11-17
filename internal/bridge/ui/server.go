@@ -193,7 +193,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.prepareConflicts(v.Conflicts, v.Partial)
-		v.Mounts = append([]MountView(nil), v.Mounts...)
+		v.Mounts = publicMounts(v.Mounts)
 		for i := range v.Mounts {
 			v.Mounts[i].State.Issues = append([]model.SyncIssue(nil), v.Mounts[i].State.Issues...)
 			v.Mounts[i].State.LastError = safeCode(v.Mounts[i].State.LastError)
@@ -228,6 +228,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 				apiError(w, err)
 				return
 			}
+			v.Mounts = publicMounts(v.Mounts)
 			v.OpenFolderLabel = FolderOpenLabel(hostGOOS)
 			_, v.CanOpenFolder = h.backend.(FolderOpener)
 			respond(w, 200, v)
@@ -246,6 +247,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 				apiError(w, err)
 				return
 			}
+			v.Mounts = publicMounts(v.Mounts)
 			respond(w, 200, v)
 		default:
 			method(w, "GET, POST")

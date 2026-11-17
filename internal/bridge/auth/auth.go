@@ -419,6 +419,12 @@ func (s *Service) Complete(ctx context.Context, id string) (Identity, error) {
 	}
 	verified, err := driver.VerifyIdentity(ctx)
 	if err != nil {
+		if errors.Is(err, larkcli.ErrIdentity) {
+			return fail(model.ErrIdentityChanged)
+		}
+		if errors.Is(err, larkcli.ErrAuthRequired) || errors.Is(err, larkcli.ErrCredentialStorage) || errors.Is(err, larkcli.ErrVerification) {
+			return fail(errors.Join(ErrNeedsReconcile, err))
+		}
 		return fail(ErrNeedsReconcile)
 	}
 	identity, err := s.validateIdentity(e, verified)

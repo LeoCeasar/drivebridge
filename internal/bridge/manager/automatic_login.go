@@ -11,6 +11,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/ownedlogin"
+	"github.com/rclone/rclone/lib/larkcli"
 )
 
 // automaticReconciledKind is the Flow.Kind of a workflow whose interrupted
@@ -22,6 +23,7 @@ const automaticReconciledKind = "reconciled"
 // Flow always describes the current authorization phase, which may change after
 // application registration. Querying this view never launches a browser or mount.
 type AutomaticLoginView struct {
+	StartedAt  time.Time       `json:"started_at"`
 	FlowID     string          `json:"flow_id"`
 	ProfileID  model.ProfileID `json:"profile_id"`
 	State      string          `json:"state"`
@@ -95,7 +97,7 @@ func (m *Manager) StartAutomaticLogin(ctx context.Context, id model.ProfileID, r
 			deadline = 25 * time.Minute
 		}
 		lifetime, cancel := context.WithTimeout(m.ctx, deadline)
-		task = &automaticLogin{view: AutomaticLoginView{ProfileID: id, State: "waiting_authorization"}, initialReady: make(chan struct{}), cancel: cancel}
+		task = &automaticLogin{view: AutomaticLoginView{ProfileID: id, State: "waiting_authorization", StartedAt: time.Now().UTC()}, initialReady: make(chan struct{}), cancel: cancel}
 		m.automaticProfiles[id] = task
 		// Admission and Add share the same mutex as Close's closing flag.
 		m.automaticWG.Add(1)
@@ -124,6 +126,19 @@ func (m *Manager) AutomaticLoginStatus(ctx context.Context, flowID string) (Auto
 	}
 	return task.view, nil
 }
+
+// AutomaticLoginForProfile observes the backend-owned workflow without taking
+// credential/store locks, performing a cloud check, or starting a new flow.
+func (m *Manager) AutomaticLoginForProfile(id model.ProfileID) (AutomaticLoginView, bool) {
+	m.automaticMu.Lock()
+	defer m.automaticMu.Unlock()
+	task := m.automaticProfiles[id]
+	if task == nil || task.view.FlowID == "" {
+		return AutomaticLoginView{}, false
+	}
+	return task.view, true
+}
+
 func (m *Manager) updateAutomatic(task *automaticLogin, update func(*AutomaticLoginView)) {
 	m.automaticMu.Lock()
 	defer m.automaticMu.Unlock()
@@ -141,6 +156,8 @@ func automaticError(err error) string {
 		return "unsupported"
 	case errors.Is(err, ErrDriver):
 		return "driver_unavailable"
+	case errors.Is(err, larkcli.ErrCredentialStorage):
+		return "credential_unavailable"
 	case errors.Is(err, auth.ErrReconcileFailed) && !errors.Is(err, auth.ErrBusy) && !errors.Is(err, auth.ErrReferencesBusy) && !errors.Is(err, model.ErrIdentityChanged):
 		return "auth_reconcile_failed"
 	default:
@@ -293,6 +310,9 @@ func (m *Manager) runAutomaticLogin(ctx context.Context, task *automaticLogin, r
 			return
 		}
 		m.updateAutomatic(task, func(v *AutomaticLoginView) { v.MountID = view.MountID; v.Mountpoint = view.Mountpoint })
+		if view.State == "complete" && view.Snapshot.Complete && view.MountID != "" {
+			m.updateAutomatic(task, func(v *AutomaticLoginView) { v.State = "mounting" })
+		}
 		if discoveryLoginReady(loginCtx, view, deps.status) {
 			m.updateAutomatic(task, func(v *AutomaticLoginView) { v.State = "ready" })
 			return

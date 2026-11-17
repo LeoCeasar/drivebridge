@@ -13,6 +13,7 @@
   const fileManagerLabels = {windows:'在资源管理器中打开',darwin:'在 Finder 中打开'};
   const titles = {workspace:'文件与同步',conflicts:'冲突与合并',settings:'账号与目录',history:'修改历史'};
   let currentPlatform = '';
+  const profileAuthorizations = new Map();
   const record = () => current && queue.records.get(current.id);
   const deletionDecision = input => Boolean(input?.remote_deleted || input?.local_delete_pending);
   const deletedLabel = r => r?.input?.local_delete_pending ? '已确认本地删除，上传已取消' : '已跟随云端删除';
@@ -93,14 +94,14 @@
     $('auth-flow').hidden = progress.state === 'ready'; $('auth-complete').hidden = true; $('auth-retry').hidden = true; $('auth-state').classList.toggle('error',false);
     $('auth-link').hidden = progress.state !== 'waiting_authorization' || (!progress.flow?.url && !$('auth-link').href);
     if (progress.flow?.url) $('auth-link').href = progress.flow.url;
-    const labels = {waiting_authorization:'请在飞书页面完成授权，后台会自动继续。',opening_login:'授权已验证，正在自动打开应用登录窗口…',waiting_login:'请在应用窗口登录飞书；登录后自动挂载，无需选择目录。',ready:'账号盘已自动挂载。'};
+    const labels = {waiting_authorization:'请在飞书页面点击“授权 / Authorize”按钮，看到成功提示后后台会自动继续。',opening_login:'授权已验证，正在自动打开应用登录窗口…',waiting_login:'请在应用窗口登录飞书；登录后自动挂载，无需选择目录。',mounting:'正在启动挂载，请稍候…',ready:'账号盘已自动挂载。'};
     $('auth-state').textContent = labels[progress.state] || '正在接续登录…';
     if (progress.state === 'failed') {
-      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime，再从账号盘区域重新打开登录窗口。',unsupported:'应用内登录组件不可用，请检查系统版本和完整安装包。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:authErrors.auth_identity_changed,auth_identity_changed:authErrors.auth_identity_changed,auth_reconcile_failed:authErrors.auth_reconcile_failed,driver_unavailable:'挂载驱动不可用，请检查系统驱动。'};
+      const errors = {mount_archived:'账号盘已移除，请先在“已移除挂载”中恢复配置。',expired:'授权或登录等待已超时，可以重新发起登录。',canceled:'本次登录已取消。',partial:'目录入口尚未完整读取，可重新扫描后检查挂载。',needs_runtime:'请安装 Microsoft Edge WebView2 Runtime，再从账号盘区域重新打开登录窗口。',unsupported:'应用内登录组件不可用，请检查系统版本和完整安装包。',needs_browser:'应用登录组件不可用，请检查是否安装完整应用。',needs_login:'网页登录尚未完成，可从账号盘区域重新打开登录窗口。',unauthorized:'用户授权尚未完成，请重新发起授权。',identity_changed:authErrors.auth_identity_changed,auth_identity_changed:authErrors.auth_identity_changed,auth_reconcile_failed:authErrors.auth_reconcile_failed,driver_unavailable:'挂载驱动不可用，请检查系统驱动。',credential_unavailable:'本机凭据暂不可读取，请检查钥匙串或凭据管理器。'};
       const reason = errors[progress.error] || '自动登录或挂载尚未完成，请查看账号盘状态后重试。';
       $('auth-state').textContent = reason + ' 已保存的授权和同步数据会保留。';
       $('auth-state').classList.toggle('error',true);
-      if (progress.error === 'auth_reconcile_failed' && progress.profile_id) { const id = progress.profile_id; authRetry = () => startAuth(id,false); $('auth-retry').hidden = false; }
+      if (['auth_reconcile_failed','expired','unauthorized','canceled'].includes(progress.error) && progress.profile_id) { const id = progress.profile_id; authRetry = () => authorizationHelp(id); $('auth-retry').hidden = false; }
       message($('auth-state').textContent,true);
     }
     if (progress.state !== 'waiting_authorization' && (authConfigFlow !== progress.flow_id || ['ready','failed'].includes(progress.state))) {
@@ -147,8 +148,49 @@
     if (index && index.known > 0) meta.append(meter(`目录清单 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,index.failed ? '部分更新失败，保留旧清单' : index.refreshing ? '后台更新中' : ''));
     return meta;
   }
+  function mountAuthorization(mount) {
+    const progress = mount.authorization;
+    if (!progress || mount.archived || progress.profile_id !== mount.profile_id || progress.state === 'ready') return null;
+    if (progress.state === 'failed' && mount.state?.running && !mount.status_warning) return null;
+    const labels = {waiting_authorization:'等待飞书授权确认',opening_login:'授权已完成，正在核验并打开登录窗口',waiting_login:'等待应用内登录飞书',mounting:'正在启动挂载'};
+    if (labels[progress.state]) {
+      const deadlines = [progress.flow?.expires_at,progress.flow?.local_deadline].map(value => Date.parse(value || '')).filter(value => Number.isFinite(value) && value > 0);
+      const expiry = deadlines.length ? Math.min(...deadlines) : NaN;
+      const expired = progress.state === 'waiting_authorization' && Number.isFinite(expiry) && expiry > 0 && Date.now() >= expiry;
+      return {progress,busy:true,label:expired ? '授权链接已过期，正在结束本次等待' : labels[progress.state],button:expired ? '等待授权结束' : progress.state === 'waiting_authorization' ? '等待授权' : progress.state === 'mounting' ? '正在挂载' : '等待登录',url:!expired && progress.state === 'waiting_authorization' ? progress.flow?.url : ''};
+    }
+    if (progress.state === 'failed') {
+      const reasons = {expired:'授权或登录等待已超时，请重新授权',unauthorized:'授权尚未完成，请重新授权',auth_reconcile_failed:'授权结果尚未核验，请重试授权',identity_changed:'授权账号与账号盘不一致，请使用原账号',credential_unavailable:'本机凭据暂不可读取，请检查钥匙串或凭据管理器',needs_login:'应用登录尚未完成，请打开应用登录窗口',driver_unavailable:'挂载驱动暂不可用，请检查驱动后启动挂载',canceled:'授权已取消，可重新授权'};
+      return {progress,busy:false,label:reasons[progress.error] || '登录或挂载未完成，请检查账号状态',reauthorize:['expired','unauthorized','auth_reconcile_failed','identity_changed','canceled'].includes(progress.error)};
+    }
+    return null;
+  }
+  function authorizationHelp(profileID) {
+    view('settings');
+    const row = profileAuthorizations.get(profileID);
+    if (row) { if (row.confirm) row.confirm.hidden = false; row.row.scrollIntoView?.({block:'center'}); }
+    message('请使用该账号盘原来绑定的飞书账号继续授权；本机缓存和待上传内容会保留。');
+  }
+  function appendAuthorizationActions(action, authorization, mount) {
+    if (authorization.url) {
+      const link = make('a','继续授权','button small primary');
+      link.href = authorization.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; action.append(link);
+    } else if (authorization.progress.state === 'waiting_login') {
+      const login = make('button','继续应用登录','button small primary');
+      login.addEventListener('click',() => { view('settings'); message('请在“账号盘”区域打开应用登录窗口，使用原飞书账号登录。'); }); action.append(login);
+    } else if (!authorization.busy) {
+      const retry = make('button',authorization.reauthorize ? '重新授权' : '检查账号状态','button small');
+      retry.addEventListener('click',() => authorizationHelp(mount.profile_id)); action.append(retry);
+    }
+  }
   function mountActions(mount, state, stale, canRetry) {
-    const action = make('div',undefined,'actions');
+    const action = make('div',undefined,'actions'), authorization = mountAuthorization(mount);
+    if (authorization?.busy || authorization?.reauthorize) {
+      if (authorization.busy) { const waiting = make('button',authorization.button,'button small'); waiting.disabled = true; waiting.title = authorization.label; action.append(waiting); }
+      appendAuthorizationActions(action,authorization,mount);
+      action.append(moreMenu(mount,true)); return action;
+    }
+    if (authorization) appendAuthorizationActions(action,authorization,mount);
     const toggle = make('button', mount.archived ? '恢复并启动同步' : state.running ? '暂停同步' : '启动挂载', 'button small' + (!mount.archived && !state.running ? ' primary' : '')); toggle.disabled = stale;
     toggle.addEventListener('click', async () => { toggle.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/${mount.archived ? 'restore_start' : state.running ? 'stop' : 'start'}`, 'POST', {}); if (mount.archived) message('挂载已恢复并启动，后台将继续处理同步任务。'); await loadConfig(); await refresh(); } catch (e) { message(e.message, true); } finally { toggle.disabled = false; } });
     action.append(toggle);
@@ -209,7 +251,7 @@
     $('mount-empty').hidden = mounts.some(m => !m.archived); $('mount-panel').classList.toggle('is-empty',!$('mount-empty').hidden);
     $('archived-mount-panel').hidden = !mounts.some(m => m.archived);
     const renderMount = mount => {
-      const stale = Boolean(mount.status_warning), known = !stale || Boolean(mount.status_updated_at);
+      const stale = Boolean(mount.status_warning), known = !stale || Boolean(mount.status_updated_at), authorization = mountAuthorization(mount);
       const state = mount.state || {}, row = make('tr'), prefix = stale ? '上次：' : '';
       const name = make('td'), head = make('div',undefined,'mount-head'), icon = make('span',undefined,'mount-icon'), id = make('div',undefined,'mount-id');
       icon.setAttribute('aria-hidden','true'); icon.append(make('span',undefined,'ico i-' + (mount.account_root ? 'drive' : 'folder')));
@@ -219,7 +261,17 @@
       const place = make('div',undefined,'path-line'), copy = make('button',undefined,'icon-button'); copy.title = '复制路径'; copy.setAttribute('aria-label','复制挂载位置'); copy.append(make('span',undefined,'ico i-copy'));
       copy.addEventListener('click',() => copyText(mount.mountpoint,copy)); place.append(make('span',mount.mountpoint,'mount-path'),copy); name.append(place);
       if (known && !mount.archived) name.append(mountMeta(mount,state));
-      if (stale) {
+      if (authorization) {
+        name.append(make('p',authorization.label,'mount-auth-status'));
+        if (authorization.progress.state === 'waiting_authorization') {
+          name.append(make('small','请在飞书页面点击“授权 / Authorize”按钮，看到授权成功提示后，后台会自动继续。','mount-path'));
+          if (Date.now() - Date.parse(authorization.progress.started_at || '') >= 30000) name.append(make('small','等待较久？点击“继续授权”，检查是否还有最后一步确认。','mount-path'));
+        }
+        if (state.last_error) {
+          const previous = make('details'), summary = make('summary','上次挂载失败记录');
+          previous.append(summary,make('p',`上次错误标识：${state.last_error}；本次正在处理授权与登录。`,'quiet')); name.append(previous);
+        }
+      } else if (stale) {
         const reasons = {pending:'本机正在处理其他状态查询',auth_required:'账号需要重新授权',identity_changed:'账号身份需要重新核对',worker_unavailable:'挂载服务暂不可用'};
         const reason = reasons[mount.status_warning] || '本机状态更新暂未完成';
         name.append(make('small',known ? `${reason}；保留上次结果（${new Date(mount.status_updated_at).toLocaleTimeString()}）` : `${reason}；尚未取得完整状态`,'mount-path'));
@@ -228,25 +280,26 @@
       const saveFailed = state.last_error === 'local_save_failed';
       local.append(!known ? chip('等待核对','info') : chip(prefix + (saveFailed ? '本机保存尚未确认' : saved ? '已持久保存' : (state.running ? '检查中或仍有本机写入' : '挂载未启动')), saveFailed ? 'error' : saved ? 'ok' : state.running ? 'pending' : 'stopped'));
       const cloud = make('td');
-      if (!known) cloud.append(chip('等待核对','info'));
+      if (!known && !authorization) cloud.append(chip('等待核对','info'));
       else {
-        const [label,tone] = recovery.cloudChip(state,state.running); cloud.append(chip(prefix + label,tone));
-        if (state.last_error) cloud.append(make('small',recovery.errorLabels[state.last_error] || '上次操作未完成','mount-path'));
+        const [label,tone] = authorization ? [authorization.label,authorization.busy ? 'info' : 'error'] : recovery.cloudChip(state,state.running); cloud.append(chip(authorization ? label : prefix + label,tone));
+        if (state.last_error && !authorization) cloud.append(make('small',recovery.errorLabels[state.last_error] || '上次操作未完成','mount-path'));
       }
       const counters = make('td',!known ? '暂不可读' : `${prefix}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`,'counters'); // NBSP: wrap only after "，"
       const action = make('td'); action.append(mountActions(mount,state,stale,canRetry));
       for (const [cell,label] of [[local,'本机保存'],[cloud,mount.archived ? '状态' : '云端状态'],[counters,mount.archived ? '保留数据' : '待处理']]) cell.setAttribute('data-label',label);
       row.append(name, local, cloud, counters, action); return row;
     };
-    const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry]);
+    const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry,mountAuthorization(mount)?.label,Boolean(mount.authorization?.state === 'waiting_authorization' && Date.now() - Date.parse(mount.authorization.started_at || '') >= 30000)]);
     reconcileRows('mount-rows',mounts.filter(m => !m.archived),renderMount,signature);
     reconcileRows('archived-mount-rows',mounts.filter(m => m.archived),renderMount,signature);
   }
   function renderGlobalStatus(status) {
     const mounts = (status.mounts || []).filter(m => !m.archived), conflicts = (status.conflicts || []).length;
+    const authorization = mounts.map(mountAuthorization).find(p => p?.busy);
     const failing = mounts.some(m => m.state && (m.state.last_error || ['blocked','offline'].includes(m.state.cloud_state)));
     const waiting = mounts.some(m => m.state?.running && ((m.state.queued || 0) + (m.state.inflight || 0) > 0));
-    const [text,tone] = !mounts.length ? ['尚未挂载','stopped'] : status.partial ? ['部分状态更新中','info'] : conflicts ? [`${conflicts} 个文件需要合并`,'pending'] : failing ? ['同步遇到问题','error'] : waiting ? ['有内容等待同步','pending'] : mounts.every(m => !m.state?.running) ? ['挂载未启动','stopped'] : ['同步正常','ok'];
+    const [text,tone] = !mounts.length ? ['尚未挂载','stopped'] : authorization ? [authorization.label,'info'] : status.partial ? ['部分状态更新中','info'] : conflicts ? [`${conflicts} 个文件需要合并`,'pending'] : failing ? ['同步遇到问题','error'] : waiting ? ['有内容等待同步','pending'] : mounts.every(m => !m.state?.running) ? ['挂载未启动','stopped'] : ['同步正常','ok'];
     $('global-status').textContent = text; $('global-status').className = `chip global-status ${tone}`;
   }
   function issueAdvice(issue) {
@@ -263,7 +316,13 @@
         return {title:'自动合并组件暂不可用',reason:'应用内置 Git 无法执行，当前修改已保留，同步已暂停。',steps:['保留本地文件与草稿，检查应用安装是否完整，以及安全软件是否拦截内置 Git。','修复或重新安装应用后再重试同步；无需手工安装 Git。']};
       case 'unsupported_content':
         return issue.new_document ? {title:'文档关联或格式需要处理',reason:'当前保存被识别为新文档，其中的图片、表格等结构不能直接作为新文档安全上传。',steps:['先下载本地副本，保留此次修改。','如果这是原有飞书文档，请在飞书中找到原文档，对照副本补回修改，或等待文档关联修复后同步。','如果这是全新文档，请先使用标准 Markdown 创建；不要删除现有副本。重试不会自动修复文档关联。']} : {title:'文档结构暂不支持安全写回',reason:'此次保存包含无法安全转换回飞书的结构变化，系统已停止上传。',steps:['先下载本地副本。','在飞书原文档中应用复杂表格、图片或其他结构变化；本地可编辑已支持的段落和代码块。','修正内容后重新保存；格式问题未解决前，重复重试不会生效。']};
-      case 'permission_denied': case 'auth_required': case 'unauthorized': case 'identity_changed':
+      case 'auth_required': case 'unauthorized':
+        return {title:'需要重新授权',reason:'用户登录凭据已失效或缺失，当前账号尚不能同步。',settings:true,steps:['在“账号与目录”中使用原飞书账号重新授权。','请在飞书页面点击最后的授权按钮，看到成功提示后等待自动核验和挂载。']};
+      case 'credential_unavailable':
+        return {title:'本机凭据暂不可读取',reason:'钥匙串或系统凭据管理器暂不可访问，同步尚未通过身份核验。',settings:true,steps:['检查系统钥匙串或凭据管理器是否已解锁，以及是否有等待处理的应用访问提示。','恢复访问后重试；若登录凭据已失效，请使用原账号重新授权。']};
+      case 'identity_changed':
+        return {title:'账号身份与绑定不一致',reason:'当前核验到的账号与该账号盘绑定的身份不一致，已停止同步。',settings:true,steps:['使用该账号盘原来绑定的飞书账号重新授权。','若要使用另一个账号，请单独添加账号，保留现有账号盘与缓存。']};
+      case 'permission_denied':
         return {title:'账号或权限需要检查',reason:'当前账号无法完成这项上传。',settings:true,steps:['确认使用的是拥有该文件编辑权限的账号。','在“账号与目录”中重新授权，或请目录所有者恢复编辑权限，然后重试。']};
       case 'network_or_protocol': case 'rate_limited': case 'canceled': case 'offline':
         return {title:'上传暂未完成',reason:issue.code === 'rate_limited' ? '飞书暂时限制了请求频率，后台会退避重试。' : '网络或服务响应暂未通过核验，后台会重试。',retry:true,steps:['检查网络连接；已有修改保留在本机。','恢复连接后可点击“重试同步”，仍需等待云端回读确认。']};
@@ -281,7 +340,7 @@
     const items = [];
     for (const mount of mounts) {
       const state = mount.state || {}, stale = Boolean(mount.status_warning);
-      const issues = state.issues?.length ? state.issues : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
+      const issues = state.issues?.length ? state.issues : mountAuthorization(mount) ? [] : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
       for (const issue of issues) {
         items.push({id:`${mount.id}:${issue.job_id || issue.name || issue.code}`,name:issue.name || mount.name,mount,issue,stale});
       }
@@ -331,7 +390,7 @@
         card.append(actions);
         const details=make('details'),summary=make('summary','诊断信息');details.append(summary,make('p',`错误标识：${issue.code || 'operation_failed'}`,'quiet'));
         if (issue.name) {
-          details.append(make('p',`文件：${issue.name}`,'mount-path'));
+          details.append(make('p',`${issue.job_id ? '文件' : '挂载'}：${issue.name}`,'mount-path'));
           if (mount.mountpoint && issue.job_id) {const sep=mount.mountpoint.includes('\\') || /^[A-Za-z]:/.test(mount.mountpoint) ? '\\' : '/';const location=mount.mountpoint.replace(/[\\/]+$/,'')+sep+issue.name.split('/').join(sep);details.append(make('p',`本机位置：${location}`,'mount-path'));}
         }
         if (issue.job_id && issue.local_saved && !issue.can_download) details.append(make('p','此文件超过页面直接下载上限，请从上述本机位置复制到挂载盘之外保存副本。','quiet'));
@@ -467,19 +526,19 @@
   // then starts the recovery flow (stops the account's mounts, keeps pending uploads) when available.
   function profileRow(p, canRecover) {
     const row = make('div', undefined, 'profile-row'), title = make('div', p.name);
-    title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '已授权' : '待授权'}`));
+    title.append(make('small', `${p.brand === 'lark' ? 'Lark' : '飞书'}，${p.authorized ? '账号已绑定' : '尚未授权'}`));
     const button = make('button', p.authorized ? '重新授权' : '授权', 'button small' + (p.authorized ? '' : ' primary')); row.append(title, button);
-    if (!p.authorized) { button.addEventListener('click', async () => { button.disabled = true; try { await startAuth(p.id,false); } finally { button.disabled = false; } }); return row; }
+    if (!p.authorized) { profileAuthorizations.set(p.id,{row}); button.addEventListener('click', async () => { button.disabled = true; try { await startAuth(p.id,false); } finally { button.disabled = false; } }); return row; }
     const confirm = make('div',undefined,'confirm-box inline profile-confirm'), actions = make('div',undefined,'row'), go = make('button','继续重新授权','button small primary'), cancel = make('button','取消','button small');
     confirm.hidden = true; actions.append(go,cancel);
     confirm.append(make('p','重新授权会先停止使用该账号的挂载；待上传数据、冲突和本机缓存都会保留，不会删除飞书上的文件。随后在飞书页面完成授权，并继续应用内登录；若挂载没有自动恢复，请在“文件与同步”中启动。'),actions);
     button.addEventListener('click',() => { confirm.hidden = !confirm.hidden; });
     cancel.addEventListener('click',() => { confirm.hidden = true; });
     go.addEventListener('click', async () => { go.disabled = true; try { await startAuth(p.id,canRecover); confirm.hidden = true; } finally { go.disabled = false; } });
-    row.append(confirm); return row;
+    profileAuthorizations.set(p.id,{row,confirm}); row.append(confirm); return row;
   }
   async function loadConfig() {
-    const config = await api('/api/config'); currentPlatform=config.platform; $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren();
+    const config = await api('/api/config'); currentPlatform=config.platform; $('macos-backend-field').hidden = config.platform !== 'darwin'; options($('profile-select'), config.profiles.filter(p => p.authorized), '先完成账号授权'); options($('remote-select'), config.remotes, '先添加共享目录'); $('profiles').replaceChildren(); profileAuthorizations.clear();
     openLabel = config.open_folder_label || fileManagerLabels[config.platform] || openLabel; canOpen = config.can_open_folder === true;
     for (const p of config.profiles) $('profiles').append(profileRow(p, config.can_recover === true));
     $('add-account').open = config.profiles.length === 0;

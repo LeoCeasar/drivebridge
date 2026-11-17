@@ -315,3 +315,29 @@ func TestAutomaticLoginConcurrentCloseExcludesNewGoroutines(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAutomaticLoginProfileObservationIsReadOnlyAndScoped(t *testing.T) {
+	m, a, profile, _ := automaticFixture(t, []auth.AuthFlow{{ID: "profile-flow", Kind: "user_auth", URL: "https://synthetic.invalid/consent"}})
+	flow, err := m.StartAutomaticLogin(context.Background(), profile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, ok := m.AutomaticLoginForProfile(profile)
+	if !ok || view.State != "waiting_authorization" || view.FlowID != flow.ID || view.StartedAt.IsZero() {
+		t.Fatal(view, ok)
+	}
+	if _, ok := m.AutomaticLoginForProfile("another-profile"); ok {
+		t.Fatal("another account observed this flow")
+	}
+	view.Flow.URL = "changed copy"
+	again, _ := m.AutomaticLoginForProfile(profile)
+	if again.Flow.URL != flow.URL {
+		t.Fatal("observer mutated backend workflow")
+	}
+	close(a.gate)
+	awaitAutomatic(t, m, flow.ID, "ready")
+	again, _ = m.AutomaticLoginForProfile(profile)
+	if again.State != "ready" {
+		t.Fatal(again)
+	}
+}

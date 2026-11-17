@@ -31,14 +31,14 @@ func classify(err error) string {
 		return "unsupported_content"
 	case errors.Is(err, model.ErrIdentityChanged):
 		return "identity_changed"
+	case errors.Is(err, model.ErrUnknownResult):
+		return "unknown_result"
 	case errors.Is(err, larkcli.ErrAuthRequired):
 		return "auth_required"
 	case errors.Is(err, larkcli.ErrCredentialStorage):
 		return "credential_unavailable"
 	case errors.Is(err, larkcli.ErrVerification):
 		return "network_or_protocol"
-	case errors.Is(err, model.ErrUnknownResult):
-		return "unknown_result"
 	case errors.Is(err, model.ErrUnsupportedContent):
 		return "unsupported_content"
 	case errors.Is(err, store.ErrSpace) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT):

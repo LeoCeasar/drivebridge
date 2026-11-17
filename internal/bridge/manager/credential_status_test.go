@@ -2,6 +2,8 @@ package manager
 
 import (
 	"context"
+	"errors"
+	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/lib/larkcli"
 	"testing"
@@ -17,5 +19,12 @@ func TestCredentialStatusClassification(t *testing.T) {
 		if info.Code != tc.code || info.Retryable != tc.retry {
 			t.Fatalf("%v: %+v", tc.err, info)
 		}
+	}
+}
+
+func TestAutomaticLoginKeepsCredentialStorageCause(t *testing.T) {
+	err := errors.Join(auth.ErrReconcileFailed, larkcli.ErrCredentialStorage)
+	if code := automaticError(err); code != "credential_unavailable" {
+		t.Fatal(code)
 	}
 }

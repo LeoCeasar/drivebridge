@@ -158,3 +158,62 @@ func TestAutomaticAuthStatusPassesReconcileFailureCode(t *testing.T) {
 		t.Fatal(res.Status, result)
 	}
 }
+
+type progressMountBackend struct {
+	*fakeBackend
+	mounts []MountView
+}
+
+func (b progressMountBackend) Status(context.Context) (StatusView, error) {
+	return StatusView{Mounts: b.mounts}, nil
+}
+func (b progressMountBackend) Config(context.Context) (ConfigView, error) {
+	return ConfigView{Mounts: b.mounts}, nil
+}
+func TestMountAuthorizationProjectionIsScopedAndSanitized(t *testing.T) {
+	for _, route := range []string{"/api/status", "/api/config"} {
+		t.Run(route, func(t *testing.T) {
+			h, b, c, _, _ := fixture(t)
+			profile := model.ProfileID(uuid.NewString())
+			progress := manager.AutomaticLoginView{ProfileID: profile, State: "waiting_authorization", Flow: auth.AuthFlow{URL: "https://accounts.feishu.cn/consent"}}
+			unsafe := progress
+			unsafe.Flow.URL = "javascript:SECRET"
+			unsafe.Error = "SECRET"
+			failed := progress
+			failed.State = "failed"
+			failed.Error = "expired"
+			h.backend = progressMountBackend{b, []MountView{
+				{ID: "waiting", ProfileID: profile, Authorization: &progress},
+				{ID: "other", ProfileID: "other", Authorization: &progress},
+				{ID: "unsafe", ProfileID: profile, Authorization: &unsafe},
+				{ID: "failed", ProfileID: profile, Authorization: &failed},
+			}}
+			res := request(t, c, h, "GET", route, nil, "", "")
+			defer res.Body.Close()
+			var body struct {
+				Mounts []MountView `json:"mounts"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Mounts) != 4 {
+				t.Fatal(body)
+			}
+			if body.Mounts[0].Authorization == nil || body.Mounts[0].Authorization.Flow.URL != progress.Flow.URL {
+				t.Fatal("new tabs lost current authorization")
+			}
+			if body.Mounts[1].Authorization != nil {
+				t.Fatal("another account received this flow")
+			}
+			if body.Mounts[2].Authorization.Flow.URL != "" || body.Mounts[2].Authorization.Error != "operation_failed" {
+				t.Fatal("unsafe progress exposed")
+			}
+			if body.Mounts[3].Authorization.Flow.URL != "" {
+				t.Fatal("finished flow exposed stale consent link")
+			}
+			if unsafe.Flow.URL != "javascript:SECRET" {
+				t.Fatal("shared backend data mutated")
+			}
+		})
+	}
+}

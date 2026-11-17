@@ -16,7 +16,7 @@ type automaticAuthBackend interface {
 
 func publicAutomaticLogin(view manager.AutomaticLoginView) manager.AutomaticLoginView {
 	switch view.State {
-	case "waiting_authorization", "opening_login", "waiting_login", "ready", "failed":
+	case "waiting_authorization", "opening_login", "waiting_login", "mounting", "ready", "failed":
 	default:
 		view.State = "failed"
 	}
@@ -25,6 +25,9 @@ func publicAutomaticLogin(view manager.AutomaticLoginView) manager.AutomaticLogi
 	default:
 		view.Error = "operation_failed"
 	}
+	if view.State != "waiting_authorization" {
+		view.Flow.URL = ""
+	}
 	if view.Flow.URL != "" && !safeHTTPS(view.Flow.URL) {
 		view.Flow.URL = ""
 		view.State = "failed"
@@ -32,6 +35,22 @@ func publicAutomaticLogin(view manager.AutomaticLoginView) manager.AutomaticLogi
 	}
 	return view
 }
+
+// Project each account's workflow independently. Copy the slice and progress so
+// polling cannot mutate cached backend snapshots or expose another profile's link.
+func publicMounts(mounts []MountView) []MountView {
+	out := append([]MountView(nil), mounts...)
+	for i := range out {
+		progress := out[i].Authorization
+		out[i].Authorization = nil
+		if progress != nil && !out[i].Archived && out[i].ProfileID != "" && progress.ProfileID == out[i].ProfileID {
+			safe := publicAutomaticLogin(*progress)
+			out[i].Authorization = &safe
+		}
+	}
+	return out
+}
+
 func (h *Host) authProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		method(w, "POST")
