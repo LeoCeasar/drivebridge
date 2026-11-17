@@ -49,6 +49,19 @@ func TestCLIProcess(t *testing.T) {
 
 	case "config-metadata":
 		fmt.Print(`{"appId":"cli_app","brand":"feishu","appSecret":"SECRET"}`)
+	case "identity-missing", "identity-storage", "identity-verification", "identity-expired", "identity-changed":
+		users := map[string]string{
+			"identity-missing":      `{"status":"missing","openId":"user","available":false}`,
+			"identity-storage":      `{"status":"error","openId":"user","available":false,"error":{"type":"internal","subtype":"storage","message":"SECRET"}}`,
+			"identity-verification": `{"status":"verify_failed","openId":"user","available":false,"verified":false,"message":"SECRET","error":{"type":"network","subtype":"transport","retryable":true}}`,
+			"identity-expired":      `{"status":"verify_failed","openId":"user","available":false,"verified":false,"error":{"type":"authentication","subtype":"user_auth_required"}}`,
+			"identity-changed":      `{"status":"missing","openId":"user","available":false}`,
+		}
+		app := "cli_app"
+		if scenario == "identity-changed" {
+			app = "other_app"
+		}
+		fmt.Print(`{"appId":"` + app + `","brand":"feishu","identities":{"user":` + users[scenario] + `}}`)
 	case "identity-metadata":
 		fmt.Print(`{"appId":"cli_app","brand":"feishu","identities":{"user":{"openId":"user","verified":true,"available":true,"scope":"doc:read","expiresAt":"2030-01-01T00:00:00Z"}}}`)
 	case "enrollment", "enrollment-failed":
@@ -383,5 +396,28 @@ func TestUnresolvedStderrIdentityStillPreservesTypedFailure(t *testing.T) {
 	var typed *Error
 	if !errors.As(err, &typed) || typed.Code != "999" || !typed.Retryable {
 		t.Fatal("unresolved typed failure discarded", err)
+	}
+}
+
+// A missing token or failed verification must never masquerade as a changed account.
+func TestVerifyIdentityClassifiesUnavailableUser(t *testing.T) {
+	for _, name := range []string{"missing", "storage", "verification", "expired"} {
+		t.Run(name, func(t *testing.T) {
+			r, _ := NewEnrollment(EnrollmentOptions{Executable: testExecutable(t, "identity-"+name), AuthRef: "ref", AuthRoot: t.TempDir(), AppID: "cli_app", Coordinator: new(testCoordinator)})
+			_, err := r.VerifyIdentity(context.Background())
+			if err == nil || errors.Is(err, ErrIdentity) {
+				t.Fatalf("%s was reported as identity mismatch: %v", name, err)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", err), "SECRET") {
+				t.Fatal("raw diagnostics leaked")
+			}
+		})
+	}
+}
+
+func TestVerifyIdentityRejectsChangedAccountEvenWhenUnavailable(t *testing.T) {
+	r, _ := NewEnrollment(EnrollmentOptions{Executable: testExecutable(t, "identity-changed"), AuthRef: "ref", AuthRoot: t.TempDir(), AppID: "cli_app", Coordinator: new(testCoordinator)})
+	if _, err := r.VerifyIdentity(context.Background()); !errors.Is(err, ErrIdentity) {
+		t.Fatal(err)
 	}
 }

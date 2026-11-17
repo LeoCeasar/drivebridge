@@ -434,7 +434,7 @@ func resumeVerifiedCredentials(ctx context.Context, s *store.Store) error {
 		if err != nil {
 			return err
 		}
-		if journal.ErrorCode != "identity_changed" && journal.ErrorCode != "permission_denied" {
+		if journal.ErrorCode != "identity_changed" && journal.ErrorCode != "permission_denied" && journal.ErrorCode != "auth_required" && journal.ErrorCode != "credential_unavailable" {
 			continue
 		}
 		if err = s.ResumeJob(ctx, job.ID); err != nil && !errors.Is(err, store.ErrInvalidState) {

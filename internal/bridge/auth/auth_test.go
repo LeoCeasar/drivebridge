@@ -213,7 +213,7 @@ func TestEnrollmentSavedButProbeFailsNeedsReconcile(t *testing.T) {
 	if _, err = s.Start(context.Background(), id); !errors.Is(err, ErrNeedsReconcile) {
 		t.Fatal(err)
 	}
-	f.verifyErr = larkcli.ErrIdentity
+	f.verifyErr = larkcli.ErrAuthRequired
 	if _, err = s.Reconcile(context.Background(), id); !errors.Is(err, ErrUserMissing) {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestRestartReconcilesEnrollmentBeforeRetry(t *testing.T) {
 	}
 	defer s2.Close()
 	s2.profiles = p
-	f.verifyErr = larkcli.ErrIdentity
+	f.verifyErr = larkcli.ErrAuthRequired
 	if _, err = s2.Start(context.Background(), id); !errors.Is(err, ErrNeedsReconcile) {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestExpiredDeviceFlowStartsFresh(t *testing.T) {
 	if _, err = s.Complete(context.Background(), flow.ID); !errors.Is(err, ErrFlowExpired) {
 		t.Fatal(err)
 	}
-	f.verifyErr = larkcli.ErrIdentity
+	f.verifyErr = larkcli.ErrAuthRequired
 	if _, err = s.Reconcile(context.Background(), id); !errors.Is(err, ErrUserMissing) {
 		t.Fatal(err)
 	}
@@ -653,6 +653,30 @@ func TestExplicitRecoveryUsesBoundIdentityAndRecoveryGuard(t *testing.T) {
 	}
 	f.auth.finish()
 	if _, err = s.Complete(context.Background(), flow.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusMissingCredentialRequiresAuthorizationWithoutChangingBinding(t *testing.T) {
+	s, p, f, id, _ := fixture(t)
+	enroll(t, s, f, id)
+	login(t, s, f, id)
+	before, _ := p.Profile(context.Background(), id)
+	f.verifyErr = larkcli.ErrAuthRequired
+	if _, err := s.Status(context.Background(), id); !errors.Is(err, ErrUserMissing) || !errors.Is(err, larkcli.ErrAuthRequired) || errors.Is(err, model.ErrIdentityChanged) {
+		t.Fatal(err)
+	}
+	after, _ := p.Profile(context.Background(), id)
+	if before != after {
+		t.Fatal("binding changed")
+	}
+}
+func TestReconcilePreservesRealIdentityFailure(t *testing.T) {
+	s, _, f, id, _ := fixture(t)
+	enroll(t, s, f, id)
+	interrupt(t, s, id)
+	f.verifyErr = larkcli.ErrIdentity
+	if _, err := s.Reconcile(context.Background(), id); !errors.Is(err, model.ErrIdentityChanged) {
 		t.Fatal(err)
 	}
 }

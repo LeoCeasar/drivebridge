@@ -31,6 +31,12 @@ func classify(err error) string {
 		return "unsupported_content"
 	case errors.Is(err, model.ErrIdentityChanged):
 		return "identity_changed"
+	case errors.Is(err, larkcli.ErrAuthRequired):
+		return "auth_required"
+	case errors.Is(err, larkcli.ErrCredentialStorage):
+		return "credential_unavailable"
+	case errors.Is(err, larkcli.ErrVerification):
+		return "network_or_protocol"
 	case errors.Is(err, model.ErrUnknownResult):
 		return "unknown_result"
 	case errors.Is(err, model.ErrUnsupportedContent):
@@ -62,7 +68,7 @@ func (e *Engine) pause(ctx context.Context, j model.Job, err error) error {
 	e.deferRetry(j.ID, err)
 	code := classify(err)
 	state := model.StatusPaused
-	if code == "unsupported_content" || code == "permission_denied" || code == "identity_changed" || code == "history_git_unavailable" {
+	if code == "unsupported_content" || code == "permission_denied" || code == "auth_required" || code == "credential_unavailable" || code == "identity_changed" || code == "history_git_unavailable" {
 		state = model.StatusBlocked
 	}
 	diagnostic := &model.SyncDiagnostic{Kind: code, Message: diagnosticMessage(code)}
@@ -108,6 +114,10 @@ func diagnosticMessage(code string) string {
 		return "内容无法安全转换或写回，请检查文件结构。"
 	case "permission_denied":
 		return "当前账号或本机目录权限不足，无法完成同步。"
+	case "auth_required":
+		return "用户授权已失效，需要使用原账号重新授权。"
+	case "credential_unavailable":
+		return "本机凭据存储暂不可访问，请检查钥匙串或凭据管理器。"
 	case "identity_changed":
 		return "账号身份发生变化，需要重新核验。"
 	case "history_git_unavailable":

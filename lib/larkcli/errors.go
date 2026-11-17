@@ -11,6 +11,9 @@ var (
 	ErrUnsupportedCapability = errors.New("unsupported_capability")
 	ErrUnknownResult         = errors.New("unknown_result")
 	ErrIdentity              = errors.New("identity mismatch")
+	ErrAuthRequired          = errors.New("user authorization required")
+	ErrCredentialStorage     = errors.New("credential storage unavailable")
+	ErrVerification          = errors.New("identity verification unavailable")
 	// ErrNotDispatched proves that no CLI child was started for this request.
 	ErrNotDispatched = errors.New("CLI request rejected before dispatch")
 )

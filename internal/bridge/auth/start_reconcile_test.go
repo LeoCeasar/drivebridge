@@ -56,7 +56,7 @@ func TestStartOrReconcileIssuesFreshLinkAfterExpiredAuthorization(t *testing.T) 
 		if recovery {
 			s.guard = &recoveryGuardFixture{}
 		}
-		f.verifyErr = larkcli.ErrIdentity
+		f.verifyErr = larkcli.ErrAuthRequired
 		freshUserAuth(f, "user")
 		calls := f.authCalls
 		got, err := StartOrReconcile(context.Background(), s, id, recovery)
@@ -116,7 +116,7 @@ func TestStartOrReconcileFailureKeepsStateAndIsClassified(t *testing.T) {
 		t.Fatal("uncertain reconcile started a new authorization")
 	}
 	// Once the CLI recovers, the same call path succeeds without losing the app.
-	f.verifyErr = larkcli.ErrIdentity
+	f.verifyErr = larkcli.ErrAuthRequired
 	freshUserAuth(f, "user")
 	if got, err := StartOrReconcile(context.Background(), s, id, false); err != nil || got.Flow.Kind != "user_auth" {
 		t.Fatal(got, err)

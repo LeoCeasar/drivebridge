@@ -69,11 +69,13 @@ func (r *Runner) VerifyIdentity(ctx context.Context) (IdentityMetadata, error) {
 		Brand      string `json:"brand"`
 		Identities *struct {
 			User *struct {
-				OpenID    string `json:"openId"`
-				Verified  *bool  `json:"verified"`
-				Available bool   `json:"available"`
-				Scope     string `json:"scope"`
-				ExpiresAt string `json:"expiresAt"`
+				Status    string     `json:"status"`
+				Error     *wireError `json:"error"`
+				OpenID    string     `json:"openId"`
+				Verified  *bool      `json:"verified"`
+				Available bool       `json:"available"`
+				Scope     string     `json:"scope"`
+				ExpiresAt string     `json:"expiresAt"`
 			} `json:"user"`
 		} `json:"identities"`
 	}
@@ -84,11 +86,30 @@ func (r *Runner) VerifyIdentity(ctx context.Context) (IdentityMetadata, error) {
 		return IdentityMetadata{}, ErrProtocol
 	}
 	u := raw.Identities.User
-	if raw.AppID == "" || (raw.Brand != "feishu" && raw.Brand != "lark") || u.OpenID == "" || u.Verified == nil || !*u.Verified || !u.Available {
+	if raw.AppID == "" || (raw.Brand != "feishu" && raw.Brand != "lark") {
+		return IdentityMetadata{}, ErrProtocol
+	}
+	// Compare known identifiers before readiness: an unavailable different account
+	// must still fail closed as an identity change. Missing evidence is not a change.
+	if (r.identity.AppID != "" && r.identity.AppID != raw.AppID) || (r.identity.UserOpenID != "" && u.OpenID != "" && r.identity.UserOpenID != u.OpenID) || (r.identity.Brand != "" && r.identity.Brand != raw.Brand) {
 		return IdentityMetadata{}, ErrIdentity
 	}
-	if (r.identity.AppID != "" && r.identity.AppID != raw.AppID) || (r.identity.UserOpenID != "" && r.identity.UserOpenID != u.OpenID) || (r.identity.Brand != "" && r.identity.Brand != raw.Brand) {
-		return IdentityMetadata{}, ErrIdentity
+	if u.Status == "missing" || u.Status == "not_configured" {
+		return IdentityMetadata{}, ErrAuthRequired
+	}
+	if u.Error != nil {
+		safe := u.Error.safe()
+		switch {
+		case safe.Subtype == "storage":
+			return IdentityMetadata{}, errors.Join(ErrCredentialStorage, safe)
+		case safe.Type == "authentication" || safe.Type == "authorization":
+			return IdentityMetadata{}, errors.Join(ErrAuthRequired, safe)
+		default:
+			return IdentityMetadata{}, errors.Join(ErrVerification, safe)
+		}
+	}
+	if u.OpenID == "" || u.Verified == nil || !*u.Verified || !u.Available {
+		return IdentityMetadata{}, ErrVerification
 	}
 	out := IdentityMetadata{Identity: Identity{AppID: raw.AppID, Brand: raw.Brand, UserOpenID: u.OpenID}, Verified: true, Scope: u.Scope}
 	if u.ExpiresAt != "" {

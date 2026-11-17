@@ -606,8 +606,11 @@ func (s *Service) Reconcile(ctx context.Context, id model.ProfileID) (Identity, 
 	}
 	v, err := driver.VerifyIdentity(ctx)
 	if err != nil {
-		if !errors.Is(err, larkcli.ErrIdentity) {
-			return Identity{}, ErrNeedsReconcile
+		if errors.Is(err, larkcli.ErrIdentity) {
+			return Identity{}, model.ErrIdentityChanged
+		}
+		if !errors.Is(err, larkcli.ErrAuthRequired) {
+			return Identity{}, errors.Join(ErrNeedsReconcile, err)
 		}
 		e.State = "app_ready"
 		r.Enrollments[i] = e
@@ -647,6 +650,9 @@ func (s *Service) Status(ctx context.Context, id model.ProfileID) (Identity, err
 	if err != nil {
 		if errors.Is(err, larkcli.ErrIdentity) {
 			return Identity{}, model.ErrIdentityChanged
+		}
+		if errors.Is(err, larkcli.ErrAuthRequired) {
+			return Identity{}, errors.Join(ErrUserMissing, err)
 		}
 		return Identity{}, err
 	}

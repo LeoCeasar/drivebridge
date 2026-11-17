@@ -16,6 +16,7 @@ import (
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
 	syncer "github.com/rclone/rclone/internal/bridge/sync"
+	"github.com/rclone/rclone/lib/larkcli"
 )
 
 func errorCode(err error) string {
@@ -42,7 +43,11 @@ func errorCode(err error) string {
 		return "version_changed"
 	case errors.Is(err, ErrDriver), errors.Is(err, model.ErrUnsupportedContent):
 		return "driver_unavailable"
-	case errors.Is(err, auth.ErrUserMissing), errors.Is(err, auth.ErrMissingScopes), errors.Is(err, auth.ErrNeedsReconcile):
+	case errors.Is(err, larkcli.ErrCredentialStorage):
+		return "credential_unavailable"
+	case errors.Is(err, larkcli.ErrVerification):
+		return "network"
+	case errors.Is(err, larkcli.ErrAuthRequired), errors.Is(err, auth.ErrUserMissing), errors.Is(err, auth.ErrMissingScopes), errors.Is(err, auth.ErrNeedsReconcile):
 		return "unauthorized"
 	case errors.Is(err, ErrConfig), errors.Is(err, config.ErrUnknownSchema):
 		return "config"
@@ -79,7 +84,9 @@ func errorFromCode(code string) error {
 	case "driver_unavailable":
 		return ErrDriver
 	case "unauthorized":
-		return auth.ErrNeedsReconcile
+		return auth.ErrUserMissing
+	case "credential_unavailable":
+		return larkcli.ErrCredentialStorage
 	case "config":
 		return ErrConfig
 	case "starting":
@@ -103,7 +110,7 @@ func ErrorInfo(err error) *Error {
 	case "cleanup_pending":
 		message = "挂载已删除，缓存清理待完成；后台将自动重试。"
 	}
-	return &Error{Code: code, Message: message, Retryable: code == "network" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
+	return &Error{Code: code, Message: message, Retryable: code == "network" || code == "credential_unavailable" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
 }
 func ExitCode(err error) int {
 	switch errorCode(err) {
@@ -115,7 +122,7 @@ func ExitCode(err error) int {
 		return 3
 	case "driver_unavailable":
 		return 4
-	case "network", "worker_unavailable":
+	case "network", "credential_unavailable", "worker_unavailable":
 		return 5
 	case "pending", "mount_unsynced", "history_pending", "cleanup_pending":
 		return 6
