@@ -6,6 +6,7 @@ import pathlib
 import plistlib
 import struct
 import subprocess
+import shutil
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -17,6 +18,29 @@ spec.loader.exec_module(p)
 
 
 class DesktopPackagingTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'macOS installer shell workflow')
+    def test_pkg_postinstall_verifies_lease_before_migrating_services(self):
+        template = p.HERE / 'templates/macos-postinstall-desktop'
+        self.assertTrue(template.is_file(), 'pkg upgrade lacks Services migration')
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            post = root / 'postinstall'
+            shutil.copy2(template, post)
+            for name, body in [('drivebridge-install-verifier', 'printf "verify\\n" >> "$TEST_CALLS_PATH"\nexit "${TEST_VERIFY_EXIT:-0}"'),
+                               ('drivebridge-service-updater', 'printf "%s\\n" "$*" >> "$TEST_CALLS_PATH"')]:
+                tool = root / name
+                tool.write_text('#!/bin/sh\n' + body + '\n')
+                tool.chmod(0o700)
+            calls = root / 'calls'
+            env = dict(os.environ, TEST_CALLS_PATH=str(calls))
+            result = subprocess.run(['/bin/sh', str(post)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls.read_text().splitlines(), ['verify', '--register-pkg-services'])
+            calls.unlink()
+            result = subprocess.run(['/bin/sh', str(post)], env=dict(env, TEST_VERIFY_EXIT='17'), capture_output=True)
+            self.assertEqual(result.returncode, 17)
+            self.assertEqual(calls.read_text().splitlines(), ['verify'])
+
     def binary(self, target):
         if target == 'darwin':
             return b'\xcf\xfa\xed\xfe' + struct.pack('<I', 0x0100000c) + b'\0' * 120
@@ -46,11 +70,25 @@ class DesktopPackagingTests(unittest.TestCase):
             binary.write_bytes(self.binary('darwin'))
             p.stage_session_host(root, 'darwin', 'arm64', binary, '1.2.3')
             with mock.patch.object(p, 'run', side_effect=['enable-autostart', json.dumps({'native_tray_compiled': True, 'platform': 'darwin', 'architecture': 'arm64'})]) as run:
-                p.stage_desktop(root, 'darwin', 'arm64', binary, '1.2.3')
+                p.stage_desktop(root, 'darwin', 'arm64', binary, '1.2.3', launcher=binary)
             self.assertEqual(run.call_args_list, [mock.call([binary, 'desktop', '--help']), mock.call([binary, 'desktop', 'capabilities'])])
             info = plistlib.loads((root / 'DriveBridge.app/Contents/Info.plist').read_bytes())
             self.assertIs(info['LSUIElement'], True)
-            self.assertEqual(info['CFBundleExecutable'], 'drivebridge-desktop')
+            self.assertEqual(info['CFBundleExecutable'], 'drivebridge-launcher')
+            self.assertTrue((root / 'DriveBridge.app/Contents/MacOS/drivebridge-launcher').is_file())
+            self.assertNotIn('NSServices', info, 'running Go tray must not own the Services identity')
+            helper = root / 'libexec/DriveBridge Link Service.app'
+            helper_info = plistlib.loads((helper / 'Contents/Info.plist').read_bytes())
+            self.assertEqual(helper_info['CFBundleIdentifier'], 'org.drivebridge.linkservice')
+            self.assertNotEqual(helper_info['CFBundleIdentifier'], info['CFBundleIdentifier'])
+            self.assertEqual(helper_info['CFBundleExecutable'], 'drivebridge-link-service')
+            self.assertTrue((helper / 'Contents/MacOS/drivebridge-link-service').is_file())
+            service = helper_info['NSServices'][0]
+            self.assertEqual(service['NSPortName'], 'org.drivebridge.linkservice')
+            self.assertLessEqual(int(service['NSTimeout']), 3000)
+            self.assertEqual(service['NSMessage'], 'copyFeishuLink')
+            self.assertEqual(service['NSSendFileTypes'], ['public.item'])
+            self.assertEqual(service['NSRequiredContext']['NSApplicationIdentifier'], 'com.apple.finder')
             self.assertEqual(info['CFBundleVersion'], '1.2.3')
             self.assertEqual(info['LSMinimumSystemVersion'], '14.0')
             icon = (root / 'DriveBridge.app/Contents/Resources/drivebridge.icns').read_bytes()
@@ -133,6 +171,41 @@ class DesktopPackagingTests(unittest.TestCase):
                             self.assertIsNotNone(tree.find('.//w:StandardDirectory[@Id="DesktopFolder"]', ns))
                     else:
                         self.assertEqual('[Icons]' in out.read_text(), desktop)
+
+    def test_windows_link_menu_is_single_selection_and_owned_by_installer(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d) / 'payload'
+            (root / 'bin').mkdir(parents=True)
+            (root / 'bin/drivebridge.exe').write_bytes(b'cli')
+            for desktop in (False, True):
+                if desktop:
+                    (root / 'bin/drivebridge-desktop.exe').write_bytes(b'desktop')
+                for template in ('windows.wxs', 'windows.iss'):
+                    out = pathlib.Path(d) / template
+                    p.render(argparse.Namespace(root=str(root), output=str(out), template=template, version='1.2.3', arch='amd64'))
+                    text = out.read_text()
+                    self.assertEqual('DriveBridge.CopyFeishuLink' in text, desktop)
+                    if not desktop:
+                        continue
+                    if template.endswith('.wxs'):
+                        ns = {'w': 'http://wixtoolset.org/schemas/v4/wxs'}
+                        tree = ET.parse(out)
+                        values = tree.findall('.//w:RegistryValue[@Name="MultiSelectModel"]', ns)
+                        self.assertEqual(len(values), 2)
+                        self.assertTrue(all(v.get('Value') == 'Single' for v in values))
+                        keys = tree.findall('.//w:RegistryKey[@ForceDeleteOnUninstall="yes"]', ns)
+                        self.assertEqual(len(keys), 2)
+                        self.assertTrue(all(v.get('Root') == 'HKCU' for v in keys))
+                        commands = [v for v in tree.findall('.//w:RegistryValue', ns) if v.get('Key', '').endswith('CopyFeishuLink\\command')]
+                        self.assertEqual(len(commands), 2)
+                        self.assertTrue(all('feishu link --copy --path "%1"' in v.get('Value', '') for v in commands))
+                        self.assertEqual(len(tree.findall('.//w:RegistryKey[@ForceDeleteOnUninstall="yes"]', ns)), 2)
+                    else:
+                        self.assertTrue(out.read_bytes().startswith(b'\xef\xbb\xbf'))
+                        self.assertIn('复制飞书分享链接', out.read_bytes().decode('utf-8-sig'))
+                        self.assertEqual(text.count('ValueName: "MultiSelectModel"; ValueData: "Single"'), 2)
+                        self.assertIn('feishu link --copy --path ""%1""', text)
+                        self.assertIn('uninsdeletekey', text)
 
     def test_linux_desktop_runtime_dependencies_and_system_launcher(self):
         with tempfile.TemporaryDirectory() as d:

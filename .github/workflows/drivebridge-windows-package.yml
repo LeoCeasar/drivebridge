@@ -5,7 +5,7 @@ on:
       version:
         description: Installer version X.Y.Z (unsigned test build)
         required: true
-        default: '0.2.21'
+        default: '0.2.30'
         type: string
       tests_only:
         description: Run native Windows save gates without building installers
@@ -225,6 +225,19 @@ jobs:
           $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-unit-tests.jsonl'
           go test -json -count=1 -timeout 15m -tags cmount ./lib/larkcli ./internal/bridge/config ./internal/bridge/platform ./internal/bridge/markdown ./internal/bridge/store ./internal/bridge/overlay ./internal/bridge/sync ./internal/bridge/history ./internal/bridge/manager ./internal/bridge/ui ./internal/bridge/integration ./vfs/... ./cmd/cmount ./cmd/feishu 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE) { throw 'Windows shared behavior/platform suites failed' }
+      - name: Require Windows link clipboard and nonactivating feedback gates
+        env:
+          DRIVEBRIDGE_TEST_LINK_NATIVE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-link-native-tests.jsonl'
+          go test -json -count=1 -timeout 2m -run '^TestWindowsLink' ./internal/bridge/platform 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE) { throw 'Windows link clipboard/feedback gates failed' }
+          $events = Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }
+          foreach ($name in @('TestWindowsLinkClipboardUnicodeAndChanged','TestWindowsLinkClipboardBusyPreservesContent','TestWindowsLinkErrorWindowDoesNotActivate','TestWindowsLinkFeedbackSilentAndBounded','TestWindowsLinkClipboardCancelledWritePreservesContent','TestWindowsLinkErrorWindowHiddenLaunch','TestWindowsLinkFeedbackDeadlineUnderMessages')) {
+            if (!($events | Where-Object { $_.Action -eq 'pass' -and $_.Test -eq $name })) { throw "Required Windows link test did not pass: $name" }
+            if ($events | Where-Object { $_.Action -eq 'skip' -and $_.Test -eq $name }) { throw "Required Windows link test was skipped: $name" }
+          }
       - name: Run shared conflict and conversion settings UI behavior tests
         run: |
           $ErrorActionPreference = 'Stop'

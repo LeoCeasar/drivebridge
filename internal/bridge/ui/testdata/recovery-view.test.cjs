@@ -47,3 +47,12 @@ assert.match(require('../assets/recovery-view.js').errorLabels.remote_drift,/云
   assert.match(conflictReason('remote_deleted'),/云端/);
   assert.equal(conflictReason('<script>'), '版本或内容需要核对');
 }
+
+{
+ const {diagnosticLocationsView}=require('../assets/recovery-view.js');
+ assert.equal(diagnosticLocationsView({diagnostic:{locations:[null,{line:-1,side:'remote'},{line:5,side:'unknown'},{line:2,side:'merged',end_line:4,text:'captured',section:'chapter',kind:'p'}]}}).length,1);
+ const item=diagnosticLocationsView({diagnostic:{locations:[{line:2,side:'merged',end_line:4,text:'captured',section:'chapter',kind:'p'}]}})[0];
+ assert.equal(item.location,'待上传合并稿第 2–4 行');assert.equal(item.kind,'相同文字的独立段落');assert.equal(item.section,'chapter');
+ assert.equal(diagnosticLocationsView({diagnostic:{locations:Array.from({length:20},()=>({line:1,side:'remote'}))}}).length,8);
+ assert.deepEqual(diagnosticLocationsView({diagnostic:{locations:'invalid'}}),[]);
+}

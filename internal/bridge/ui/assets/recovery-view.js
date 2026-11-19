@@ -19,6 +19,14 @@
     const side = {local:'本地',remote:'云端',base:'共同原版'}[detail.side] || '';
     return {kind:detail.kind || issue?.code || 'operation_failed',message:detail.message || '',location:start ? `${side}第 ${start}${end > start ? '–' + end : ''} 行` : '',text:typeof detail.text === 'string' ? detail.text : ''};
   }
+  function diagnosticLocationsView(issue) {
+    const detail=issue?.diagnostic || {}, kinds={p:'相同文字的独立段落',table:'内容相同的独立表格','ul/li':'相同文字的列表项','ol/li':'相同文字的列表项',h1:'同名标题',h2:'同名标题',h3:'同名标题',h4:'同名标题',h5:'同名标题',h6:'同名标题'};
+    return (Array.isArray(detail.locations)?detail.locations:[]).filter(item=>item && Number.isSafeInteger(item.line) && item.line>0 && ['local','remote','merged','base'].includes(item.side)).slice(0,8).map(item=>{
+      const end=Number.isSafeInteger(item.end_line) && item.end_line>=item.line ? item.end_line : item.line;
+      const side={local:'本地保存快照',remote:'云端快照',merged:'待上传合并稿',base:'共同原版快照'}[item.side];
+      return {kind:kinds[item.kind] || '待区分的内容块',location:`${side}第 ${item.line}${end>item.line?'–'+end:''} 行`,text:typeof item.text==='string'?item.text:'',section:typeof item.section==='string'?item.section:''};
+    });
+  }
   function conflictReason(reason) {
     return {both_changed:'本地与云端双方修改了相同内容',overlapping_edits:'本地与云端双方修改了相同段落',ambiguous_mapping:'重复或移动的段落无法准确定位',unsupported_content:'文档结构无法安全自动写回',merge_complexity:'内容较复杂，需人工核对',remote_deleted:'云端文件已删除或移出目录',delete_vs_pending_edit:'云端删除与本地修改需要核对',local_delete_pending:'本地删除与待上传修改需要核对'}[reason] || '版本或内容需要核对';
   }
@@ -29,6 +37,7 @@
     return (state.queued || 0) > 0 || (state.inflight || 0) > 0 || Boolean(state.last_error) || ['queued','awaiting_verification','blocked','offline','unknown'].includes(state.cloud_state);
   }
   function cloudChip(state, running) {
+    if(state?.cloud_state==='queued' && state.waiting_for_parent>0)return ['等待上级文件夹','pending'];
     const labels = {synced:['已确认','ok'],queued:['等待同步','pending'],uploading:['正在上传','pending'],merging:['正在合并','pending'],awaiting_verification:['等待回读核验','pending'],conflict:['需要合并','pending'],blocked:['已阻塞','error'],paused:['已暂停','stopped'],offline:['离线','error']};
     return labels[state?.cloud_state] || (running ? ['等待确认','info'] : ['挂载未启动','stopped']);
   }
@@ -48,7 +57,8 @@
     return hours % 24 === 0 ? `${hours / 24} 天未使用后释放` : `${Math.max(1,Math.round(hours))} 小时未使用后释放`;
   }
   const errorLabels = {creation_needs_attention:'创建结果需要处理',creation_unconfirmed:'创建结果尚未确认',creation_recreated:'已接受重新创建',request_timeout:'云端请求超时，后台稍后重试',remote_drift:'云端仍在更新，后台稍后重试',history_git_unavailable:'自动合并组件暂不可用',local_save_failed:'本机保存尚未确认',local_archive_failed:'本地修改等待后台整理',offline:'暂时无法连接飞书',auth_required:'账号需要重新授权',unauthorized:'账号需要重新授权',credential_unavailable:'本机凭据暂不可读取',permission_denied:'当前账号权限不足',version_changed:'内容已被更改，需要核对',identity_changed:'账号身份需要重新核对',worker_unavailable:'同步服务暂不可用',blocked:'同步已阻塞',unsupported_content:'有文件无法自动同步',operation_failed:'上次操作未完成'};
-  const api = {diagnosticView,conflictReason,conflictState,canRetry,hasRetryWork,cloudChip,formatBytes,retentionLabel,errorLabels};
+  Object.assign(errorLabels,{parent_pending:'等待上级文件夹',delete_result_unconfirmed:'删除结果待核验',namespace_result_unconfirmed:'目录操作结果待核验'});
+  const api = {diagnosticLocationsView,diagnosticView,conflictReason,conflictState,canRetry,hasRetryWork,cloudChip,formatBytes,retentionLabel,errorLabels};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DriveBridgeRecovery = api;
 })(typeof window === 'undefined' ? globalThis : window);

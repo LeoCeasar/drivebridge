@@ -3,6 +3,7 @@ package markdown
 import (
 	"encoding/json"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"strings"
 )
 
 // MatchesEncodedIntent compares complete, supported XML semantics. Markdown
@@ -46,6 +47,10 @@ func ProjectOperationHash(op model.Operation, before model.DocView) (model.Opera
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		return op, model.ErrUnsupportedContent
 	}
+	contextual := p.ContextHash != "" && p.ContextHash == operationContextHash(before, op, p)
+	if p.ContextHash != "" && !contextual {
+		return op, model.ErrUnsupportedContent
+	}
 	if p.XML == "" || op.Kind == model.OperationBlockDelete {
 		return op, nil
 	}
@@ -53,7 +58,26 @@ func ProjectOperationHash(op model.Operation, before model.DocView) (model.Opera
 	if version == 2 && HasYAMLFrontMatterXML([]byte(p.XML)) {
 		version = 3
 	}
-	view, err := DecodeWithOptions([]byte(p.XML), "", Options{ProjectionVersion: version})
+	projectionXML := p.XML
+	// A replacement list item is serialized without its unchanged list wrapper.
+	// Decode it in that parent's context, not as an unsupported standalone <li>.
+	if op.Kind == model.OperationBlockReplace {
+		for _, old := range before.Blocks {
+			if old.RemoteID == op.BlockID && strings.HasSuffix(old.Kind, "/li") {
+				roots, parseErr := parseXML([]byte(p.XML))
+				if parseErr != nil || len(roots) != 1 || roots[0].tag != "li" {
+					return op, model.ErrUnsupportedContent
+				}
+				parent := strings.TrimSuffix(old.Kind, "/li")
+				if parent != "ul" && parent != "ol" {
+					return op, model.ErrUnsupportedContent
+				}
+				projectionXML = "<" + parent + ">" + p.XML + "</" + parent + ">"
+				break
+			}
+		}
+	}
+	view, err := DecodeWithOptions([]byte(projectionXML), "", Options{ProjectionVersion: version})
 	if err != nil || len(view.Blocks) != 1 {
 		return op, model.ErrUnsupportedContent
 	}
@@ -73,7 +97,7 @@ func ProjectOperationHash(op model.Operation, before model.DocView) (model.Opera
 			return op, model.ErrUnsupportedContent
 		}
 		for _, old := range before.Blocks {
-			if old.RemoteID != op.BlockID && old.Hash == b.Hash {
+			if old.RemoteID != op.BlockID && old.Hash == b.Hash && !contextual {
 				return op, model.ErrUnsupportedContent
 			}
 		}
@@ -86,6 +110,9 @@ func ProjectOperationHash(op model.Operation, before model.DocView) (model.Opera
 		return op, model.ErrUnsupportedContent
 	}
 	p.AfterHash = b.Hash
+	if contextual {
+		p.ContextHash = operationContextHash(before, op, p)
+	}
 	op.Payload, err = json.Marshal(p)
 	return op, err
 }

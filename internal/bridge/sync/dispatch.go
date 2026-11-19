@@ -101,6 +101,7 @@ func (d *backgroundDispatcher) accept(r dispatchRequest) {
 func (d *backgroundDispatcher) completed(r dispatchResult) {
 	if r.metadata {
 		d.metadataActive = false
+		d.resumeParentWaiters()
 		return
 	}
 	d.active--
@@ -121,6 +122,46 @@ func (d *backgroundDispatcher) completed(r dispatchResult) {
 		d.queue = append(d.queue, r.id)
 	} else {
 		delete(d.entries, r.id)
+	}
+}
+
+// Folder creation releases children independently of unrelated namespace errors.
+// Never readmit a write whose dispatch may already have happened.
+func (d *backgroundDispatcher) resumeParentWaiters() {
+	jobs, err := d.e.store.Pending(d.ctx)
+	if err != nil {
+		return
+	}
+	for _, job := range jobs {
+		if job.State != model.StatusPaused {
+			continue
+		}
+		journal, err := d.e.store.Journal(d.ctx, job.ID)
+		if err != nil {
+			continue
+		}
+		if journal.ErrorCode != "parent_pending" && journal.ErrorCode != "network_or_protocol" {
+			continue
+		}
+		if journal.Job.Plan != "" || len(journal.Job.OperationIDs) != 0 || len(journal.Operations) != 0 || len(journal.Results) != 0 || journal.Desired != "" {
+			continue
+		}
+		entry, err := d.e.store.Entry(d.ctx, job.EntryID)
+		if err != nil || entry.Token != "" {
+			continue
+		}
+		if _, err = d.e.parentToken(d.ctx, entry.Remote); err != nil {
+			continue
+		}
+		if err = d.e.store.ResumeJob(d.ctx, job.ID); err != nil {
+			continue
+		}
+		d.e.retryMu.Lock()
+		delete(d.e.retries, job.ID)
+		d.e.retryMu.Unlock()
+		// A newer epoch also preserves admission when the old pass is finishing.
+		d.epoch++
+		d.admit(job.EntryID, job.Generation)
 	}
 }
 func (d *backgroundDispatcher) hasAdmittedWork(id model.EntryID, cutoff uint64, before model.JobID) bool {

@@ -35,7 +35,15 @@ func flagString(c *cobra.Command, name string) string {
 	return ""
 }
 func ManagerForCommand(c *cobra.Command) (*manager.Manager, error) {
-	options := manager.Options{ConfigFile: flagString(c, config.BridgeConfigFlag), CLIExecutable: flagString(c, "lark-cli"), GitExecutable: flagString(c, "git-executable")}
+	configFile := flagString(c, config.BridgeConfigFlag)
+	if c.Name() == "link" && configFile == "" {
+		var err error
+		configFile, err = manager.DesktopConfigForShell(c.Context())
+		if err != nil {
+			return nil, err
+		}
+	}
+	options := manager.Options{ConfigFile: configFile, CLIExecutable: flagString(c, "lark-cli"), GitExecutable: flagString(c, "git-executable")}
 	if raw := flagString(c, "wait"); raw != "" {
 		duration, err := time.ParseDuration(raw)
 		if err != nil || duration <= 0 {
@@ -58,6 +66,7 @@ func NewCommand(o CommandOptions) *cobra.Command {
 	installCommands(root, o)
 	installMaintenanceCommands(root, o)
 	installHistoryCommands(root, o)
+	root.AddCommand(newLinkCommand(o, linkActions{}))
 	return root
 }
 func commandRun(o CommandOptions, fn func(context.Context, *manager.Manager, []string) (any, error)) func(*cobra.Command, []string) error {

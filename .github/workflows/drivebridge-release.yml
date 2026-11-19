@@ -79,6 +79,20 @@ jobs:
           if ($LASTEXITCODE) { throw 'Windows process tests failed' }
           go build -trimpath -tags cmount,desktop -ldflags '-s -w -H=windowsgui' -o "$env:RUNNER_TEMP/drivebridge-desktop.exe" .
           if ($LASTEXITCODE) { throw 'Windows tray build failed' }
+      - name: Test Windows link clipboard and nonactivating error feedback
+        shell: pwsh
+        env:
+          DRIVEBRIDGE_TEST_LINK_NATIVE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:RUNNER_TEMP 'windows-link-native-tests.jsonl'
+          go test -json -count=1 -timeout 2m -run '^TestWindowsLink' ./internal/bridge/platform 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE) { throw 'Windows link native tests failed' }
+          $events = Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }
+          foreach ($name in @('TestWindowsLinkClipboardUnicodeAndChanged','TestWindowsLinkClipboardBusyPreservesContent','TestWindowsLinkErrorWindowDoesNotActivate','TestWindowsLinkFeedbackSilentAndBounded','TestWindowsLinkClipboardCancelledWritePreservesContent','TestWindowsLinkErrorWindowHiddenLaunch','TestWindowsLinkFeedbackDeadlineUnderMessages')) {
+            if (!($events | Where-Object { $_.Action -eq 'pass' -and $_.Test -eq $name })) { throw "Required Windows link test did not pass: $name" }
+            if ($events | Where-Object { $_.Action -eq 'skip' -and $_.Test -eq $name }) { throw "Required Windows link test was skipped: $name" }
+          }
   native:
     needs: [unit, windows-session]
     # Never expose release keys or native machines to PR code. Configure protected release tags/environments.

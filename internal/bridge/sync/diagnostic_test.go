@@ -73,3 +73,39 @@ func TestPauseDiagnosticUsesImmutableJobInsteadOfNewerSave(t *testing.T) {
 		t.Fatalf("old failure blocked newer save: %+v %v", current, err)
 	}
 }
+
+func TestPauseMappingDiagnosticKeepsCloudSnapshotLocations(t *testing.T) {
+	s, e, _, en := setup(t, model.KindDocx)
+	en = stageContent(t, s, en, "captured job\n")
+	jobs, err := s.Pending(bg)
+	if err != nil || len(jobs) != 1 {
+		t.Fatal(jobs, err)
+	}
+	job, _, err := s.Prepare(bg, jobs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := markdown.Decode([]byte(`<title id="doc">Example</title><p id="p1">repeated cloud text</p><p id="p2">middle</p><p id="p3">repeated cloud text</p>`), "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := markdown.ExplainPlanFailure([]byte("# Example\n\nrepeated cloud text\n\nupdated\n\nrepeated cloud text\n"), current, "ambiguous_mapping")
+	newer := stageContent(t, s, en, "newer editor save at different lines\n")
+	_ = e.pause(bg, job, failure)
+	journal, err := s.Journal(bg, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.Diagnostic == nil || journal.Diagnostic.LocationCount != 2 || len(journal.Diagnostic.Locations) != 2 {
+		t.Fatal(journal.Diagnostic)
+	}
+	for _, loc := range journal.Diagnostic.Locations {
+		if loc.Side != "remote" || loc.Text != "repeated cloud text" {
+			t.Fatal(loc)
+		}
+	}
+	latest, err := s.Entry(bg, en.ID)
+	if err != nil || latest.Local != newer.Local || latest.Status == model.StatusBlocked {
+		t.Fatal("diagnosis changed newer save", latest, err)
+	}
+}

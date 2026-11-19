@@ -55,8 +55,11 @@ if ! $DB_UNSIGNED; then
   codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/libexec/DriveBridge Session.app"
   codesign --verify --strict --verbose=2 "$DB_PAYLOAD/libexec/DriveBridge Session.app"
   if $DB_DESKTOP; then
+    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/DriveBridge.app/Contents/MacOS/drivebridge-desktop"
     codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/DriveBridge.app"
     codesign --verify --strict --verbose=2 "$DB_PAYLOAD/DriveBridge.app"
+    codesign --force --options runtime --timestamp --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_PAYLOAD/libexec/DriveBridge Link Service.app"
+    codesign --verify --strict --verbose=2 "$DB_PAYLOAD/libexec/DriveBridge Link Service.app"
   fi
 fi
 write_manifest
@@ -69,6 +72,15 @@ PYLINK
 cp "$DB_HERE/templates/macos-preinstall" "$DB_WORK/pkg-scripts/preinstall"
 cp "$DB_PAYLOAD/bin/drivebridge" "$DB_WORK/pkg-scripts/drivebridge-install-verifier"
 chmod 755 "$DB_WORK/pkg-scripts/preinstall" "$DB_WORK/pkg-scripts/drivebridge-install-verifier"
+if $DB_DESKTOP; then
+  cp "$DB_HERE/templates/macos-postinstall-desktop" "$DB_WORK/pkg-scripts/postinstall"
+  cp "$DB_WORK/drivebridge-launcher" "$DB_WORK/pkg-scripts/drivebridge-service-updater"
+  chmod 755 "$DB_WORK/pkg-scripts/postinstall" "$DB_WORK/pkg-scripts/drivebridge-service-updater"
+  if ! $DB_UNSIGNED; then
+    codesign --force --options runtime --timestamp --identifier org.drivebridge.serviceupdater --sign "$DRIVEBRIDGE_CODESIGN_IDENTITY" "$DB_WORK/pkg-scripts/drivebridge-service-updater"
+    codesign --verify --strict "$DB_WORK/pkg-scripts/drivebridge-service-updater"
+  fi
+fi
 pkgbuild --root "$DB_WORK/pkgroot" --identifier org.drivebridge.user --version "$DB_VERSION" \
   --scripts "$DB_WORK/pkg-scripts" --install-location / "$DB_WORK/component.pkg"
 python3 "$DB_HERE/package.py" render --template macos-distribution.xml --version "$DB_VERSION" \
@@ -89,7 +101,7 @@ if $DB_DESKTOP; then
   DB_SWIFT_ARCH="$DB_ARCH"
   if [ "$DB_SWIFT_ARCH" = amd64 ]; then DB_SWIFT_ARCH=x86_64; fi
   xcrun swiftc -swift-version 6 -O -target "$DB_SWIFT_ARCH-apple-macos14.0" \
-    "$DB_REPO/native/macos-installer/InstallerCore.swift" "$DB_REPO/native/macos-installer/Launcher.swift" -o "$DB_WORK/drivebridge-launcher"
+    "$DB_REPO/native/macos-installer/InstallerCore.swift" "$DB_REPO/native/macos-installer/LinkService.swift" "$DB_REPO/native/macos-installer/Launcher.swift" -o "$DB_WORK/drivebridge-launcher"
   xcrun swiftc -swift-version 6 -O -target "$DB_SWIFT_ARCH-apple-macos14.0" \
     "$DB_REPO/native/macos-installer/InstallerCore.swift" "$DB_REPO/native/macos-installer/Installer.swift" -o "$DB_WORK/drivebridge-installer"
   python3 "$DB_HERE/macos_app.py" assemble --payload "$DB_PAYLOAD" --launcher "$DB_WORK/drivebridge-launcher" \

@@ -23,8 +23,14 @@ HERE = Path(__file__).resolve().parent
 _git_spec = importlib.util.spec_from_file_location('drivebridge_git_runtime', HERE / 'git_runtime.py')
 git_runtime = importlib.util.module_from_spec(_git_spec)
 _git_spec.loader.exec_module(git_runtime)
+_mac_spec = importlib.util.spec_from_file_location('drivebridge_macos_app', HERE / 'macos_app.py')
+macos_app = importlib.util.module_from_spec(_mac_spec)
+_mac_spec.loader.exec_module(macos_app)
 
 SESSION_APP = 'libexec/DriveBridge Session.app'
+LINK_APP = 'libexec/DriveBridge Link Service.app'
+LINK_PLIST = LINK_APP + '/Contents/Info.plist'
+LINK_BINARY = LINK_APP + '/Contents/MacOS/drivebridge-link-service'
 SESSION_BINARY = SESSION_APP + '/Contents/MacOS/drivebridge-session-host'
 SESSION_PLIST = SESSION_APP + '/Contents/Info.plist'
 SESSION_BUNDLE_ID = 'org.drivebridge.sessionhost'
@@ -111,7 +117,9 @@ def check_edition(binary, edition):
 def desktop_files(target):
     if target == 'darwin':
         return {'licenses/desktop.LICENSES', 'DriveBridge.app/Contents/MacOS/drivebridge-desktop',
-                'DriveBridge.app/Contents/Info.plist', 'DriveBridge.app/Contents/Resources/drivebridge.icns'}
+                'DriveBridge.app/Contents/MacOS/drivebridge-launcher',
+                'DriveBridge.app/Contents/Info.plist', 'DriveBridge.app/Contents/Resources/drivebridge.icns',
+                LINK_PLIST, LINK_BINARY, LINK_APP + '/Contents/Resources/drivebridge.icns'}
     if target == 'windows':
         return {'licenses/desktop.LICENSES', 'bin/drivebridge-desktop.exe'}
     return {'licenses/desktop.LICENSES', 'bin/drivebridge-desktop', 'share/applications/org.drivebridge.desktop.desktop',
@@ -154,12 +162,12 @@ def validate_payload(root, target, desktop=False, arch=None):
             raise ValueError('nonregular payload: ' + rel)
         if rel == 'manifest.json':
             continue
-        allowed_plist = target == 'darwin' and (rel == SESSION_PLIST or desktop and rel == 'DriveBridge.app/Contents/Info.plist')
+        allowed_plist = target == 'darwin' and (rel == SESSION_PLIST or desktop and rel in ('DriveBridge.app/Contents/Info.plist', LINK_PLIST))
         if (path.suffix in ('.plist', '.service', '.task') or 'startup' in path.name.lower()) and not allowed_plist:
             raise ValueError('duplicate/unmanaged startup item: ' + rel)
         allowed_runtime = target == 'windows' and rel == 'libexec/lark/package/bin/lark-cli.exe'
         allowed_signature = target == 'darwin' and (rel == SESSION_APP + '/Contents/_CodeSignature/CodeResources' or
-                                                    desktop and rel == 'DriveBridge.app/Contents/_CodeSignature/CodeResources')
+                                                    desktop and rel in ('DriveBridge.app/Contents/_CodeSignature/CodeResources', LINK_APP + '/Contents/_CodeSignature/CodeResources'))
         if rel not in required and not allowed_runtime and not allowed_signature:
             raise ValueError('unapproved payload file (accounts/config are never copied): ' + rel)
         if path.stat().st_size == 0:
@@ -355,7 +363,8 @@ def stage(args):
     if getattr(args, 'desktop', False):
         if not args.desktop_binary:
             raise ValueError('desktop mode requires a native desktop binary')
-        stage_desktop(root, args.platform, args.arch, args.desktop_binary, args.version)
+        stage_desktop(root, args.platform, args.arch, args.desktop_binary, args.version,
+                      launcher=getattr(args, 'desktop_launcher_binary', None))
     if getattr(args, 'git_runtime', None):
         git_runtime.stage(args.git_runtime, root / 'libexec/git', args.platform, args.arch)
     elif not args.unsigned:
@@ -432,7 +441,7 @@ def icon_png():
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(bytes(rows))) + chunk(b'IEND', b'')
 
 
-def stage_desktop(root, target, arch, binary, version):
+def stage_desktop(root, target, arch, binary, version, launcher=None):
     check_binary(binary, target, arch)
     if target == 'windows':
         check_windows_gui_binary(binary, arch)
@@ -448,8 +457,12 @@ def stage_desktop(root, target, arch, binary, version):
     copy_file(binary, root / relative)
     copy_file(HERE / 'desktop.LICENSES', root / 'licenses/desktop.LICENSES')
     if target == 'darwin':
+        if launcher is None:
+            raise ValueError('macOS desktop requires the native Services launcher')
+        check_binary(launcher, target, arch)
         contents = root / 'DriveBridge.app/Contents'
-        info = {'CFBundleExecutable': 'drivebridge-desktop', 'CFBundleIdentifier': 'org.drivebridge.desktop',
+        copy_file(launcher, contents / 'MacOS/drivebridge-launcher')
+        info = {'CFBundleExecutable': 'drivebridge-launcher', 'CFBundleIdentifier': 'org.drivebridge.desktop',
                 'CFBundleName': 'DriveBridge', 'CFBundleDisplayName': 'DriveBridge', 'CFBundlePackageType': 'APPL',
                 'CFBundleShortVersionString': version, 'CFBundleVersion': version,
                 'LSUIElement': True, 'CFBundleIconFile': 'drivebridge.icns', 'NSHighResolutionCapable': True,
@@ -459,6 +472,12 @@ def stage_desktop(root, target, arch, binary, version):
         resource.parent.mkdir(parents=True)
         png = icon_png()
         resource.write_bytes(b'icns' + struct.pack('>I', 16 + len(png)) + b'ic08' + struct.pack('>I', 8 + len(png)) + png)
+        helper = root / LINK_APP
+        macos_app.bundle(helper, launcher, 'org.drivebridge.linkservice', 'DriveBridge Link Service', version, 'drivebridge-link-service', agent=True)
+        helper_info = dict(info, CFBundleExecutable='drivebridge-link-service', CFBundleIdentifier='org.drivebridge.linkservice',
+                           CFBundleName='DriveBridge Link Service', CFBundleDisplayName='DriveBridge Link Service', NSServices=macos_app.services())
+        (helper / 'Contents/Info.plist').write_bytes(plistlib.dumps(helper_info))
+        shutil.copy2(resource, helper / 'Contents/Resources/drivebridge.icns')
     elif target == 'linux':
         icon = root / 'share/icons/hicolor/256x256/apps/drivebridge.png'
         icon.parent.mkdir(parents=True)
@@ -543,6 +562,23 @@ def render(args):
             ET.SubElement(component, '{%s}Shortcut' % ns, Id='DriveBridgeDesktopShortcut', Name='DriveBridge', Target='[INSTALLFOLDER]bin\\drivebridge-desktop.exe', WorkingDirectory='INSTALLFOLDER')
             ET.SubElement(component, '{%s}RegistryValue' % ns, Root='HKCU', Key='Software\\DriveBridge\\Installer', Name='DesktopShortcut', Type='integer', Value='1', KeyPath='yes')
             ET.SubElement(group, '{%s}ComponentRef' % ns, Id='DesktopShortcut')
+            for kind in ('*', 'Directory'):
+                suffix = 'File' if kind == '*' else 'Directory'
+                component = ET.SubElement(directory, '{%s}Component' % ns, Id='LinkMenu' + suffix,
+                                          Guid=str(uuid.uuid5(component_namespace, 'link-menu-' + kind)))
+                key = 'Software\\Classes\\' + kind + '\\shell\\DriveBridge.CopyFeishuLink'
+                registry = ET.SubElement(component, '{%s}RegistryKey' % ns, Root='HKCU', Key=key, ForceDeleteOnUninstall='yes')
+                for name, value in ((None, '复制飞书分享链接'), ('MultiSelectModel', 'Single'),
+                                    ('Icon', '[INSTALLFOLDER]bin\\drivebridge-desktop.exe')):
+                    attrs = dict(Type='string', Value=value)
+                    if name is not None:
+                        attrs['Name'] = name
+                    else:
+                        attrs['KeyPath'] = 'yes'
+                    ET.SubElement(registry, '{%s}RegistryValue' % ns, **attrs)
+                ET.SubElement(component, '{%s}RegistryValue' % ns, Root='HKCU', Key=key + '\\command', Type='string',
+                              Value='"[INSTALLFOLDER]bin\\drivebridge-desktop.exe" feishu link --copy --path "%1"')
+                ET.SubElement(group, '{%s}ComponentRef' % ns, Id='LinkMenu' + suffix)
         first = tree.find('.//{%s}Component' % ns)
         if first is None:
             raise ValueError('empty installer payload')
@@ -552,10 +588,20 @@ def render(args):
     else:
         if args.template == 'windows.iss' and (root / 'bin/drivebridge-desktop.exe').is_file():
             template = template.replace('[Registry]', '[Icons]\nName: "{userdesktop}\\DriveBridge"; Filename: "{app}\\bin\\drivebridge-desktop.exe"; WorkingDir: "{app}"\n\n[Registry]')
+            entries = []
+            for kind in ('*', 'Directory'):
+                key = 'Software\\Classes\\' + kind + '\\shell\\DriveBridge.CopyFeishuLink'
+                entries += [
+                    f'Root: HKCU; Subkey: "{key}"; ValueType: string; ValueData: "复制飞书分享链接"; Flags: uninsdeletekey',
+                    f'Root: HKCU; Subkey: "{key}"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Single"',
+                    f'Root: HKCU; Subkey: "{key}"; ValueType: string; ValueName: "Icon"; ValueData: "{{app}}\\bin\\drivebridge-desktop.exe"',
+                    f'Root: HKCU; Subkey: "{key}\\command"; ValueType: string; ValueData: """{{app}}\\bin\\drivebridge-desktop.exe"" feishu link --copy --path ""%1"""',
+                ]
+            template = template.replace('[Registry]', '[Registry]\n' + '\n'.join(entries))
         for key, value in replacements.items():
             # All platform template parameters are paths/version under build control, not shell commands.
             template = template.replace(key, value)
-        out.write_text(template)
+        out.write_text(template, encoding='utf-8-sig' if args.template == 'windows.iss' else 'utf-8')
 
 
 def main():
@@ -578,6 +624,7 @@ def main():
             p.add_argument('--session-host-binary')
             p.add_argument('--session-host-licenses')
             p.add_argument('--desktop-binary')
+            p.add_argument('--desktop-launcher-binary')
             p.add_argument('--version', default='0.0.0')
             p.add_argument('--node-archive')
             p.add_argument('--consume-binary', action='store_true')

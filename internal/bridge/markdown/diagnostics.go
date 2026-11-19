@@ -137,13 +137,17 @@ func (e *planContentError) Unwrap() error { return unsupported(e.diagnostic.Kind
 // conflicts. Unknown mappings have no invented line number. Protected blocks
 // use the captured remote projection's range, never the current local file.
 func ExplainPlanFailure(desired []byte, current model.DocView, reason string) error {
-	if _, err := Encode(desired); err != nil {
-		return err
+	// A confirmed mapping failure already passed projection-aware planning.
+	// Standalone encoding would mislabel untouched rich cloud content as local HTML.
+	if reason != "ambiguous_mapping" {
+		if _, err := Encode(desired); err != nil {
+			return err
+		}
 	}
 	d := model.SyncDiagnostic{Kind: "block_mapping", Message: "文字已合并，但无法将变更唯一映射到飞书内容块；云端尚未覆盖。"}
 	if reason == "ambiguous_mapping" {
 		d.Kind = "ambiguous_mapping"
-		d.Message = "文字已合并，但重复段落或列表使云端内容块的对应关系不唯一。"
+		d.Message = "文字已合并，但无法唯一确定飞书内容块的对应关系；暂无法可靠定位具体片段。"
 	}
 	for _, b := range current.Blocks {
 		if !b.Opaque && !b.Readable {
@@ -165,6 +169,15 @@ func ExplainPlanFailure(desired []byte, current model.DocView, reason string) er
 			d.Message = "修改涉及尚不能无损写回的云端内容块，需保留其样式或资源。"
 		}
 		break
+	}
+	if d.Kind == "ambiguous_mapping" {
+		d.Locations, d.LocationCount = repeatedLocations(current.Markdown, &current, "remote")
+		if d.LocationCount == 0 {
+			d.Locations, d.LocationCount = repeatedLocations(desired, &current, "merged")
+		}
+		if d.LocationCount > 0 {
+			d.Message = "文字已合并，但当前定位算法无法唯一确定飞书内容块的对应关系。下方列出转换后内容特征相同的独立内容块作为线索；这些内容本身可以正常保留。"
+		}
 	}
 	return &planContentError{d}
 }

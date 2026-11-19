@@ -549,11 +549,8 @@ func TestNamespaceUnknownDeleteDoesNotRepeat(t *testing.T) {
 	if err = s.FinishNamespace(bg, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err = e.syncNamespace(bg); !errors.Is(err, model.ErrUnknownResult) {
-			t.Fatal(err)
-		}
-	}
+	if err = e.syncNamespace(bg); !errors.Is(err, model.ErrUnknownResult) {t.Fatal(err)}
+	if err = e.syncNamespace(bg); err != nil {t.Fatal("readback must reconcile absence",err)}
 	if c.deletes != 1 {
 		t.Fatal(c.deletes)
 	}

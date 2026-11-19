@@ -16,6 +16,10 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 	if json.Unmarshal(op.Payload, &p) != nil {
 		return unknown
 	}
+	contextual := p.ContextHash != "" && p.ContextHash == operationContextHash(before, op, p)
+	if p.ContextHash != "" && !contextual {
+		return unknown
+	}
 	index := -1
 	for i, b := range before.Blocks {
 		if b.RemoteID == op.BlockID {
@@ -26,12 +30,12 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 		}
 	}
 	if index < 0 && before.ProjectionVersion >= 2 && after.ProjectionVersion >= 2 && op.Kind == model.OperationBlockReplace {
-		return verifyNestedParagraph(before, after, op, p)
+		return verifyNestedParagraph(before, after, op, p, contextual)
 	}
 	position := index
 	switch op.Kind {
 	case model.OperationBlockReplace, model.OperationBlockDelete:
-		if index < 0 || p.BeforeHash == "" || before.Blocks[index].Hash != p.BeforeHash || (!p.ExplicitResolution && countHash(before.Blocks, p.BeforeHash) != 1) {
+		if index < 0 || p.BeforeHash == "" || before.Blocks[index].Hash != p.BeforeHash || (!p.ExplicitResolution && !contextual && countHash(before.Blocks, p.BeforeHash) != 1) {
 			return unknown
 		}
 	case model.OperationBlockInsertAfter:
@@ -65,7 +69,7 @@ func VerifyOperation(before, after model.DocView, op model.Operation) error {
 		oldID = before.Blocks[index].RemoteID
 	}
 	if op.Kind != model.OperationBlockDelete {
-		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || (!p.ExplicitResolution && op.Kind != model.OperationBlockInsertAfter && countHash(after.Blocks, p.AfterHash) != 1) {
+		if p.AfterHash == "" || position >= len(after.Blocks) || after.Blocks[position].Hash != p.AfterHash || (!p.ExplicitResolution && !contextual && op.Kind != model.OperationBlockInsertAfter && countHash(after.Blocks, p.AfterHash) != 1) {
 			return unknown
 		}
 		newID = after.Blocks[position].RemoteID
@@ -147,7 +151,7 @@ func withoutNode(xml []byte, id string) (string, error) {
 
 // Nested edits are verified at the same structural location, with the complete
 // outside XML unchanged. A server-generated new ID is accepted only at that node.
-func verifyNestedParagraph(before, after model.DocView, op model.Operation, p model.OperationPayload) error {
+func verifyNestedParagraph(before, after model.DocView, op model.Operation, p model.OperationPayload, contextual bool) error {
 	unknown := model.ErrUnknownResult
 	a, e := parseXML(before.XML)
 	if e != nil {
@@ -183,7 +187,7 @@ func verifyNestedParagraph(before, after model.DocView, op model.Operation, p mo
 	if matches != 1 || old == nil || new == nil || old.tag != "p" || new.tag != "p" || len(elements(old)) != 0 || len(elements(new)) != 0 || !old.allowed("align") || !new.allowed("align") || new.attr("id") == "" || p.BeforeHash == "" || p.AfterHash == "" || hashNode("p", old) != p.BeforeHash || hashNode("p", new) != p.AfterHash {
 		return unknown
 	}
-	if !p.ExplicitResolution {
+	if !p.ExplicitResolution && !contextual {
 		for _, roots := range [][]*xnode{a, b} {
 			count := 0
 			var countWalk func(*xnode)

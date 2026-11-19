@@ -341,17 +341,30 @@ type DirectoryIndexStatus struct {
 
 // SyncDiagnostic describes a captured failure. Source lines are one-based and
 // present only when the failing content can be located in an immutable input.
-type SyncDiagnostic struct {
+// SyncDiagnosticLocation refers to a captured input, never the live editor file.
+type SyncDiagnosticLocation struct {
 	Kind    string `json:"kind"`
-	Message string `json:"message"`
-	Line    int    `json:"line,omitempty"`
+	Side    string `json:"side"`
+	Line    int    `json:"line"`
 	EndLine int    `json:"end_line,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Side    string `json:"side,omitempty"`
+	Text    string `json:"text"`
+	Section string `json:"section,omitempty"`
+}
+
+type SyncDiagnostic struct {
+	Locations     []SyncDiagnosticLocation `json:"locations,omitempty"`
+	LocationCount int                      `json:"location_count,omitempty"`
+	Kind          string                   `json:"kind"`
+	Message       string                   `json:"message"`
+	Line          int                      `json:"line,omitempty"`
+	EndLine       int                      `json:"end_line,omitempty"`
+	Text          string                   `json:"text,omitempty"`
+	Side          string                   `json:"side,omitempty"`
 }
 
 // SyncIssue is a durable failed upload, distinct from a version conflict.
 type SyncIssue struct {
+	NamespaceID    string              `json:"namespace_id,omitempty"`
 	CreateRecovery *CreateRecoveryInfo `json:"create_recovery,omitempty"`
 	Diagnostic     *SyncDiagnostic     `json:"diagnostic,omitempty"`
 	JobID          JobID               `json:"job_id"`
@@ -365,6 +378,7 @@ type SyncIssue struct {
 }
 
 type MountStatus struct {
+	WaitingForParent  int                   `json:"waiting_for_parent,omitempty"`
 	CloudSyncInterval string                `json:"cloud_sync_interval,omitempty"`
 	History           *HistoryStatus        `json:"history,omitempty"`
 	Issues            []SyncIssue           `json:"issues,omitempty"`
@@ -394,6 +408,8 @@ const (
 
 // OperationPayload hashes semantic content without remote IDs. Delete has empty XML.
 type OperationPayload struct {
+	// ContextHash binds an automatically matched target to its exact input view.
+	ContextHash        string `json:"context_hash,omitempty"`
 	ExplicitResolution bool   `json:"explicit_resolution,omitempty"`
 	XML                string `json:"xml,omitempty"`
 	BeforeHash         string `json:"before_hash,omitempty"`

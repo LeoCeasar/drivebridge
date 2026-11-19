@@ -15,7 +15,7 @@ func TestPauseDiagnosticSurvivesRestartAndClearsOnResume(t *testing.T) {
 	if _, _, err := s.Prepare(ctx, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	diagnostic := &model.SyncDiagnostic{Kind: "html_block", Message: "HTML block cannot be written back", Line: 2, EndLine: 2, Text: "<div>bad</div>", Side: "local"}
+	diagnostic := &model.SyncDiagnostic{Kind: "html_block", Message: "HTML block cannot be written back", Line: 2, EndLine: 2, Text: "<div>bad</div>", Side: "local", Locations: []model.SyncDiagnosticLocation{{Side: "remote", Kind: "p", Line: 7, EndLine: 7, Text: "repeated", Section: "Section"}}, LocationCount: 1}
 	if err := s.PauseJobWithDiagnostic(ctx, job.ID, model.StatusBlocked, "unsupported_content", diagnostic); err != nil {
 		t.Fatal(err)
 	}

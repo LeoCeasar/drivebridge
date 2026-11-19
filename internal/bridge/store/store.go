@@ -58,6 +58,10 @@ type Metadata struct {
 	FirstObserved     time.Time        `json:"first_observed"`
 	ModTime           time.Time        `json:"mod_time"`
 	SourceURL         string           `json:"source_url,omitempty"`
+	SourceURLToken    string           `json:"source_url_token,omitempty"`
+	CachedLinkURL     string           `json:"cached_link_url,omitempty"`
+	CachedLinkToken   string           `json:"cached_link_token,omitempty"`
+	CachedLinkKind    string           `json:"cached_link_kind,omitempty"`
 	VirtualType       string           `json:"virtual_type,omitempty"`
 	Tombstone         bool             `json:"tombstone,omitempty"`
 }
@@ -526,6 +530,7 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 		}
 		if o.SourceURL != "" || (o.Token != "" && m.VirtualType != "") {
 			m.SourceURL = o.SourceURL
+			m.SourceURLToken = o.Token
 		}
 		if !o.ModTime.IsZero() {
 			m.ModTime = o.ModTime

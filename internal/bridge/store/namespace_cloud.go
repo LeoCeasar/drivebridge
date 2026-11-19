@@ -2,12 +2,17 @@ package store
 
 import (
 	"context"
+	"sort"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	bolt "go.etcd.io/bbolt"
 )
 
 type NamespaceWork struct {
+	Ordinal           uint64
+	Ready             bool
+	Bindings          []model.Entry
+	ActionPending     bool
 	SafeSaveBackup    bool
 	SafeSaveCompleted bool
 	LocalReceipt      bool
@@ -27,7 +32,7 @@ func (s *Store) NamespaceJournal(ctx context.Context, id string) (out NamespaceW
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		out = NamespaceWork{SafeSaveBackup: r.SafeSaveBackup, SafeSaveCompleted: r.SafeSaveCompleted, LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
+		out = NamespaceWork{Ordinal: r.Ordinal, ActionPending: r.ActionPending, SafeSaveBackup: r.SafeSaveBackup, SafeSaveCompleted: r.SafeSaveCompleted, LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
 		return nil
 	})
 	return
@@ -182,4 +187,40 @@ func (s *Store) RejectCreateRename(ctx context.Context, id string) error {
 		op.State = "bound"
 		return put(tx, "createops", id, op)
 	})
+}
+
+// NamespaceSchedule includes blocked actions as dependency barriers.
+func (s *Store) NamespaceSchedule(ctx context.Context) (out []NamespaceWork, err error) {
+	err = s.view(ctx, func(tx *bolt.Tx) error {
+		return eachIndexedNamespaceTx(tx, namespaceActionIndex, func(r namespaceRecord) error {
+			if !r.ActionPending {
+				return nil
+			}
+			blocked, er := managedNamespaceBlockedTx(tx, r)
+			if er != nil {
+				return er
+			}
+			if r.WaitFor != "" {
+				var parent namespaceRecord
+				if er = get(tx, "namespace", r.WaitFor, &parent); er != nil {
+					return er
+				}
+				blocked = blocked || parent.Op.State != "finished"
+			}
+			work := NamespaceWork{Op: r.Op, Before: r.Before, Bindings: append([]model.Entry(nil), r.Before...), Ordinal: r.Ordinal, Ready: !blocked, ActionPending: true}
+			for _, id := range []model.EntryID{r.Op.SrcID, r.Op.DstID, r.Op.ResultID} {
+				if id != "" {
+					en, er := entryTx(tx, id)
+					if er != nil {
+						return er
+					}
+					work.Bindings = append(work.Bindings, en)
+				}
+			}
+			out = append(out, work)
+			return nil
+		})
+	})
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Ordinal < out[j].Ordinal })
+	return
 }

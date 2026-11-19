@@ -6,6 +6,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/internal/bridge/cloud"
 	"path"
+	"strings"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -13,21 +14,104 @@ import (
 )
 
 func (e *Engine) syncNamespace(ctx context.Context) error {
-	list, err := e.store.NamespaceActions(ctx)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.namespaceGate:
+	}
+	defer func() { e.namespaceGate <- struct{}{} }()
+	list, err := e.store.NamespaceSchedule(ctx)
 	if err != nil {
 		return err
 	}
-	var failures []error
-	for _, op := range list {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err = e.namespaceAction(ctx, op); err != nil {
-			failures = append(failures, err)
+	start := 0
+	for i, w := range list {
+		if w.Ordinal > e.namespaceCursor {
+			start = i
 			break
 		}
 	}
+	var failures []error
+	completed := map[string]bool{}
+	for n := 0; n < len(list); n++ {
+		i := (start + n) % len(list)
+		work := list[i]
+		if ctx.Err() != nil {
+			return errors.Join(append(failures, ctx.Err())...)
+		}
+		if !work.Ready {
+			continue
+		}
+		blocked := false
+		for j := 0; j < i; j++ {
+			if !completed[list[j].Op.ID] && relatedNamespaceWork(list[j], work) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		e.namespaceCursor = work.Ordinal
+		// Whole-file recovery backups retain the caller's transfer budget. Only
+		// namespace list reads use short slices, and the cursor survives timeouts.
+		err = e.namespaceAction(ctx, work.Op)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		current, readErr := e.store.NamespaceJournal(ctx, work.Op.ID)
+		if readErr != nil {
+			failures = append(failures, readErr)
+			continue
+		}
+		completed[work.Op.ID] = !current.ActionPending
+	}
 	return errors.Join(failures...)
+}
+func relatedNamespaceWork(a, b store.NamespaceWork) bool {
+	if relatedNamespace(a.Op, b.Op) {
+		return true
+	}
+	for _, left := range a.Bindings {
+		if left.Token != "" {
+			for _, right := range b.Bindings {
+				if left.Token == right.Token {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+func (e *Engine) namespaceList(ctx context.Context, parent string) ([]larkcli.DriveItem, error) {
+	readCtx, cancel := context.WithTimeout(ctx, e.opt.SliceDuration)
+	defer cancel()
+	return e.source.List(readCtx, parent)
+}
+
+func relatedNamespace(a, b model.NamespaceOp) bool {
+	for _, left := range []model.EntryID{a.SrcID, a.DstID, a.ResultID} {
+		if left == "" {
+			continue
+		}
+		for _, right := range []model.EntryID{b.SrcID, b.DstID, b.ResultID} {
+			if left == right {
+				return true
+			}
+		}
+	}
+	for _, left := range []string{a.Src, a.Dst} {
+		if left == "" {
+			continue
+		}
+		for _, right := range []string{b.Src, b.Dst} {
+			if right != "" && (left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func listedToken(items []larkcli.DriveItem, token string) (larkcli.DriveItem, bool) {
 	for _, item := range items {
@@ -105,7 +189,7 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 	if en.Kind == model.KindDocx {
 		desired = cloudName(model.Entry{Remote: op.Dst, Kind: en.Kind})
 	}
-	items, err := e.source.List(ctx, parent)
+	items, err := e.namespaceList(ctx, parent)
 	if err != nil {
 		return err
 	}
@@ -121,7 +205,7 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 		if errors.Is(moveErr, cloud.ErrNotDispatched) {
 			return errors.Join(moveErr, e.store.RejectNamespaceDispatch(context.WithoutCancel(ctx), op.ID, "move"))
 		}
-		items, err = e.source.List(ctx, parent)
+		items, err = e.namespaceList(ctx, parent)
 		if err != nil {
 			return errors.Join(moveErr, err)
 		}
@@ -156,7 +240,7 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 		if errors.Is(renameErr, cloud.ErrNotDispatched) {
 			return errors.Join(renameErr, e.store.RejectNamespaceDispatch(context.WithoutCancel(ctx), op.ID, "rename"))
 		}
-		items, err = e.source.List(ctx, parent)
+		items, err = e.namespaceList(ctx, parent)
 		if err != nil {
 			return errors.Join(renameErr, err)
 		}
@@ -179,20 +263,29 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 }
 func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, en model.Entry, step string) error {
 	if work.Dispatched {
+		if work.Op.Kind == "delete" && step == "delete" && work.Step == step {
+			confirmed, err := e.reconcileNamespaceDelete(ctx, work, en)
+			if err != nil {
+				return err
+			}
+			if confirmed {
+				return nil
+			}
+		}
 		return model.ErrUnknownResult
 	}
 	if !work.Completed[step] {
 		if step == "delete" && work.Op.Kind == "delete" && en.Kind != model.KindFolder {
-			_, missing, err := e.remoteMissing(ctx, en)
+			missing, err := e.reconcileNamespaceDelete(ctx, work, en)
 			if err != nil {
 				return err
 			}
 			if missing {
-				return e.store.AcknowledgeMissingDelete(ctx, work.Op.ID)
+				return nil
 			}
 		}
 		if en.Kind == model.KindFolder {
-			children, err := e.source.List(ctx, en.Token)
+			children, err := e.namespaceList(ctx, en.Token)
 			if err != nil {
 				return err
 			}
@@ -229,7 +322,18 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 			return errors.Join(model.ErrUnknownResult, err)
 		}
 		// A successful explicit delete result plus a complete parent scan observes
-		// removal. After response loss, absence alone never authorizes confirmation.
+		// removal. Lost responses are reconciled separately against the immutable
+		// original parent and fulfill only removal from that synchronized directory.
+		if step == "delete" && work.Op.Kind == "delete" {
+			confirmed, err := e.reconcileNamespaceDelete(ctx, work, en)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				return model.ErrUnknownResult
+			}
+			return nil
+		}
 		original := en.Remote
 		for _, old := range work.Before {
 			if old.ID == en.ID {
@@ -240,7 +344,7 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 		if err != nil {
 			return err
 		}
-		items, err := e.source.List(ctx, parent)
+		items, err := e.namespaceList(ctx, parent)
 		if err != nil {
 			return err
 		}
@@ -252,6 +356,30 @@ func (e *Engine) deleteResource(ctx context.Context, work store.NamespaceWork, e
 		}
 	}
 	return e.store.AcknowledgeNamespaceAction(ctx, work.Op.ID)
+}
+
+// Absence is scoped to the captured original parent; a moved resource is never
+// followed to another folder or deleted again. Failed/incomplete reads prove nothing.
+func (e *Engine) reconcileNamespaceDelete(ctx context.Context, work store.NamespaceWork, en model.Entry) (bool, error) {
+	proof, err := e.store.NamespaceDeleteProof(ctx, work.Op.ID)
+	if err != nil {
+		return false, err
+	}
+	if proof.Entry != en {
+		return false, model.ErrIdentityChanged
+	}
+	items, err := e.namespaceList(ctx, proof.ParentToken)
+	if err != nil {
+		return false, err
+	}
+	missing, err := missingFromParent(items, proof.ParentToken, en)
+	if err != nil || !missing {
+		return false, err
+	}
+	if err = e.store.ConfirmNamespaceDeleteAbsence(ctx, proof); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en model.Entry) error {
 	parent, err := e.parentToken(ctx, en.Remote)
@@ -267,7 +395,7 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 			if work.Step != "create_folder" {
 				return model.ErrUnknownResult
 			}
-			items, err := e.source.List(ctx, parent)
+			items, err := e.namespaceList(ctx, parent)
 			if err != nil {
 				return err
 			}
@@ -305,7 +433,7 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 	if err != nil {
 		return err
 	}
-	items, err := e.source.List(ctx, parent)
+	items, err := e.namespaceList(ctx, parent)
 	if err != nil {
 		return err
 	}
@@ -336,7 +464,7 @@ func (e *Engine) createFolder(ctx context.Context, work store.NamespaceWork, en 
 		if errors.Is(renameErr, cloud.ErrNotDispatched) {
 			return errors.Join(renameErr, e.store.RejectNamespaceDispatch(context.WithoutCancel(ctx), work.Op.ID, "rename"))
 		}
-		items, err = e.source.List(ctx, parent)
+		items, err = e.namespaceList(ctx, parent)
 		if err != nil {
 			return errors.Join(renameErr, err)
 		}

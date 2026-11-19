@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+# Both executables are embedded in the package scripts, never selected from the
+# environment. Refresh only after the same current-user lease verifies again.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+"$script_dir/drivebridge-install-verifier" feishu maintenance verify
+"$script_dir/drivebridge-service-updater" --register-pkg-services

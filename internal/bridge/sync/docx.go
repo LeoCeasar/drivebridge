@@ -133,8 +133,9 @@ func (e *Engine) syncDoc(ctx context.Context, j model.Job, en model.Entry) error
 				return e.conflict(ctx, j, sn, reason)
 			}
 			// Git has merged both sides. The captured current snapshot now owns
-			// block identity; the planner only needs to apply this merged intent.
-			merge, err = markdown.PlanMergedStep(desired, current)
+			// block identity; retain the baseline IDs so invisible cloud moves
+			// cannot be mistaken for an unchanged equal-content object.
+			merge, err = markdown.PlanMergedStepWithBase(desired, baseRemote, current)
 		}
 		if err != nil {
 			return e.pause(ctx, j, err)

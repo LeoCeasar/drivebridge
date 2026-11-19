@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"slices"
 	"strings"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -14,6 +15,9 @@ import (
 // PlanStepWithBase keeps the two checkpoints separate. Whole-document parsing
 // precedes planning, and any unsupported edit discards every planned operation.
 func PlanStepWithBase(baseLocal, local []byte, baseRemote, remote model.DocView) (model.MergeResult, error) {
+	if cloudContextMoved(baseRemote, remote) {
+		return model.MergeResult{Markdown: bytes.Clone(local), ConflictReason: "ambiguous_mapping"}, nil
+	}
 	if baseRemote.ProjectionVersion < 2 && remote.ProjectionVersion < 2 {
 		return planPlainWithBase(baseLocal, local, baseRemote, remote)
 	}
@@ -29,6 +33,9 @@ func PlanStepWithBase(baseLocal, local []byte, baseRemote, remote model.DocView)
 	return planReadable(baseLocal, local, baseRemote, remote)
 }
 func PlanResolvedStepWithBase(baseLocal, local []byte, baseRemote, remote model.DocView) (model.MergeResult, error) {
+	if cloudContextMoved(baseRemote, remote) {
+		return model.MergeResult{Markdown: bytes.Clone(local), ConflictReason: "ambiguous_mapping"}, nil
+	}
 	rich := false
 	for _, d := range []model.DocView{baseRemote, remote} {
 		for _, b := range d.Blocks {
@@ -147,7 +154,9 @@ func projectedAtoms(b []byte) ([]atom, error) {
 
 // Minimum-edit alignment accepts only a unique complete mapping. In particular,
 // deleting one of repeated equal paragraphs has more than one valid identity.
-func alignProjected(a, b []atom) (alignment, error) {
+func alignProjected(a, b []atom) (alignment, error) { return alignContext(a, b, true) }
+
+func alignProjectedGap(a, b []atom) (alignment, error) {
 	n, m := len(a), len(b)
 	// Repeated unchanged display blocks may anchor their complete sequence, but
 	// changing their multiplicity cannot establish which remote identity was edited.
@@ -233,16 +242,20 @@ func alignProjected(a, b []atom) (alignment, error) {
 			}
 		}
 		if j > 0 && cost[k] == cost[k-1]+1 {
-			r.inserts[i] = append([]int{j - 1}, r.inserts[i]...)
+			r.inserts[i] = append(r.inserts[i], j-1)
 			j--
 		} else {
 			i--
 		}
 	}
+	for _, indices := range r.inserts {
+		slices.Reverse(indices)
+	}
 	return r, nil
 }
 
 func planReadable(base, local []byte, baseline, current model.DocView) (model.MergeResult, error) {
+	tableBudget := contextAlignmentBudget
 	fail := func(reason string) (model.MergeResult, error) {
 		return model.MergeResult{Markdown: bytes.Clone(local), ConflictReason: reason}, nil
 	}
@@ -376,7 +389,7 @@ func planReadable(base, local []byte, baseline, current model.DocView) (model.Me
 			if !old.Readable || !now.Readable || old.Kind != "table" || now.Kind != "table" {
 				return fail("unsupported_content")
 			}
-			x, planned, err := planTable(ba, la, br[i], ra, old, now)
+			x, planned, err := planTable(ba, la, br[i], ra, old, now, &tableBudget)
 			if err != nil {
 				return contentConflict(local, err)
 			}
@@ -456,7 +469,7 @@ func planReadable(base, local []byte, baseline, current model.DocView) (model.Me
 			return fail("unsupported_content")
 		}
 	}
-	return result, nil
+	return bindOperationContext(result, current)
 }
 
 func ordinaryTopLevel(a atom) bool {
@@ -512,7 +525,7 @@ func oneXML(s string) (*xnode, error) {
 	normalizeLocalAssetAliases(n[0])
 	return n[0], nil
 }
-func planTable(base, local, baseRemote, remote atom, old, now model.Block) (string, []model.Operation, error) {
+func planTable(base, local, baseRemote, remote atom, old, now model.Block, workBudget *int) (string, []model.Operation, error) {
 	parse := func(s string) *xnode { n, _ := oneXML(s); return n }
 	bn, ln, brn, rn := parse(base.xml), parse(local.xml), parse(baseRemote.xml), parse(remote.xml)
 	on, nn := parse(string(old.RawXML)), parse(string(now.RawXML))
@@ -536,6 +549,42 @@ func planTable(base, local, baseRemote, remote atom, old, now model.Block) (stri
 	}
 	if tableMask(parse(string(old.RawXML)), allowed) != tableMask(parse(string(now.RawXML)), allowed) {
 		return "", nil, unsupported("remote table structure or style")
+	}
+	// Cell positions are fixed by tableMask. Within each cell, equal adjacent
+	// paragraphs still need contextual identity; ordinal alone is insufficient.
+	groups := map[*xnode][]int{}
+	byParagraph := map[*xnode]int{}
+	for i, p := range bp {
+		byParagraph[p] = i
+	}
+	var group func(*xnode, *xnode)
+	group = func(n, cell *xnode) {
+		if n.tag == "td" || n.tag == "th" {
+			cell = n
+		}
+		if i, ok := byParagraph[n]; ok {
+			groups[cell] = append(groups[cell], i)
+		}
+		for _, child := range n.kids {
+			group(child, cell)
+		}
+	}
+	group(bn, bn)
+	for _, indices := range groups {
+		a, b := make([]atom, len(indices)), make([]atom, len(indices))
+		for j, i := range indices {
+			a[j] = atom{Block: model.Block{Kind: "p", Hash: hashNode("p", bp[i])}}
+			b[j] = atom{Block: model.Block{Kind: "p", Hash: hashNode("p", lp[i])}}
+		}
+		matched, matchErr := alignContextBudgeted(a, b, true, workBudget)
+		if matchErr != nil {
+			return "", nil, &ContentError{Reason: "ambiguous_mapping", Detail: "ambiguous_mapping"}
+		}
+		for i, j := range matched.index {
+			if i != j {
+				return "", nil, &ContentError{Reason: "ambiguous_mapping", Detail: "ambiguous_mapping"}
+			}
+		}
 	}
 	var ops []model.Operation
 	for i := range bp {

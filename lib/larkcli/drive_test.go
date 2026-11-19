@@ -24,6 +24,9 @@ func arg(args []string, key string) string {
 	return ""
 }
 func handleDriveProcess(s string, args []string, emit func(string)) bool {
+	if handleLinkProcess(s, args, emit) {
+		return true
+	}
 	if s == "upload-response" {
 		emit(arg(args, "--name"))
 		return true

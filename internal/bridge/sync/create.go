@@ -24,7 +24,7 @@ func (e *Engine) parentToken(ctx context.Context, remote string) (string, error)
 		return "", err
 	}
 	if entry.Kind != model.KindFolder || entry.Token == "" {
-		return "", store.ErrBusy
+		return "", errors.Join(errParentPending, store.ErrBusy)
 	}
 	return entry.Token, nil
 }

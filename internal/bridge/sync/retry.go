@@ -50,7 +50,7 @@ func (e *Engine) retryReady(id model.JobID) bool {
 	return !exists || !e.now().Before(state.Due)
 }
 func transient(code string) bool {
-	return code == "request_timeout" || code == "network_or_protocol" || code == "rate_limited" || code == "canceled" || code == "remote_drift"
+	return code == "parent_pending" || code == "request_timeout" || code == "network_or_protocol" || code == "rate_limited" || code == "canceled" || code == "remote_drift"
 }
 
 // Retry reconciles unknown work; it never changes an unknown mutation to queued.

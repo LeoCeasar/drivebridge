@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import pathlib
 import plistlib
@@ -23,6 +24,13 @@ class MacInstallerTests(unittest.TestCase):
                 file = payload / name
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text('fixture')
+            inner_info = payload / 'DriveBridge.app/Contents/Info.plist'
+            inner_info.write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.drivebridge.desktop'}))
+            helper_info = payload / 'libexec/DriveBridge Link Service.app/Contents/Info.plist'
+            helper_info.parent.mkdir(parents=True)
+            helper_info.write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.drivebridge.linkservice', 'NSServices': module.services()}))
+            before = {p.relative_to(payload): hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in payload.rglob('*') if p.is_file()}
             launcher, installer = root / 'launcher', root / 'installer'
             launcher.write_text('launcher')
             installer.write_text('installer')
@@ -35,9 +43,24 @@ class MacInstallerTests(unittest.TestCase):
             info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
             self.assertEqual(info['CFBundleIdentifier'], 'org.drivebridge.launcher')
             self.assertTrue(info['LSUIElement'])
+            providers = [(p, plistlib.loads(p.read_bytes()).get('NSServices', []))
+                         for p in app.rglob('Info.plist')]
+            services = [(p, service) for p, values in providers for service in values
+                        if service.get('NSMessage') == 'copyFeishuLink']
+            self.assertEqual(len(services), 1, 'one installed product must publish one Finder service')
+            self.assertEqual(services[0][0], app / 'Contents/Resources/payload/libexec/DriveBridge Link Service.app/Contents/Info.plist')
+            self.assertNotIn('NSServices', info)
+            copied = app / 'Contents/Resources/payload'
+            self.assertEqual(before, {p.relative_to(copied): hashlib.sha256(p.read_bytes()).hexdigest()
+                                      for p in copied.rglob('*') if p.is_file()})
+            service = services[0][1]
+            self.assertEqual(service['NSMessage'], 'copyFeishuLink')
+            self.assertEqual(service['NSMenuItem']['default'], '复制飞书分享链接')
+            self.assertNotIn('NSReturnTypes', service)
             info = plistlib.loads((entry / 'Contents/Info.plist').read_bytes())
             self.assertFalse(info.get('LSUIElement', False))
             self.assertEqual(info['CFBundleIdentifier'], 'org.drivebridge.installer')
+            self.assertNotIn('NSServices', info)
             self.assertFalse(any((root / 'dmg').glob('*.pkg')))
 
 

@@ -69,3 +69,18 @@ assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'
  assert.match(el('message').textContent,/创建结果尚未确认/,'unconfirmed results must retain their typed explanation');
  console.log('create recovery confirmation, current snapshot and per-file isolation verified');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+const repeated={...issue,new_document:false,diagnostic:{kind:'ambiguous_mapping',message:'重复内容影响定位',location_count:9,locations:[{kind:'p',side:'remote',line:149,end_line:150,text:markup,section:'银川'},{kind:'table',side:'remote',line:215,end_line:220,text:'| 名称 | 值 |\n| A | B |',section:'资源台账'}]}};
+context.renderIssues([{id:'mount',state:{running:true,issues:[repeated]}}],true);
+assert.match(texts(el('sync-issue-list')),/内容块定位/);
+assert.match(texts(el('sync-issue-list')),/云端快照第 149–150 行/);
+assert.match(texts(el('sync-issue-list')),/所属章节：银川/);
+assert.match(texts(el('sync-issue-list')),/内容相同的独立表格/);
+assert.match(texts(el('sync-issue-list')),/9 处.*2 处/);
+assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent===markup));
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.innerHTML?.includes(markup)));
+assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重试同步'));
+
+context.renderIssues([{id:'mount',state:{running:true,issues:[{...issue,new_document:false,diagnostic:{kind:'ambiguous_mapping',message:'暂无法可靠定位具体片段'}}]}}],true);
+assert.match(texts(el('sync-issue-list')),/暂无法可靠定位/);
+assert.ok(!texts(el('sync-issue-list')).includes('对照下方'),'no invented candidates when none are captured');

@@ -5,6 +5,15 @@ import (
 	"github.com/rclone/rclone/internal/bridge/model"
 )
 
+// PlanMergedStepWithBase preserves evidence about cloud object movement even
+// when a clean text merge cannot see it (equal-content objects can exchange IDs).
+func PlanMergedStepWithBase(desired []byte, baseline, current model.DocView) (model.MergeResult, error) {
+	if cloudContextMoved(baseline, current) {
+		return model.MergeResult{Markdown: bytes.Clone(desired), ConflictReason: "ambiguous_mapping"}, nil
+	}
+	return PlanMergedStep(desired, current)
+}
+
 // PlanMergedStep applies a previously clean text merge against one exact remote
 // checkpoint. Ambiguous plain paragraph alignment is not a text conflict. If
 // every old/new atom is supported, a changed unique atom may be removed and the
@@ -31,6 +40,9 @@ func PlanMergedStep(desired []byte, current model.DocView) (model.MergeResult, e
 	next, err := parseMarkdown(desired, nil)
 	if err != nil {
 		return result, err
+	}
+	if _, alignmentErr := align(old, next); hardAlignmentFailure(alignmentErr) {
+		return result, nil
 	}
 	for _, atoms := range [][]atom{old, next} {
 		for _, a := range atoms {

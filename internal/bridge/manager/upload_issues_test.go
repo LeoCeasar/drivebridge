@@ -30,7 +30,7 @@ func TestBlockedUploadStatusNamesFileAndPreservesCopy(t *testing.T) {
 	if _, _, err = s.Prepare(context.Background(), job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.PauseJobWithDiagnostic(context.Background(), job.ID, model.StatusBlocked, "unsupported_content", &model.SyncDiagnostic{Kind: "html_block", Message: "HTML block cannot be written back", Line: 2, EndLine: 3, Text: "<div>blocked</div>", Side: "local"}); err != nil {
+	if err = s.PauseJobWithDiagnostic(context.Background(), job.ID, model.StatusBlocked, "unsupported_content", &model.SyncDiagnostic{Kind: "html_block", Message: "HTML block cannot be written back", Line: 2, EndLine: 3, Text: "<div>blocked</div>", Side: "local", LocationCount: 2, Locations: []model.SyncDiagnosticLocation{{Side: "remote", Kind: "p", Line: 7, EndLine: 7, Text: "重复", Section: "章节"}, {Side: "remote", Kind: "p", Line: 12, EndLine: 12, Text: "重复", Section: "另一章节"}}}); err != nil {
 		t.Fatal(err)
 	}
 	status, err := m.Status(context.Background(), id)
@@ -51,6 +51,9 @@ func TestBlockedUploadStatusNamesFileAndPreservesCopy(t *testing.T) {
 	json.Unmarshal(raw, &view)
 	if len(view.Issues) != 1 || view.Issues[0].Name != "folder/manual.md" || view.Issues[0].Code != "unsupported_content" || !view.Issues[0].LocalSaved || !view.Issues[0].NewDocument || view.Issues[0].Diagnostic == nil || view.Issues[0].Diagnostic.Line != 2 || view.Issues[0].Diagnostic.Text != "<div>blocked</div>" {
 		t.Fatalf("blocked task missing actionable file detail: %s", raw)
+	}
+	if len(view.Issues[0].Diagnostic.Locations) != 2 || view.Issues[0].Diagnostic.LocationCount != 2 || view.Issues[0].Diagnostic.Locations[1].Section != "另一章节" {
+		t.Fatalf("multi-location detail lost in status JSON: %s", raw)
 	}
 }
 

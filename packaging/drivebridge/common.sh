@@ -66,6 +66,12 @@ build_stage() {
     (cd "$DB_REPO" && GOOS="$DB_PLATFORM" GOARCH="$DB_ARCH" CGO_ENABLED="$desktop_cgo" \
       go build -trimpath -tags "$desktop_tags" -ldflags "-s -w ${DB_EXTRA_LDFLAGS:-}" -o "$DB_WORK/drivebridge-desktop" .)
     DB_STAGE_EXTRA_ARGS+=(--desktop-binary "$DB_WORK/drivebridge-desktop" --version "$DB_VERSION")
+    if [ "$DB_PLATFORM" = darwin ]; then
+      (cd "$DB_REPO" && xcrun swiftc -swift-version 6 -O -target "$swift_arch-apple-macos14.0" \
+        native/macos-installer/InstallerCore.swift native/macos-installer/LinkService.swift native/macos-installer/Launcher.swift \
+        -o "$DB_WORK/drivebridge-launcher")
+      DB_STAGE_EXTRA_ARGS+=(--desktop-launcher-binary "$DB_WORK/drivebridge-launcher")
+    fi
   fi
   python3 "$DB_HERE/package.py" stage --platform "$DB_PLATFORM" --arch "$DB_ARCH" \
     --root "$DB_PAYLOAD" --repo "$DB_REPO" --binary "$DB_WORK/drivebridge" --consume-binary --edition "$DB_EDITION" \

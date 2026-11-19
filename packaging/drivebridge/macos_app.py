@@ -8,6 +8,12 @@ import plistlib
 import shutil
 
 
+def services():
+    return [dict(NSMessage='copyFeishuLink', NSPortName='org.drivebridge.linkservice', NSTimeout='3000',
+                 NSMenuItem={'default': '复制飞书分享链接'}, NSSendFileTypes=['public.item'],
+                 NSRequiredContext={'NSApplicationIdentifier': 'com.apple.finder'})]
+
+
 def bundle(root, executable, identifier, name, version, filename, agent=False):
     contents = root / 'Contents'
     (contents / 'MacOS').mkdir(parents=True)
@@ -18,6 +24,8 @@ def bundle(root, executable, identifier, name, version, filename, agent=False):
                 CFBundleName=name, CFBundleDisplayName=name, CFBundlePackageType='APPL',
                 CFBundleShortVersionString=version, CFBundleVersion=version,
                 LSMinimumSystemVersion='14.0', LSUIElement=agent, CFBundleIconFile='drivebridge.icns')
+    # Only the dedicated payload helper provides Services. The Go tray checks
+    # in under the desktop app's identity, so that bundle cannot own Services.
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
 
 

@@ -127,10 +127,15 @@ import Foundation
                 guard let inventory = Bundle.main.resourceURL?.appendingPathComponent("application-files.json") else { throw InstallError.invalidPackage("缺少文件清单") }
                 let userApps = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
                 try FileManager.default.createDirectory(at: userApps, withIntermediateDirectories: true)
+                // Capture identities before the atomic replacement changes the
+                // paths of the old processes. Never stop Go or other installs.
+                let oldLaunchers = installedServiceLaunchers(target)
                 try installApplication(source: source, target: target, allowedParents: [URL(fileURLWithPath: "/Applications"), userApps], verify: { staged in
                     try verifyApplication(staged, inventory: inventory)
                     _ = try runCommand(payloadURL(source).appendingPathComponent("bin/drivebridge"), ["feishu", "maintenance", "verify"])
                 })
+                try retireServiceLaunchers(oldLaunchers)
+                try refreshInstalledServices(target)
                 print("DriveBridge application installed: \(target.path)")
             } catch {
                 FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))

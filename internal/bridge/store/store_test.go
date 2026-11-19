@@ -210,7 +210,7 @@ func TestFileObservationAdoptionAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	m2, _ := s.Metadata(ctx, e.ID)
-	if m.FirstObserved.IsZero() || m.FirstObserved != m2.FirstObserved || m2.SourceURL != "https://opaque" {
+	if m.FirstObserved.IsZero() || m.FirstObserved != m2.FirstObserved || m2.SourceURL != "https://opaque" || m2.SourceURLToken != "t" {
 		t.Fatal(m, m2)
 	}
 	sn := fileSnapshot(t, s, "t", "\x00binary\xff")

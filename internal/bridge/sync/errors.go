@@ -16,6 +16,7 @@ import (
 )
 
 var errRemoteDrift = errors.New("remote_drift")
+var errParentPending = errors.New("parent folder is awaiting cloud creation")
 
 func classify(err error) string {
 	var content *markdown.ContentError
@@ -33,6 +34,8 @@ func classify(err error) string {
 		return "identity_changed"
 	case errors.Is(err, model.ErrUnknownResult):
 		return "unknown_result"
+	case errors.Is(err, errParentPending):
+		return "parent_pending"
 	case errors.Is(err, larkcli.ErrAuthRequired):
 		return "auth_required"
 	case errors.Is(err, larkcli.ErrCredentialStorage):
@@ -110,6 +113,8 @@ func (e *Engine) conflict(ctx context.Context, j model.Job, remote model.Snapsho
 // classified explanation instead of serializing their raw Error strings.
 func diagnosticMessage(code string) string {
 	switch code {
+	case "parent_pending":
+		return "上级文件夹尚未完成云端创建，完成后将自动继续同步。"
 	case "unsupported_content":
 		return "内容无法安全转换或写回，请检查文件结构。"
 	case "permission_denied":

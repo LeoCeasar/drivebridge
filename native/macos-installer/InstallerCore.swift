@@ -1,6 +1,8 @@
 import Foundation
 import CryptoKit
 import Darwin
+import AppKit
+import CoreServices
 
 enum InstallError: LocalizedError {
     case unsafeTarget, invalidPackage(String), command(String)
@@ -33,6 +35,77 @@ func runCommand(_ executable: URL, _ arguments: [String]) throws -> String {
 func payloadURL(_ app: URL) -> URL { app.appendingPathComponent("Contents/Resources/payload") }
 func desktopURL(_ app: URL) -> URL {
     payloadURL(app).appendingPathComponent("DriveBridge.app/Contents/MacOS/drivebridge-desktop")
+}
+
+func linkServiceRegistrationURLs(_ app: URL) -> [URL] {
+    if applicationIdentifier(app) == "org.drivebridge.linkservice" { return [app] }
+    let provider = app.appendingPathComponent("Contents/Resources/payload/DriveBridge.app")
+    var urls = [app]
+    var root = app.deletingLastPathComponent()
+    if applicationIdentifier(provider) == "org.drivebridge.desktop" {
+        urls.append(provider); root = payloadURL(app)
+    }
+    let helper = root.appendingPathComponent("libexec/DriveBridge Link Service.app")
+    if applicationIdentifier(helper) == "org.drivebridge.linkservice" { urls.append(helper) }
+    return urls
+}
+
+private func applicationIdentifier(_ app: URL) -> String? {
+    guard let data = try? Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")),
+          let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+    return info["CFBundleIdentifier"] as? String
+}
+
+@MainActor func refreshInstalledServices(_ app: URL,
+    register: (URL, Bool) -> OSStatus = { LSRegisterURL($0 as CFURL, $1) },
+    update: () -> Void = { NSUpdateDynamicServices() }) throws {
+    for url in linkServiceRegistrationURLs(app) {
+        let status = register(url, true)
+        guard status == noErr else { throw InstallError.command("应用已安装，但右键服务注册刷新失败（\(status)），请重新打开 DriveBridge。") }
+    }
+    update()
+}
+
+func isInstalledServiceLauncher(identifier: String?, bundle: URL?, executable: URL?, target: URL) -> Bool {
+    guard let bundle, let executable else { return false }
+    let helperRoot = applicationIdentifier(target) == "org.drivebridge.desktop" ? target.deletingLastPathComponent() : payloadURL(target)
+    let candidates = [(target, applicationIdentifier(target) == "org.drivebridge.desktop" ? "org.drivebridge.desktop" : "org.drivebridge.launcher", "drivebridge-launcher"),
+                      (target.appendingPathComponent("Contents/Resources/payload/DriveBridge.app"), "org.drivebridge.desktop", "drivebridge-launcher"),
+                      (helperRoot.appendingPathComponent("libexec/DriveBridge Link Service.app"), "org.drivebridge.linkservice", "drivebridge-link-service")]
+    return candidates.contains { app, id, executableName in
+        identifier == id && bundle.standardizedFileURL.path == app.standardizedFileURL.path &&
+        executable.standardizedFileURL.path == app.appendingPathComponent("Contents/MacOS/" + executableName).standardizedFileURL.path
+    }
+}
+
+func pkgServicesApplication(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
+    let apps = home.appendingPathComponent("Applications")
+    let payload = apps.appendingPathComponent("DriveBridge")
+    let target = payload.appendingPathComponent("DriveBridge.app")
+    for directory in [apps, payload, target] {
+        let attrs = try FileManager.default.attributesOfItem(atPath: directory.path)
+        guard attrs[.type] as? FileAttributeType == .typeDirectory,
+              (attrs[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { throw InstallError.unsafeTarget }
+    }
+    guard applicationIdentifier(target) == "org.drivebridge.desktop" else { throw InstallError.unsafeTarget }
+    return target
+}
+
+@MainActor func installedServiceLaunchers(_ target: URL) -> [NSRunningApplication] {
+    NSWorkspace.shared.runningApplications.filter {
+        isInstalledServiceLauncher(identifier: $0.bundleIdentifier, bundle: $0.bundleURL, executable: $0.executableURL, target: target)
+    }
+}
+
+@MainActor func retireServiceLaunchers(_ launchers: [NSRunningApplication]) throws {
+    for app in launchers where !app.isTerminated { _ = app.terminate() }
+    let deadline = Date().addingTimeInterval(3)
+    while launchers.contains(where: { !$0.isTerminated }) && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard launchers.allSatisfy({ $0.isTerminated }) else {
+        throw InstallError.command("应用已安装，但旧链接服务尚未退出。请退出旧 DriveBridge 应用后重新打开。")
+    }
 }
 
 // Only application files are replaced. Configuration, credentials and caches are

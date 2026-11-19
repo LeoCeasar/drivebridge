@@ -50,19 +50,21 @@ type Options struct {
 	ForegroundGrace time.Duration
 }
 type Engine struct {
-	dispatchMu sync.RWMutex
-	dispatcher *backgroundDispatcher
-	schedule   backgroundSchedule
-	cycleGate  chan struct{}
-	store      *store.Store
-	source     Source
-	publisher  Publisher
-	deps       Dependencies
-	opt        Options
-	locks      sync.Map
-	retryMu    sync.Mutex
-	retries    map[model.JobID]retryState
-	foreground foregroundGate
+	dispatchMu      sync.RWMutex
+	dispatcher      *backgroundDispatcher
+	schedule        backgroundSchedule
+	cycleGate       chan struct{}
+	namespaceGate   chan struct{}
+	namespaceCursor uint64
+	store           *store.Store
+	source          Source
+	publisher       Publisher
+	deps            Dependencies
+	opt             Options
+	locks           sync.Map
+	retryMu         sync.Mutex
+	retries         map[model.JobID]retryState
+	foreground      foregroundGate
 }
 
 func New(d Dependencies, o Options) (*Engine, error) {
@@ -110,7 +112,9 @@ func New(d Dependencies, o Options) (*Engine, error) {
 	}
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{}
-	return &Engine{cycleGate: gate, store: d.Store, source: d.Source, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
+	namespaceGate := make(chan struct{}, 1)
+	namespaceGate <- struct{}{}
+	return &Engine{namespaceGate: namespaceGate, cycleGate: gate, store: d.Store, source: d.Source, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
 }
 func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error) {
 	candidate := make(chan struct{}, 1)

@@ -52,6 +52,13 @@ func planPlainWithBase(base, local []byte, baseline, remote model.DocView) (mode
 	for i < len(old) && i < len(desired) && old[i].Hash == desired[i].Hash {
 		i++
 	}
+	_, alignmentErr := align(old, desired)
+	// A complete unchanged prefix has exact existing identities and an explicit
+	// append boundary. It remains safe even if appended text repeats that prefix.
+	appendOnly := i == len(old) && i > 0 && i < len(desired)
+	if hardAlignmentFailure(alignmentErr) && !appendOnly {
+		return result, nil
+	}
 	// Preserve an unchanged section that appears later in the local intent.
 	// New unique content can be inserted at the shared prefix instead of
 	// deleting that section just to disambiguate paragraph alignment.

@@ -266,7 +266,7 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return nil, ErrReadyTimeout
 	}
 	switch r.URL.Path {
-	case "/local-metadata/reconcile", "/history/pending", "/history/version-local", "/history/body-local", "/history/pending-bytes", "/history/protection", "/history/sync", "/history/current", "/history/restore", "/upload-copy", "/upload-recover", "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
+	case "/link/target", "/link/cache", "/local-metadata/reconcile", "/history/pending", "/history/version-local", "/history/body-local", "/history/pending-bytes", "/history/protection", "/history/sync", "/history/current", "/history/restore", "/upload-copy", "/upload-recover", "/retry", "/draft", "/resolve", "/cache/clean", "/conflict/claim", "/conflict/export", "/conflict", "/refresh-directories":
 		controlCtx, release, err := w.beginControl(ctx)
 		if err != nil {
 			return nil, err
@@ -275,6 +275,18 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		ctx = controlCtx
 	}
 	switch r.URL.Path {
+	case "/link/target":
+		var in linkTargetRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return readLinkTarget(ctx, s.store, in.Remote)
+	case "/link/cache":
+		var in linkCacheRequest
+		if err := decodeInput(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, cacheLinkTarget(ctx, s.store, in)
 	case "/local-metadata/reconcile":
 		return s.store.ReconcileSystemMetadata(ctx)
 	case "/history/pending":

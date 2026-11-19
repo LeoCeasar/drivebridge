@@ -23,6 +23,14 @@ func errorCode(err error) string {
 	switch {
 	case err == nil:
 		return ""
+	case errors.Is(err, ErrLinkUnsupported):
+		return "link_unsupported"
+	case errors.Is(err, ErrLinkNotUploaded):
+		return "link_not_uploaded"
+	case errors.Is(err, ErrLinkUnavailable):
+		return "link_unavailable"
+	case errors.Is(err, ErrLinkLookupTimeout):
+		return "link_lookup_timeout"
 	case errors.Is(err, store.ErrCreateNeedsAttention):
 		return "creation_needs_attention"
 	case errors.Is(err, model.ErrUnknownResult):
@@ -63,6 +71,14 @@ func errorCode(err error) string {
 }
 func errorFromCode(code string) error {
 	switch code {
+	case "link_unsupported":
+		return ErrLinkUnsupported
+	case "link_not_uploaded":
+		return ErrLinkNotUploaded
+	case "link_unavailable":
+		return ErrLinkUnavailable
+	case "link_lookup_timeout":
+		return ErrLinkLookupTimeout
 	case "creation_needs_attention":
 		return store.ErrCreateNeedsAttention
 	case "creation_unconfirmed", "unknown_result":
@@ -103,6 +119,14 @@ func ErrorInfo(err error) *Error {
 	code := errorCode(err)
 	message := code
 	switch code {
+	case "link_unsupported":
+		message = "此项目不属于可分享的飞书文件或文件夹。"
+	case "link_not_uploaded":
+		message = "首次上传完成后可复制飞书分享链接。"
+	case "link_unavailable":
+		message = "该项目暂无可用的飞书链接，请检查云端状态或访问权限后重试。"
+	case "link_lookup_timeout":
+		message = "首次获取此文件的飞书链接超时，缓存尚未补齐，请稍后重试。"
 	case "mount_unsynced":
 		message = "尚有未同步内容，未删除。请先查看 upload status 或 conflict list 并处理后重试。"
 	case "history_pending":
@@ -110,7 +134,7 @@ func ErrorInfo(err error) *Error {
 	case "cleanup_pending":
 		message = "挂载已删除，缓存清理待完成；后台将自动重试。"
 	}
-	return &Error{Code: code, Message: message, Retryable: code == "network" || code == "credential_unavailable" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
+	return &Error{Code: code, Message: message, Retryable: code == "link_lookup_timeout" || code == "network" || code == "credential_unavailable" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
 }
 func ExitCode(err error) int {
 	switch errorCode(err) {
@@ -122,7 +146,7 @@ func ExitCode(err error) int {
 		return 3
 	case "driver_unavailable":
 		return 4
-	case "network", "credential_unavailable", "worker_unavailable":
+	case "network", "link_lookup_timeout", "credential_unavailable", "worker_unavailable":
 		return 5
 	case "pending", "mount_unsynced", "history_pending", "cleanup_pending":
 		return 6
@@ -143,6 +167,11 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 		journal, journalErr := s.Journal(ctx, j.ID)
 		if journalErr != nil {
 			return out, journalErr
+		}
+		if j.State == model.StatusPaused && journal.ErrorCode == "parent_pending" {
+			out.Queued++
+			out.WaitingForParent++
+			continue
 		}
 		if journal.ErrorCode != "" {
 			out.LastError = journal.ErrorCode
@@ -240,7 +269,20 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			return out, err
 		}
 		if journal.Dispatched {
-			out.Inflight++
+			out.Queued++
+			awaiting++
+			name, code, message := op.Src, "namespace_result_unconfirmed", "先前的目录操作结果尚未确认，后台将继续核验；无关文件可以继续同步。"
+			if op.Kind == "mkdir" {
+				name = op.Dst
+			}
+			if op.Kind == "delete" {
+				code = "delete_result_unconfirmed"
+				message = "本地删除已记录，云端结果尚未确认；后台会按原文件标识核验，不会重复发起删除。"
+			}
+			out.Issues = append(out.Issues, model.SyncIssue{NamespaceID: op.ID, Name: name, Code: code, State: model.StatusAwaitingVerification, Diagnostic: &model.SyncDiagnostic{Kind: code, Message: message}})
+			if out.LastError == "" {
+				out.LastError = code
+			}
 		} else {
 			out.Queued++
 		}

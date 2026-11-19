@@ -288,6 +288,7 @@
         if (state.last_error && !authorization) cloud.append(make('small',recovery.errorLabels[state.last_error] || '上次操作未完成','mount-path'));
       }
       const counters = make('td',!known ? '暂不可读' : `${prefix}队列 ${state.queued || 0}，在途 ${state.inflight || 0}，冲突 ${state.conflicts || 0}`,'counters'); // NBSP: wrap only after "，"
+      if(known && state.waiting_for_parent>0)counters.append(make('small',`${state.waiting_for_parent} 项等待上级文件夹`,'mount-path'));
       const action = make('td'); action.append(mountActions(mount,state,stale,canRetry));
       for (const [cell,label] of [[local,'本机保存'],[cloud,mount.archived ? '状态' : '云端状态'],[counters,mount.archived ? '保留数据' : '待处理']]) cell.setAttribute('data-label',label);
       row.append(name, local, cloud, counters, action); return row;
@@ -306,7 +307,15 @@
     $('global-status').textContent = text; $('global-status').className = `chip global-status ${tone}`;
   }
   function issueAdvice(issue) {
+    if (issue.code==='unsupported_content' && issue.diagnostic?.kind==='ambiguous_mapping') {
+      const located=recovery.diagnosticLocationsView(issue).length>0;
+      return {title:'内容块定位失败',reason:'文本合并已完成，但当前定位算法无法确定应修改哪个飞书内容块。',steps:located?['对照下方章节和文字，可查看哪些独立内容块需要区分。','行号来自当次失败的内容快照，可能与当前编辑器不同；本地修改和历史仍保留。']:['暂无法可靠定位具体片段；段落移动或多处连续修改也可能导致对应关系不明确。','本地修改和历史仍保留，需核对结构变化或改善内容块定位规则。']};
+    }
     switch (issue.code) {
+      case 'parent_pending':
+        return {title:'等待上级文件夹',reason:'上级文件夹尚未完成云端创建，本地修改已保留。',steps:['保持应用运行，上级文件夹就绪后会自动继续同步。']};
+      case 'delete_result_unconfirmed': case 'namespace_result_unconfirmed':
+        return {title:issue.code==='delete_result_unconfirmed'?'删除结果待核验':'目录操作结果待核验',reason:'先前操作可能已到达云端，正在按原文件标识核验；其他文件可以继续同步。',steps:['保持应用运行，后台会核验原同步目录中的对象状态。','若仍无法确认，请检查飞书中的原对象；不要反复创建同名文件或清空恢复记录。']};
       case 'creation_needs_attention': case 'creation_unconfirmed':
         return {title:issue.code === 'creation_needs_attention' ? '创建结果需要处理' : '创建结果尚未确认',reason:'先前创建可能已经到达云端，本地正文及历史仍保留。',steps:['可重新核验先前创建的结果。','需要重新创建时，使用最新本地版本；其他位置可能仍存在先前创建的旧副本。']};
       case 'local_save_failed':
@@ -345,23 +354,36 @@
       const state = mount.state || {}, stale = Boolean(mount.status_warning);
       const issues = state.issues?.length ? state.issues : mountAuthorization(mount) ? [] : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
       for (const issue of issues) {
-        items.push({id:`${mount.id}:${issue.job_id || issue.name || issue.code}`,name:issue.name || mount.name,mount,issue,stale});
+        items.push({id:`${mount.id}:${issue.job_id || issue.namespace_id || issue.name || issue.code}`,name:issue.name || mount.name,mount,issue,stale});
       }
     }
     reconcileRows('sync-issue-list',items,({mount,issue,stale}) => {
         const state = mount.state || {}, advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
         card.append(make('h3',issue.name || mount.name),make('strong',advice.title),make('p',advice.reason));
         const diagnostic = recovery.diagnosticView(issue);
-        if (diagnostic.message || diagnostic.location) {
+        const locations = recovery.diagnosticLocationsView(issue);
+        if (diagnostic.message || diagnostic.location || locations.length) {
           const detail = make('section',undefined,'issue-diagnostic');
           detail.append(make('strong',`错误类型：${diagnostic.kind}`));
           if (diagnostic.location) detail.append(make('p',diagnostic.location));
           if (diagnostic.message) detail.append(make('p',diagnostic.message));
           if (diagnostic.text) detail.append(make('pre',diagnostic.text,'hunk-snippet'));
+          for (const location of locations) {
+            const item=make('section',undefined,'diagnostic-location');
+            item.append(make('strong',location.kind),make('p',location.location));
+            if(location.section)item.append(make('p',`所属章节：${location.section}`));
+            if(location.text)item.append(make('pre',location.text,'hunk-snippet'));
+            detail.append(item);
+          }
+          if(locations.length) {
+            const total=Number.isSafeInteger(issue.diagnostic?.location_count)?issue.diagnostic.location_count:locations.length;
+            if(total>locations.length)detail.append(make('p',`共 ${total} 处相关位置，当前展示 ${locations.length} 处。`,'quiet'));
+            detail.append(make('p','这些独立内容块可以正常保留，当前限制在系统的定位算法。','quiet'));
+          }
           card.append(detail);
         }
         if (mount.archived) card.append(make('p','此任务属于以前移除的挂载。先恢复并启动同步，处理完未同步内容后可彻底删除挂载与缓存。','quiet'));
-        card.append(make('p',issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
+        card.append(make('p',issue.namespace_id ? '操作记录与已有恢复资料保留，云端结果仍在核验' : issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
         if (stale) card.append(make('p','这是上次记录，当前状态更新尚未完成；请先刷新。','quiet'));
         const steps = make('ol'); for (const step of advice.steps) steps.append(make('li',step)); card.append(steps);
         const actions = make('div',undefined,'merge-actions');

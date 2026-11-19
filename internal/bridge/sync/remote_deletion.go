@@ -23,21 +23,26 @@ func (e *Engine) remoteMissing(ctx context.Context, entry model.Entry) ([]larkcl
 	if err != nil {
 		return nil, false, err
 	}
+	missing, err := missingFromParent(items, parent, entry)
+	return items, missing, err
+}
+
+func missingFromParent(items []larkcli.DriveItem, parent string, entry model.Entry) (bool, error) {
 	seen := make(map[string]bool, len(items))
 	missing := true
 	for _, item := range items {
 		if item.Token == "" || item.Name == "" || item.Type == "" || seen[item.Token] || (item.ParentToken != "" && item.ParentToken != parent) {
-			return nil, false, larkcli.ErrProtocol
+			return false, larkcli.ErrProtocol
 		}
 		seen[item.Token] = true
 		if item.Token == entry.Token {
 			if item.Type != string(entry.Kind) {
-				return nil, false, model.ErrIdentityChanged
+				return false, model.ErrIdentityChanged
 			}
 			missing = false
 		}
 	}
-	return items, missing, nil
+	return missing, nil
 }
 
 func (e *Engine) commitDeletion(ctx context.Context, entry model.Entry, commit func() (bool, error)) error {

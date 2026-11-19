@@ -379,3 +379,6 @@ nav{grid-template-columns:repeat(3,1fr)}.nav-button{flex-direction:column;gap:2p
 @media(max-width:700px){.conversion-rules-panel{padding:16px}}
 
 .mount-auth-status { margin: .5rem 0 .25rem; font-weight: 600; }
+
+.diagnostic-location{margin-top:var(--s3);padding-top:var(--s3);border-top:1px solid var(--line)}
+.diagnostic-location p{margin:var(--s1) 0}

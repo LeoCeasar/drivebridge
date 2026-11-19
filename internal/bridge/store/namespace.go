@@ -14,6 +14,7 @@ import (
 )
 
 type namespaceRecord struct {
+	DeleteParent       *NamespaceDeleteParent    `json:"delete_parent,omitempty"`
 	FuseSoftRemove     bool                      `json:"fuse_soft_remove,omitempty"`
 	FuseSoftRestore    string                    `json:"fuse_soft_restore,omitempty"`
 	ManagedCheckpoints []model.ManagedCheckpoint `json:"managed_checkpoints,omitempty"`
@@ -197,6 +198,17 @@ func (s *Store) prepareNamespaceTx(tx *bolt.Tx, op model.NamespaceOp, editorBack
 			return er
 		}
 		r := namespaceRecord{Op: op, Ordinal: sequence, SafeSaveRestore: restoreParked, SafeSaveBackup: editorBackup, FuseSoftRestore: softRestore}
+		if op.Kind == "delete" {
+			binding := NamespaceDeleteParent{Token: s.scope.FolderToken}
+			if parentRemote := entryParent(src); parentRemote != "" {
+				parent, er := byPath(tx, parentRemote)
+				if er != nil {
+					return er
+				}
+				binding = NamespaceDeleteParent{ID: parent.ID, Token: parent.Token}
+			}
+			r.DeleteParent = &binding
+		}
 		r.FuseSoftRemove = op.Kind == "rename" && src.Token != "" && src.Kind != model.KindFolder && fuseSoftRemoveRename(op.Src, op.Dst)
 		if op.Kind == "mkdir" {
 			r.TemporaryName = "DriveBridge-pending-" + op.ID

@@ -279,7 +279,7 @@ func merge(baseLocal, local []byte, remote model.DocView, deferAnchors, allowTab
 		}
 		result.Operations = append(result.Operations, operation(model.OperationBlockInsertAfter, "", anchor.RemoteID, model.OperationPayload{XML: insertionXML(c.a), AfterHash: c.a.Hash}))
 	}
-	return result, nil
+	return bindOperationContext(result, remote)
 }
 func contentConflict(local []byte, e error) (model.MergeResult, error) {
 	var ce *ContentError

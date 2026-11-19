@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 @main struct CoreTests {
-    static func main() throws {
+    @MainActor static func main() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("drivebridge-installer-test-\(UUID().uuidString)")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -72,5 +72,52 @@ import CryptoKit
         do { try verifyApplication(source, inventory: inventoryURL); fatalError("unlisted file must be rejected") }
         catch InstallError.invalidPackage {}
         print("PASS unlisted application file is rejected")
+        let inner = target.appendingPathComponent("Contents/Resources/payload/DriveBridge.app")
+        let outerExecutable = target.appendingPathComponent("Contents/MacOS/drivebridge-launcher")
+        let innerExecutable = inner.appendingPathComponent("Contents/MacOS/drivebridge-launcher")
+        precondition(isInstalledServiceLauncher(identifier: "org.drivebridge.launcher", bundle: target, executable: outerExecutable, target: target))
+        precondition(isInstalledServiceLauncher(identifier: "org.drivebridge.desktop", bundle: inner, executable: innerExecutable, target: target))
+        precondition(!isInstalledServiceLauncher(identifier: "org.drivebridge.desktop", bundle: source, executable: innerExecutable, target: target))
+        precondition(!isInstalledServiceLauncher(identifier: "org.drivebridge.desktop", bundle: inner, executable: inner.appendingPathComponent("Contents/MacOS/drivebridge-desktop"), target: target))
+        precondition(!isInstalledServiceLauncher(identifier: "other.app", bundle: target, executable: outerExecutable, target: target))
+        precondition(!isInstalledServiceLauncher(identifier: nil, bundle: nil, executable: nil, target: target))
+        print("PASS service retirement selects only this installation's Swift launchers")
+        try fm.createDirectory(at: inner.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "org.drivebridge.desktop"], format: .xml, options: 0).write(to: inner.appendingPathComponent("Contents/Info.plist"))
+        var registrations: [String] = []
+        var updates = 0
+        try refreshInstalledServices(target, register: { url, force in
+            precondition(force); registrations.append(url.path); return 0
+        }, update: { updates += 1 })
+        precondition(registrations == [target.path, inner.path] && updates == 1)
+        registrations = []
+        try refreshInstalledServices(inner, register: { url, force in
+            precondition(force); registrations.append(url.path); return 0
+        }, update: { updates += 1 })
+        precondition(registrations == [inner.path] && updates == 2)
+        let helper=target.appendingPathComponent("Contents/Resources/payload/libexec/DriveBridge Link Service.app")
+        try fm.createDirectory(at:helper.appendingPathComponent("Contents"),withIntermediateDirectories:true)
+        try PropertyListSerialization.data(fromPropertyList:["CFBundleIdentifier":"org.drivebridge.linkservice"],format:.xml,options:0).write(to:helper.appendingPathComponent("Contents/Info.plist"))
+        precondition(linkServiceRegistrationURLs(target).map(\.path)==[target.path,inner.path,helper.path])
+        precondition(linkServiceRegistrationURLs(inner).map(\.path)==[inner.path,helper.path])
+        precondition(linkServiceRegistrationURLs(helper).map(\.path)==[helper.path])
+        precondition(isInstalledServiceLauncher(identifier:"org.drivebridge.linkservice",bundle:helper,executable:helper.appendingPathComponent("Contents/MacOS/drivebridge-link-service"),target:target))
+        precondition(!isInstalledServiceLauncher(identifier:"org.drivebridge.linkservice",bundle:helper,executable:outerExecutable,target:target))
+        let pkgHome=root.appendingPathComponent("pkg-home")
+        let pkgApp=pkgHome.appendingPathComponent("Applications/DriveBridge/DriveBridge.app")
+        try fm.createDirectory(at:pkgApp.appendingPathComponent("Contents"),withIntermediateDirectories:true)
+        try PropertyListSerialization.data(fromPropertyList:["CFBundleIdentifier":"org.drivebridge.desktop"],format:.xml,options:0).write(to:pkgApp.appendingPathComponent("Contents/Info.plist"))
+        let validatedPkg=try pkgServicesApplication(home:pkgHome)
+        precondition(validatedPkg.path==pkgApp.path)
+        precondition(isInstalledServiceLauncher(identifier:"org.drivebridge.desktop",bundle:pkgApp,executable:pkgApp.appendingPathComponent("Contents/MacOS/drivebridge-launcher"),target:pkgApp))
+        try fm.removeItem(at:pkgApp)
+        try fm.createSymbolicLink(at:pkgApp,withDestinationURL:inner)
+        do { _=try pkgServicesApplication(home:pkgHome);fatalError("symlink package app accepted") } catch InstallError.unsafeTarget {}
+        do {
+            try refreshInstalledServices(target, register: { _, _ in -50 }, update: { updates += 1 })
+            fatalError("failed registration must be reported")
+        } catch InstallError.command {}
+        precondition(updates == 2)
+        print("PASS forced registration refresh handles wrapper, standalone and failure")
     }
 }
