@@ -61,3 +61,7 @@ API 依据：[剪贴板序号](https://learn.microsoft.com/en-us/windows/win32/a
 此 ZIP **仅含二进制，不是完整安装包**，不包含官方 CLI/Node/私有 Git/登录组件/驱动，不应直接替换运行中的程序或绕过升级协调器。Windows 安装工作流的默认目标版本已更新为 `0.2.30`，尚未执行该构建。
 
 本机为 macOS，未发现可运行的 Windows 环境。本轮未生成完整 EXE/MSI，也未验证 Windows 实机剪贴板、焦点、Explorer 菜单、真实账号和安装器升级。本地此前找到的完整 Windows 包仍是 0.2.21，不包含本轮功能；不能将它作为新版分发。
+
+## 后续 GitHub 原生构建
+
+同日用户授权发布后，Windows runner 的七项链接原生测试、共享套件及三项真实 WinFsp 门禁均通过，并构建完整 0.2.30 EXE/MSI/ZIP。此结果补齐了上文本机交叉编译阶段的原生执行边界；人工 Explorer、真实账号和安装器升级验收仍未完成。详见 [0.2.30 构建与发布记录](2026-11-19-windows-0.2.30-release.md)。
