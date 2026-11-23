@@ -47,24 +47,25 @@ type Scope struct {
 	FolderToken  string          `json:"folder_token"`
 }
 type Metadata struct {
-	DirectoryOnline   *model.OnlineRecord `json:"directory_online,omitempty"`
-	HistorySnapshot   model.SnapshotID    `json:"history_snapshot,omitempty"`
-	HistoryMediaBody  model.BlobID        `json:"history_media_body,omitempty"`
-	LastBodyAccess    time.Time           `json:"last_body_access,omitempty"`
-	DirectoryCachedAt time.Time           `json:"directory_cached_at,omitempty"`
-	FuseSoftRemove    string              `json:"fuse_soft_remove,omitempty"`
-	SafeSavePending   string              `json:"safe_save_pending,omitempty"`
-	SafeSaveParked    bool                `json:"safe_save_parked,omitempty"`
-	SafeSaveOriginal  model.EntryID       `json:"safe_save_original,omitempty"`
-	FirstObserved     time.Time           `json:"first_observed"`
-	ModTime           time.Time           `json:"mod_time"`
-	SourceURL         string              `json:"source_url,omitempty"`
-	SourceURLToken    string              `json:"source_url_token,omitempty"`
-	CachedLinkURL     string              `json:"cached_link_url,omitempty"`
-	CachedLinkToken   string              `json:"cached_link_token,omitempty"`
-	CachedLinkKind    string              `json:"cached_link_kind,omitempty"`
-	VirtualType       string              `json:"virtual_type,omitempty"`
-	Tombstone         bool                `json:"tombstone,omitempty"`
+	DirectoryOnline     *model.OnlineRecord `json:"directory_online,omitempty"`
+	HistorySnapshot     model.SnapshotID    `json:"history_snapshot,omitempty"`
+	HistoryMediaBody    model.BlobID        `json:"history_media_body,omitempty"`
+	LastBodyAccess      time.Time           `json:"last_body_access,omitempty"`
+	DirectoryVerifiedAt time.Time           `json:"directory_verified_at,omitempty"`
+	DirectoryCachedAt   time.Time           `json:"directory_cached_at,omitempty"`
+	FuseSoftRemove      string              `json:"fuse_soft_remove,omitempty"`
+	SafeSavePending     string              `json:"safe_save_pending,omitempty"`
+	SafeSaveParked      bool                `json:"safe_save_parked,omitempty"`
+	SafeSaveOriginal    model.EntryID       `json:"safe_save_original,omitempty"`
+	FirstObserved       time.Time           `json:"first_observed"`
+	ModTime             time.Time           `json:"mod_time"`
+	SourceURL           string              `json:"source_url,omitempty"`
+	SourceURLToken      string              `json:"source_url_token,omitempty"`
+	CachedLinkURL       string              `json:"cached_link_url,omitempty"`
+	CachedLinkToken     string              `json:"cached_link_token,omitempty"`
+	CachedLinkKind      string              `json:"cached_link_kind,omitempty"`
+	VirtualType         string              `json:"virtual_type,omitempty"`
+	Tombstone           bool                `json:"tombstone,omitempty"`
 }
 type Observation struct {
 	Remote                      string
@@ -468,6 +469,11 @@ func (s *Store) EnsureEntry(ctx context.Context, p string, k model.Kind) (model.
 	return s.ObserveEntry(ctx, Observation{Remote: p, Kind: k})
 }
 func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry, err error) {
+	err = s.update(ctx, func(tx *bolt.Tx) error { var er error; e, er = s.observeEntryTx(tx, o); return er })
+	return
+}
+
+func (s *Store) observeEntryTx(tx *bolt.Tx, o Observation) (e model.Entry, err error) {
 	if err = validRemote(o.Remote, true); err != nil {
 		return
 	}
@@ -479,7 +485,7 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 	if o.VirtualType != "" && (o.Token == "" || o.Kind != model.KindFile || o.VirtualType == "file" || o.VirtualType == "docx" || o.VirtualType == "folder") {
 		return e, model.ErrIdentityChanged
 	}
-	err = s.update(ctx, func(tx *bolt.Tx) error {
+	err = func() error {
 		var er error
 		e, er = byPath(tx, o.Remote)
 		if er != nil && !errors.Is(er, ErrNotFound) {
@@ -543,9 +549,10 @@ func (s *Store) ObserveEntry(ctx context.Context, o Observation) (e model.Entry,
 			return err
 		}
 		return saveEntry(tx, e)
-	})
+	}()
 	return
 }
+
 func (s *Store) Metadata(ctx context.Context, id model.EntryID) (m Metadata, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error { return get(tx, "metadata", string(id), &m) })
 	return

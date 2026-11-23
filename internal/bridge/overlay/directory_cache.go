@@ -11,9 +11,10 @@ import (
 )
 
 type directoryRefresh struct {
-	remote string
-	done   chan struct{}
-	err    error
+	remote  string
+	done    chan struct{}
+	adopted bool
+	err     error
 }
 
 // DirectoryCacheStatus describes metadata availability, not file-body downloads
@@ -59,20 +60,20 @@ func (f *Fs) DirectoryStatus(ctx context.Context) (DirectoryCacheStatus, error) 
 				status.Online = metadata.DirectoryOnline
 			}
 		}
-		if metadata.DirectoryCachedAt.IsZero() || now.Sub(metadata.DirectoryCachedAt) >= directoryFreshFor {
+		if metadata.DirectoryVerifiedAt.IsZero() || now.Sub(metadata.DirectoryVerifiedAt) >= directoryFreshFor {
 			status.Stale++
 		}
 		if !metadata.DirectoryCachedAt.IsZero() {
 			status.Cached++
-			if metadata.DirectoryCachedAt.After(status.LastRefreshed) {
-				status.LastRefreshed = metadata.DirectoryCachedAt
+			if metadata.DirectoryVerifiedAt.After(status.LastRefreshed) {
+				status.LastRefreshed = metadata.DirectoryVerifiedAt
 			}
 		}
 		recent, requested := requests[e.ID]
 		if !requested {
 			recent = model.DirectoryRefreshStatus{Remote: e.Remote, State: "cached"}
 		}
-		recent.CachedAt = metadata.DirectoryCachedAt
+		recent.CachedAt = metadata.DirectoryVerifiedAt
 		if metadata.DirectoryOnline != nil && !metadata.DirectoryOnline.Resolved {
 			recent.NextAttemptAt = metadata.DirectoryOnline.NotBefore
 			if now.Before(recent.NextAttemptAt) {
@@ -145,7 +146,7 @@ func (f *Fs) RefreshDirectory(ctx context.Context, dir string) error {
 func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) error {
 	return f.refreshDirectoryIdentity(ctx, dir, coldOnly, nil)
 }
-func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly bool, expected *model.Entry) (err error) {
+func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly bool, expected *model.Entry, adopted ...*bool) (err error) {
 	ctx, release, err := f.beginDirectoryRead(ctx)
 	if err != nil {
 		return err
@@ -175,6 +176,13 @@ func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly 
 		f.listMu.Unlock()
 		return err
 	}
+	// Every foreground cold read and scheduled observation rechecks admission
+	// under listMu, including a bound persisted after queue admission.
+	if (coldOnly || expected != nil) && metadata.DirectoryOnline != nil && !metadata.DirectoryOnline.Resolved && time.Now().Before(metadata.DirectoryOnline.NotBefore) {
+		_ = f.queueDirectoryRefresh(parent, metadata, false)
+		f.listMu.Unlock()
+		return ErrDirectoryWaiting
+	}
 	if coldOnly && !metadata.DirectoryCachedAt.IsZero() {
 		f.listMu.Unlock()
 		return nil
@@ -187,6 +195,9 @@ func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-pending.done:
+			if len(adopted) > 0 {
+				*adopted[0] = pending.adopted
+			}
 			return pending.err
 		}
 	}
@@ -211,6 +222,9 @@ func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly 
 		persistErr := f.store.RecordDirectoryOnline(context.WithoutCancel(ctx), parent, failure)
 		err = errors.Join(err, persistErr)
 		f.refreshMu.Lock()
+		if len(adopted) > 0 {
+			*adopted[0] = pending.adopted
+		}
 		pending.err = err
 		f.directoryFailures[parent.ID] = err != nil
 		delete(f.refreshing, parent.ID)
@@ -230,10 +244,10 @@ func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly 
 			readErr = model.ErrIdentityChanged
 		}
 		if readErr == nil {
-			readErr = f.observeItems(ctx, dir, parent.Token, items)
+			readErr = f.observeDirectoryItems(ctx, dir, parent.Token, items, &parent)
 		}
 		if readErr == nil {
-			readErr = f.store.MarkDirectoryCached(ctx, parent)
+			pending.adopted = true
 		}
 		f.listMu.Unlock()
 		// VFS reconciliation takes native directory/cache locks. Never enter it
@@ -245,7 +259,9 @@ func (f *Fs) refreshDirectoryIdentity(ctx context.Context, dir string, coldOnly 
 		err = errors.Join(catalogErr, readErr)
 		return err
 	}
-	err = errors.Join(catalogErr, f.store.MarkDirectoryCached(ctx, parent))
+	markErr := f.store.MarkDirectoryCached(ctx, parent)
+	pending.adopted = markErr == nil
+	err = errors.Join(catalogErr, markErr)
 	return err
 }
 
@@ -326,29 +342,41 @@ func (f *Fs) WarmDirectories(ctx context.Context) error { return f.warmDirectory
 func (f *Fs) WarmDirectoriesWithNotify(ctx context.Context, notify func(string)) error {
 	return f.warmDirectoryBatch(ctx, 128, notify)
 }
+
+// RefreshRequestedDirectories is a scoped wake. It keeps the ordinary cursor
+// intact until its periodic turn, while an active sweep still admits priority.
+func (f *Fs) RefreshRequestedDirectories(ctx context.Context, notify func(string)) error {
+	return f.directoryBatch(ctx, 3, false, notify)
+}
 func (f *Fs) warmDirectoryBatch(ctx context.Context, limit int, notifications ...func(string)) error {
+	return f.directoryBatch(ctx, limit, true, notifications...)
+}
+func (f *Fs) directoryBatch(ctx context.Context, limit int, normal bool, notifications ...func(string)) error {
 	f.warmMu.Lock()
 	defer f.warmMu.Unlock()
 	var failures []error
-	if err := f.projectAccountCatalog(ctx); err != nil {
-		failures = append(failures, err)
-	}
-	entries, err := f.store.DirectoryEntries(ctx)
-	if err != nil {
-		return errors.Join(append(failures, err)...)
-	}
-	if len(f.warmQueue) == 0 {
-		clear(f.warmSeen)
-		clear(f.warmQueued)
-	}
-	enqueue := func(e model.Entry) {
-		if e.Kind == model.KindFolder && !f.warmSeen[e.ID] && !f.warmQueued[e.ID] {
-			f.warmQueue = append(f.warmQueue, e.ID)
-			f.warmQueued[e.ID] = true
+	enqueue := func(model.Entry) {}
+	if normal {
+		if err := f.projectAccountCatalog(ctx); err != nil {
+			failures = append(failures, err)
 		}
-	}
-	for _, e := range entries {
-		enqueue(e)
+		entries, err := f.store.DirectoryEntries(ctx)
+		if err != nil {
+			return errors.Join(append(failures, err)...)
+		}
+		if len(f.warmQueue) == 0 {
+			clear(f.warmSeen)
+			clear(f.warmQueued)
+		}
+		enqueue = func(e model.Entry) {
+			if e.Kind == model.KindFolder && !f.warmSeen[e.ID] && !f.warmQueued[e.ID] {
+				f.warmQueue = append(f.warmQueue, e.ID)
+				f.warmQueued[e.ID] = true
+			}
+		}
+		for _, e := range entries {
+			enqueue(e)
+		}
 	}
 	for completed := 0; completed < limit; completed++ {
 		if err := ctx.Err(); err != nil {
@@ -360,12 +388,12 @@ func (f *Fs) warmDirectoryBatch(ctx context.Context, limit int, notifications ..
 			delete(f.warmQueued, f.warmQueue[0])
 			f.warmQueue = f.warmQueue[1:]
 		}
-		request := f.takeDirectoryRequest(len(f.warmQueue) > 0)
+		request := f.takeDirectoryRequest(normal && len(f.warmQueue) > 0)
 		var id model.EntryID
 		if request != nil {
 			id = request.entry.ID
 		} else {
-			if len(f.warmQueue) == 0 {
+			if !normal || len(f.warmQueue) == 0 {
 				break
 			}
 			id = f.warmQueue[0]
@@ -384,12 +412,22 @@ func (f *Fs) warmDirectoryBatch(ctx context.Context, limit int, notifications ..
 				if dueErr != nil {
 					readErr = dueErr
 				} else if due {
+					if request != nil && !f.forcedDirectoryRequest(request) {
+						metadata, metadataErr := f.store.Metadata(ctx, id)
+						if metadataErr != nil {
+							readErr = metadataErr
+							due = false
+						} else if !metadata.DirectoryVerifiedAt.IsZero() && time.Since(metadata.DirectoryVerifiedAt) < directoryFreshFor {
+							due = false
+						}
+					}
 					expected := en
 					if request != nil {
 						expected = request.entry
 					}
-					readErr = f.refreshDirectoryIdentity(ctx, en.Remote, false, &expected)
-					didRead = true
+					if due {
+						readErr = f.refreshDirectoryIdentity(ctx, en.Remote, false, &expected, &didRead)
+					}
 				}
 			}
 		}
@@ -403,12 +441,17 @@ func (f *Fs) warmDirectoryBatch(ctx context.Context, limit int, notifications ..
 			}
 			return errors.Join(append(failures, ctx.Err())...)
 		}
-		f.warmSeen[id] = true
-		if readErr == nil && didRead && len(notifications) > 0 && notifications[0] != nil {
+		if normal {
+			f.warmSeen[id] = true
+		}
+		if didRead && len(notifications) > 0 && notifications[0] != nil {
 			notifications[0](en.Remote)
 		}
 		if readErr != nil {
 			failures = append(failures, readErr)
+		}
+		if !normal {
+			continue
 		}
 		children, childrenErr := f.store.Entries(ctx, en.Remote)
 		if childrenErr != nil {

@@ -349,9 +349,11 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return nil, err
 	}
 	indexWake := overlayFS.DirectoryRefreshWake()
-	indexedRun := metadataIndexedRun(engine.Run, func(ctx context.Context) error {
+	indexedRun := directoryIndexedRun(engine.Run, func(ctx context.Context) error {
 		return overlayFS.WarmDirectoriesWithNotify(ctx, v.NotifyManagedDirectoryChanged)
-	}, dirs, indexWake)
+	}, func(ctx context.Context) error {
+		return overlayFS.RefreshRequestedDirectories(ctx, v.NotifyManagedDirectoryChanged)
+	}, overlayFS.DirectoryRefreshDelay, dirs, indexWake)
 	var cacheObserved atomic.Int64
 	cacheObserved.Store(-1)
 	backgroundRun := metadataIndexedRun(indexedRun, func(ctx context.Context) error {

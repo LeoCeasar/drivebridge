@@ -45,3 +45,68 @@ func metadataIndexedRun(run, index func(context.Context) error, interval time.Du
 		return err
 	}
 }
+
+// Directory requests share the sweep worker but have their own due timer. A
+// scoped wake must not start a new sweep of unrelated folders.
+func directoryIndexedRun(run, sweep, requested func(context.Context) error, next func() (time.Duration, bool), interval time.Duration, wake <-chan struct{}) func(context.Context) error {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	return func(ctx context.Context) error {
+		life, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if life.Err() != nil {
+				return
+			}
+			_ = sweep(life)
+			periodic := time.NewTimer(interval)
+			defer periodic.Stop()
+			for {
+				if life.Err() != nil {
+					return
+				}
+				// A stream of scoped wakes cannot starve an ordinary scan which is due.
+				select {
+				case <-periodic.C:
+					_ = sweep(life)
+					periodic.Reset(interval)
+					continue
+				default:
+				}
+				var delayed *time.Timer
+				var ready <-chan time.Time
+				if delay, ok := next(); ok {
+					if delay < 0 {
+						delay = 0
+					}
+					delayed = time.NewTimer(delay)
+					ready = delayed.C
+				}
+				stopped := false
+				select {
+				case <-life.Done():
+					stopped = true
+				case <-periodic.C:
+					_ = sweep(life)
+					periodic.Reset(interval)
+				case <-wake:
+					_ = requested(life)
+				case <-ready:
+					_ = requested(life)
+				}
+				if delayed != nil {
+					delayed.Stop()
+				}
+				if stopped {
+					return
+				}
+			}
+		}()
+		err := run(life)
+		cancel()
+		<-done
+		return err
+	}
+}

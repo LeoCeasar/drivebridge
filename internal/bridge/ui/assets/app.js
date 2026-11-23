@@ -261,6 +261,20 @@
   const rowCaches = new Map();
   // Keep existing positions; sort only new arrivals. Unchanged rows remain the
   // same DOM objects, including their menus, focus, selections and scroll state.
+  function updateObservedMeta(previous, next) {
+    // The details summary can own keyboard focus. Keep that node and the
+    // expanded state; only its observed rows change. The refresh form lives
+    // outside this area and keeps its input, selection and in-flight action.
+    const oldDetails = [...previous.children].find(node => node.className === 'directory-refresh-details');
+    const newDetails = [...next.children].find(node => node.className === 'directory-refresh-details');
+    function patch(parent, nodes) {
+      if (!parent.insertBefore) { parent.replaceChildren(...nodes); return; }
+      const keep = new Set(nodes); for (const node of [...parent.children]) if (!keep.has(node)) node.remove();
+      nodes.forEach((node,index) => { if (parent.children[index] !== node) parent.insertBefore(node,parent.children[index] || null); });
+    }
+    if (oldDetails && newDetails) patch(oldDetails,[oldDetails.children[0],...[...newDetails.children].slice(1)]);
+    patch(previous,[...next.children].map(node => node === newDetails && oldDetails ? oldDetails : node));
+  }
   function reconcileRows(id,items,build,signature = item => JSON.stringify(item),transition = () => '') {
     let cache = rowCaches.get(id); if (!cache) { cache = new Map(); rowCaches.set(id,cache); }
     const incoming = new Map(items.map(item => [item.id,item]));
@@ -273,6 +287,7 @@
       // Preserve focus for ordinary counters; authorization transitions must retire
       // stale links and controls even when consent left focus in this row.
       if (!entry.row || (entry.sig !== sig && (!occupied || entry.boundary !== boundary))) { entry.row = build(item); entry.sig = sig; entry.boundary = boundary; }
+      else if (entry.sig !== sig && entry.row.observedMeta) updateObservedMeta(entry.row.observedMeta,mountMeta(item,item.state || {}));
       rows.push(entry.row);
     }
     const parent = $(id), currentRows = [...parent.children];
@@ -297,7 +312,7 @@
       head.append(icon,id); name.append(head);
       const place = make('div',undefined,'path-line'), copy = make('button',undefined,'icon-button'); copy.title = '复制路径'; copy.setAttribute('aria-label','复制挂载位置'); copy.append(make('span',undefined,'ico i-copy'));
       copy.addEventListener('click',() => copyText(mount.mountpoint,copy)); place.append(make('span',mount.mountpoint,'mount-path'),copy); name.append(place);
-      if (known && !mount.archived) name.append(mountMeta(mount,state));
+      if (known && !mount.archived) { row.observedMeta = mountMeta(mount,state); name.append(row.observedMeta); }
       if (authorization) {
         name.append(make('p',authorization.label,'mount-auth-status'));
         if (authorization.progress.state === 'waiting_authorization') {

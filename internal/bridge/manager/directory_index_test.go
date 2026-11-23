@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -87,4 +88,45 @@ func TestMetadataIndexWakeContinuesBeforePeriodicInterval(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestDirectoryIndexerScopedWakeAndDeadlineAreIndependentOfSweep(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		wake := make(chan struct{}, 1)
+		var sweeps, requests atomic.Int32
+		var due time.Time
+		run := directoryIndexedRun(func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }, func(context.Context) error { sweeps.Add(1); return nil }, func(context.Context) error {
+			requests.Add(1)
+			if !due.IsZero() && !time.Now().Before(due) {
+				due = time.Time{}
+			}
+			return nil
+		}, func() (time.Duration, bool) {
+			if due.IsZero() {
+				return 0, false
+			}
+			return time.Until(due), true
+		}, time.Hour, wake)
+		done := make(chan error, 1)
+		go func() { done <- run(ctx) }()
+		synctest.Wait()
+		if sweeps.Load() != 1 {
+			t.Fatal("initial ordinary scan missing")
+		}
+		due = time.Now().Add(45 * time.Second)
+		wake <- struct{}{}
+		synctest.Wait()
+		if requests.Load() != 1 || sweeps.Load() != 1 {
+			t.Fatal("scoped wake read unrelated directories", requests.Load(), sweeps.Load())
+		}
+		time.Sleep(45 * time.Second)
+		synctest.Wait()
+		if requests.Load() != 2 || sweeps.Load() != 1 {
+			t.Fatal("delayed request waited for hour-long sweep", requests.Load(), sweeps.Load())
+		}
+		cancel()
+		<-done
+	})
 }

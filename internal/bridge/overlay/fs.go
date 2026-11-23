@@ -291,6 +291,7 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 			return nil, err
 		}
 		if len(known) > 0 {
+			_ = f.queueDirectoryRefresh(parent, metadata, false)
 			return f.cachedDirectory(ctx, parent)
 		}
 		if err := f.refreshDirectory(ctx, dir, true); err != nil {
@@ -363,6 +364,9 @@ func (f *Fs) cachedDirectory(ctx context.Context, parent model.Entry) (fs.DirEnt
 }
 
 func (f *Fs) observeItems(ctx context.Context, dir, parentToken string, items []larkcli.DriveItem) error {
+	return f.observeDirectoryItems(ctx, dir, parentToken, items, nil)
+}
+func (f *Fs) observeDirectoryItems(ctx context.Context, dir, parentToken string, items []larkcli.DriveItem, expected *model.Entry) error {
 	existing, err := f.store.Entries(ctx, dir)
 	if err != nil {
 		return err
@@ -436,14 +440,21 @@ func (f *Fs) observeItems(ctx context.Context, dir, parentToken string, items []
 		}
 		rows = append(rows, r)
 	}
+	observations := make([]store.Observation, 0, len(rows))
 	for _, r := range rows {
-		if r.skip {
-			continue
+		if !r.skip {
+			observations = append(observations, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime, VirtualType: r.virtualType})
 		}
-		if _, err = f.store.ObserveEntry(ctx, store.Observation{Remote: r.remote, Kind: r.kind, Token: r.item.Token, CloudName: r.item.Name, SourceURL: r.item.URL, ModTime: r.mtime, VirtualType: r.virtualType}); err != nil {
+	}
+	if expected != nil {
+		return f.store.AdoptDirectory(ctx, *expected, observations)
+	}
+	for _, o := range observations {
+		if _, err = f.store.ObserveEntry(ctx, o); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 func (f *Fs) find(ctx context.Context, remote string) (model.Entry, error) {

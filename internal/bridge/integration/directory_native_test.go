@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ func TestNativeDirectoryFreshness(t *testing.T) {
 		h.cloud.resources[name] = resource{kind: model.KindFolder, name: name, parent: "parent"}
 	}
 	h.cloud.mu.Unlock()
+	h.vfs.Opt.DirCacheTime = fs.Duration(30 * time.Second)
 	_, mount := mountlib.ResolveMountMethod("cmount")
 	if mount == nil {
 		t.Fatal("required cmount driver is not compiled")
@@ -97,12 +99,29 @@ func TestNativeDirectoryFreshness(t *testing.T) {
 	fetched, observed := h.cloud.fetches, h.cloud.observations
 	h.cloud.resources["new-folder"] = resource{kind: model.KindFolder, name: "Open平台渠道协议与分销功能", parent: "parent"}
 	h.cloud.mu.Unlock()
-	if err := h.overlay.RequestDirectoryRefresh(h.ctx, "Parent"); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.overlay.WarmDirectoriesWithNotify(h.ctx, h.vfs.NotifyManagedDirectoryChanged); err != nil {
-		t.Fatal(err)
-	}
+	// A fresh snapshot stays local. After expiry, a real kernel directory
+	// enumeration must enqueue the automatic request; no manual request is made.
+	life, cancel := context.WithCancel(h.ctx)
+	workerDone := make(chan struct{})
+	workerErr := make(chan error, 1)
+	go func() {
+		defer close(workerDone)
+		for {
+			select {
+			case <-life.Done():
+				return
+			case <-h.overlay.DirectoryRefreshWake():
+				if err := h.overlay.RefreshRequestedDirectories(life, h.vfs.NotifyManagedDirectoryChanged); err != nil {
+					select {
+					case workerErr <- err:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer func() { cancel(); <-workerDone }()
+	time.Sleep(31 * time.Second)
 	deadline = time.Now().Add(10 * time.Second)
 	for {
 		rows, err := os.ReadDir(parent)
@@ -115,8 +134,13 @@ func TestNativeDirectoryFreshness(t *testing.T) {
 		if err == nil && len(rows) == 12 && found {
 			break
 		}
+		select {
+		case readErr := <-workerErr:
+			t.Fatal("automatic directory refresh failed", readErr)
+		default:
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("adopted cloud folder not visible through kernel enumeration", len(rows), err)
+			t.Fatal("expired native parent did not automatically discover cloud folder", len(rows), err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -126,5 +150,5 @@ func TestNativeDirectoryFreshness(t *testing.T) {
 	if !unchanged {
 		t.Fatal("directory discovery acquired bodies or mutated cloud data")
 	}
-	writeEvidence(t, "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR", "native-directory-"+string(h.scope.MountID)+".json", map[string]any{"platform": runtime.GOOS, "before_children": 11, "after_children": 12, "kernel_enumeration": true, "native_attribute_timeout_seconds": 60, "metadata_only": true, "provider": "synthetic"})
+	writeEvidence(t, "DRIVEBRIDGE_NATIVE_EVIDENCE_DIR", "native-directory-"+string(h.scope.MountID)+".json", map[string]any{"platform": runtime.GOOS, "before_children": 11, "after_children": 12, "kernel_enumeration": true, "native_attribute_timeout_seconds": 60, "metadata_only": true, "automatic_native_reopen": true, "provider": "synthetic"})
 }

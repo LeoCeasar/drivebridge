@@ -150,3 +150,43 @@ func (s *Store) RecordDirectoryOnline(ctx context.Context, expected model.Entry,
 		return put(tx, "metadata", string(en.ID), m)
 	})
 }
+
+// AdoptDirectory atomically binds a complete listing to the current live route.
+// An old response cannot insert even one child after delete/recreate or rename.
+func (s *Store) AdoptDirectory(ctx context.Context, expected model.Entry, rows []Observation) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		en, err := byPath(tx, expected.Remote)
+		if err != nil {
+			return err
+		}
+		if en.ID != expected.ID || en.Kind != model.KindFolder || en.Token != expected.Token {
+			return model.ErrIdentityChanged
+		}
+		var m Metadata
+		if err = get(tx, "metadata", string(en.ID), &m); err != nil {
+			return err
+		}
+		if m.Tombstone {
+			return ErrNotFound
+		}
+		if en.FrozenBy != "" {
+			return ErrFrozen
+		}
+		for _, o := range rows {
+			parent := path.Dir(o.Remote)
+			if parent == "." {
+				parent = ""
+			}
+			if parent != en.Remote || o.Remote == en.Remote {
+				return model.ErrIdentityChanged
+			}
+			if _, err = s.observeEntryTx(tx, o); err != nil {
+				return err
+			}
+		}
+		now := time.Now().UTC()
+		m.DirectoryCachedAt = now
+		m.DirectoryVerifiedAt = now
+		return put(tx, "metadata", string(en.ID), m)
+	})
+}

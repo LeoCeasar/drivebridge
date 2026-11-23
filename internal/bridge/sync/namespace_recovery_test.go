@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -333,30 +334,34 @@ func TestUnknownDeleteBlocksProviderTokenAlias(t *testing.T) {
 }
 
 func TestNamespaceFairnessAcrossMetadataPasses(t *testing.T) {
-	s, e, c, _ := setup(t, model.KindFile)
-	_, err := s.ObserveEntry(bg, store.Observation{Remote: "slow", Kind: model.KindFolder, Token: "slow-parent"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"a", "b", "c"} {
-		_, err = s.ObserveEntry(bg, store.Observation{Remote: "slow/" + name, Kind: model.KindFile, Token: "slow-" + name})
+	// Exercise scheduling deadlines without charging real Windows filesystem I/O
+	// against a 250ms simulated provider budget.
+	synctest.Test(t, func(t *testing.T) {
+		s, e, c, _ := setup(t, model.KindFile)
+		_, err := s.ObserveEntry(bg, store.Observation{Remote: "slow", Kind: model.KindFolder, Token: "slow-parent"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		finishRecoveryNamespace(t, s, model.NamespaceOp{Kind: "delete", Src: "slow/" + name})
-	}
-	_, folder := finishRecoveryNamespace(t, s, model.NamespaceOp{Kind: "mkdir", Dst: "fast"})
-	e.source = &slowNamespaceCloud{&namespaceRecoveryCloud{fixtureCloud: c}, "slow-parent"}
-	e.opt.SliceDuration = 100 * time.Millisecond
-	for i := 0; i < 2; i++ {
-		ctx, cancel := context.WithTimeout(bg, 250*time.Millisecond)
-		_ = e.syncNamespace(ctx)
-		cancel()
-	}
-	current, _ := s.Entry(bg, folder.ID)
-	if current.Token == "" {
-		t.Fatal("independent work starved across passes")
-	}
+		for _, name := range []string{"a", "b", "c"} {
+			_, err = s.ObserveEntry(bg, store.Observation{Remote: "slow/" + name, Kind: model.KindFile, Token: "slow-" + name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finishRecoveryNamespace(t, s, model.NamespaceOp{Kind: "delete", Src: "slow/" + name})
+		}
+		_, folder := finishRecoveryNamespace(t, s, model.NamespaceOp{Kind: "mkdir", Dst: "fast"})
+		e.source = &slowNamespaceCloud{&namespaceRecoveryCloud{fixtureCloud: c}, "slow-parent"}
+		e.opt.SliceDuration = 100 * time.Millisecond
+		for i := 0; i < 2; i++ {
+			ctx, cancel := context.WithTimeout(bg, 250*time.Millisecond)
+			_ = e.syncNamespace(ctx)
+			cancel()
+		}
+		current, _ := s.Entry(bg, folder.ID)
+		if current.Token == "" {
+			t.Fatal("independent work starved across passes")
+		}
+	})
 }
 
 type slowBackupNamespaceCloud struct{ *namespaceRecoveryCloud }
