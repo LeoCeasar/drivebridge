@@ -253,15 +253,17 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $log = Join-Path $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR 'windows-native-tests.jsonl'
-          go test -json -count=1 -timeout 8m -tags cmount -run '^TestWindowsNative(SaveParity|DeleteParity|RemoteGeneration)$' ./internal/bridge/integration 2>&1 | Tee-Object -FilePath $log
+          go test -json -count=1 -timeout 8m -tags cmount -run '^(TestWindowsNative(SaveParity|DeleteParity|RemoteGeneration)|TestNativeDirectoryFreshness)$' ./internal/bridge/integration 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE) { throw 'Required WinFsp native save gates failed; missing driver is not a skip' }
           $events = Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }
-          foreach ($name in @('TestWindowsNativeSaveParity','TestWindowsNativeDeleteParity','TestWindowsNativeRemoteGeneration')) {
+          foreach ($name in @('TestWindowsNativeSaveParity','TestWindowsNativeDeleteParity','TestWindowsNativeRemoteGeneration','TestNativeDirectoryFreshness')) {
             if (!($events | Where-Object { $_.Action -eq 'pass' -and $_.Test -eq $name })) { throw "Required native test did not pass: $name" }
             if ($events | Where-Object { $_.Action -eq 'skip' -and $_.Test -eq $name }) { throw "Required native test was skipped: $name" }
           }
           $reports = @(Get-ChildItem $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR -Filter 'windows-native-*.json')
           if ($reports.Count -ne 3) { throw "Expected three native evidence reports, got $($reports.Count)" }
+          $directoryReports = @(Get-ChildItem $env:DRIVEBRIDGE_NATIVE_EVIDENCE_DIR -Filter 'native-directory-*.json')
+          if ($directoryReports.Count -ne 1) { throw 'Expected exactly one native directory freshness report' }
       - name: Retain Windows runtime and native evidence
         if: always()
         uses: actions/upload-artifact@v4
