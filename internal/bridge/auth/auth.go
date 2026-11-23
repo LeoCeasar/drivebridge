@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/onlinecooldown"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/lib/larkcli"
 )
@@ -88,6 +89,8 @@ type retainedFlow struct {
 	finalErr   error
 }
 type Service struct {
+	cooldownMu       sync.Mutex
+	cooldowns        map[string]*onlinecooldown.Coordinator
 	options          Options
 	domain, configID string
 	profiles         ProfileStore
@@ -689,7 +692,11 @@ func (s *Service) ManagedRunner(ctx context.Context, id model.ProfileID) (*larkc
 	if err != nil {
 		return nil, err
 	}
-	return larkcli.NewManaged(larkcli.ManagedOptions{Executable: s.options.Executable, AuthRef: binding.AuthRef, AuthRoot: binding.AuthRoot, Identity: larkcli.Identity{Brand: identity.Brand, AppID: identity.AppID, UserOpenID: identity.UserOpenID}, Coordinator: s.coordinator})
+	runner, err := larkcli.NewManaged(larkcli.ManagedOptions{Executable: s.options.Executable, AuthRef: binding.AuthRef, AuthRoot: binding.AuthRoot, Identity: larkcli.Identity{Brand: identity.Brand, AppID: identity.AppID, UserOpenID: identity.UserOpenID}, Coordinator: s.coordinator})
+	if err != nil {
+		return nil, err
+	}
+	return s.withOnlinePolicy(ctx, id, binding, runner)
 }
 func (s *Service) Cancel(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {

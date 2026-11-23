@@ -129,7 +129,7 @@ func TestAwaitingCreationIsVisibleAndDoesNotMaskActiveUpload(t *testing.T) {
 	if status.CloudState != "awaiting_verification" || status.Inflight != 0 || len(status.Issues) != 1 || status.Issues[0].CreateRecovery == nil || status.Issues[0].Code != "unknown_result" {
 		t.Fatalf("uncertain status = %+v", status)
 	}
-	if status.Issues[0].Diagnostic == nil || !strings.Contains(status.Issues[0].Diagnostic.Message, "旧记录未保留首次错误原因") {
+	if status.Issues[0].Diagnostic == nil || !strings.Contains(status.Issues[0].Diagnostic.Message, "首次错误原因未记录") {
 		t.Fatal("missing legacy explanation")
 	}
 	if status.Issues[0].CreateRecovery.CurrentGeneration != job.Generation || status.Issues[0].CreateRecovery.CurrentLocal != job.Local {
@@ -206,6 +206,17 @@ func TestCreationAttentionStatusUsesCurrentLocalAndKeepsOriginalCopy(t *testing.
 		t.Fatal(err)
 	}
 	info := status.Issues[0].CreateRecovery
+	cycleRaw, cycleErr := json.Marshal(info)
+	if cycleErr != nil {
+		t.Fatal(cycleErr)
+	}
+	var observedCycle map[string]any
+	if err := json.Unmarshal(cycleRaw, &observedCycle); err != nil {
+		t.Fatal(err)
+	}
+	if observedCycle["diagnostic_cycle"] != op.DiagnosticCycle || observedCycle["policy_version"] != float64(op.RecoveryVersion) {
+		t.Fatalf("recovery CAS snapshot missing: %s", cycleRaw)
+	}
 	if info.CurrentGeneration != latest.Generation || info.CurrentLocal != latest.Local || info.CurrentLocal == job.Local {
 		t.Fatal("recovery must use latest snapshot", info, latest)
 	}

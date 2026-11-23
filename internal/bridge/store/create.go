@@ -69,7 +69,7 @@ func (s *Store) PrepareCreate(ctx context.Context, jobID model.JobID, parentToke
 			return er
 		}
 		id := uuid.NewString()
-		out = model.CreateOp{ID: id, JobID: jobID, EntryID: e.ID, Generation: j.Job.Generation, Kind: e.Kind, ParentToken: parentToken, TemporaryName: "DriveBridge-pending-" + id, FinalName: finalName, Input: j.Job.Local, State: "prepared"}
+		out = model.CreateOp{ID: id, JobID: jobID, EntryID: e.ID, Generation: j.Job.Generation, Kind: e.Kind, ParentToken: parentToken, TemporaryName: "DriveBridge-pending-" + id, FinalName: finalName, Input: j.Job.Local, State: "prepared", RecoveryVersion: 1, DiagnosticCycle: uuid.NewString()}
 		return put(tx, "createops", id, out)
 	})
 	return

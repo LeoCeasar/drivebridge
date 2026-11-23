@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
 	syncer "github.com/rclone/rclone/internal/bridge/sync"
@@ -54,9 +55,9 @@ type worker struct {
 	stopping     bool
 	stopped      chan struct{}
 	stopOnce     sync.Once
-	engineCancel context.CancelFunc
+	engineCancel context.CancelCauseFunc
 	engineDone   chan struct{}
-	controls     map[uint64]context.CancelFunc
+	controls     map[uint64]context.CancelCauseFunc
 	controlNext  uint64
 	controlWG    sync.WaitGroup
 }
@@ -124,7 +125,7 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 	if current.Archived {
 		return ErrArchived
 	}
-	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{}), controls: map[uint64]context.CancelFunc{}}
+	w := &worker{manager: m, spec: spec, instance: uuid.NewString(), stopped: make(chan struct{}), controls: map[uint64]context.CancelCauseFunc{}}
 	m.mu.Lock()
 	m.workers[id] = w
 	m.mu.Unlock()
@@ -169,7 +170,12 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 			return err
 		}
 	}
-	engineCtx, cancel := context.WithCancel(context.Background())
+	if err = resumeUserStoppedWork(ctx, services.store); err != nil {
+		w.recordError(err)
+		_ = services.runtime.Unmount()
+		return err
+	}
+	engineCtx, cancel := context.WithCancelCause(context.Background())
 	w.engineCancel = cancel
 	w.engineDone = make(chan struct{})
 	historyDone := make(chan struct{})
@@ -182,7 +188,12 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 			}
 		}
 	}()
-	defer func() { cancel(); w.closeControls(); <-w.engineDone; <-historyDone }()
+	defer func() {
+		cancel(online.CancellationCause("runtime_shutdown"))
+		w.closeControls()
+		<-w.engineDone
+		<-historyDone
+	}()
 	w.mu.Lock()
 	w.ready = true
 	w.mu.Unlock()
@@ -192,6 +203,7 @@ func (m *Manager) RunWorker(ctx context.Context, id model.MountID) error {
 	select {
 	case <-ctx.Done():
 		w.log("worker_interrupted")
+		cancel(online.CancellationCause("runtime_shutdown"))
 		_ = services.runtime.Unmount()
 		return ctx.Err()
 	case <-w.stopped:
@@ -226,6 +238,9 @@ func (w *worker) status(ctx context.Context) (model.MountStatus, error) {
 	}
 	out.Running = ready
 	out.History = &historyState
+	if !ready {
+		out.LastError = last
+	}
 	if last != "" {
 		out.LastError = last
 	}
@@ -277,6 +292,25 @@ func (w *worker) stop(ctx context.Context, wait time.Duration) error {
 	return w.stopPolicy(ctx, wait, false)
 }
 func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bool) error {
+	origin := "runtime_shutdown"
+	if w.manager != nil {
+		state, err := w.manager.readDesktopState()
+		if err != nil {
+			return err
+		}
+		if state != nil {
+			if desired, recorded := state.Desired[w.spec.Mount.ID]; recorded && !desired {
+				origin = "user_stop"
+			}
+		}
+	}
+	return w.stopPolicyOrigin(ctx, wait, preserve, origin)
+}
+
+func (w *worker) stopPolicyOrigin(ctx context.Context, wait time.Duration, preserve bool, origin string) error {
+	if origin != "user_stop" && origin != "runtime_shutdown" {
+		return ErrConfig
+	}
 	w.mu.Lock()
 	if w.stopping || !w.ready || w.services == nil {
 		w.mu.Unlock()
@@ -286,7 +320,7 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 	services := w.services
 	if preserve {
 		for _, cancel := range w.controls {
-			cancel()
+			cancel(online.CancellationCause(origin))
 		}
 	}
 	w.mu.Unlock()
@@ -340,7 +374,7 @@ func (w *worker) stopPolicy(ctx context.Context, wait time.Duration, preserve bo
 		}
 	}
 	stopDrain()
-	w.engineCancel()
+	w.engineCancel(online.CancellationCause(origin))
 	<-w.engineDone
 	if err := services.runtime.Unmount(); err != nil {
 		keepPaused = true
@@ -469,14 +503,18 @@ func (m *Manager) Stop(ctx context.Context, id model.MountID, wait time.Duration
 	if _, err = m.desktopIntent(ctx, id, &disabled, false); err != nil {
 		return err
 	}
-	return m.stopAdmitted(ctx, id, wait)
+	return m.stopAdmittedOrigin(ctx, id, wait, "user_stop")
 }
 
 // stopAdmitted performs a safe maintenance stop without changing user intent.
 // Its caller already holds lifecycle admission, which must not be re-entered.
 func (m *Manager) stopAdmitted(ctx context.Context, id model.MountID, wait time.Duration) error {
+	return m.stopAdmittedOrigin(ctx, id, wait, "runtime_shutdown")
+}
+
+func (m *Manager) stopAdmittedOrigin(ctx context.Context, id model.MountID, wait time.Duration, origin string) error {
 	var out struct{}
-	err := m.call(ctx, id, "/stop", map[string]int64{"wait_ns": int64(wait)}, &out)
+	err := m.call(ctx, id, "/stop", map[string]any{"wait_ns": int64(wait), "cancel_origin": origin}, &out)
 	if err != nil && !errors.Is(err, ErrUnavailable) && !os.IsNotExist(err) {
 		return err
 	}
@@ -519,17 +557,23 @@ func (w *worker) beginControl(parent context.Context) (context.Context, func(), 
 	if !w.ready || w.stopping {
 		return nil, nil, ErrPending
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(online.WithCancelOrigin(parent, "caller_gone"))
 	w.controlNext++
 	id := w.controlNext
 	if w.controls == nil {
-		w.controls = map[uint64]context.CancelFunc{}
+		w.controls = map[uint64]context.CancelCauseFunc{}
 	}
 	w.controls[id] = cancel
 	w.controlWG.Add(1)
 	var once sync.Once
 	return ctx, func() {
-		once.Do(func() { cancel(); w.mu.Lock(); delete(w.controls, id); w.mu.Unlock(); w.controlWG.Done() })
+		once.Do(func() {
+			cancel(online.CancellationCause("caller_gone"))
+			w.mu.Lock()
+			delete(w.controls, id)
+			w.mu.Unlock()
+			w.controlWG.Done()
+		})
 	}, nil
 }
 func (w *worker) closeControls() {
@@ -537,8 +581,39 @@ func (w *worker) closeControls() {
 	w.stopping = true
 	w.ready = false
 	for _, cancel := range w.controls {
-		cancel()
+		cancel(online.CancellationCause("runtime_shutdown"))
 	}
 	w.mu.Unlock()
 	w.controlWG.Wait()
+}
+
+// Starting a stopped mount is explicit continuation of its user-stop intent.
+// Resume only that restriction; dispatched work retains its verification state.
+func resumeUserStoppedWork(ctx context.Context, s *store.Store) error {
+	jobs, err := s.Pending(ctx)
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs {
+		j, err := s.Journal(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if j.Online == nil {
+			continue
+		}
+		last := j.Online.Last
+		if j.Online.PausedReason != "cancel_user_stop" && (last == nil || last.Cause != "canceled" || last.CancelOrigin != "user_stop") {
+			continue
+		}
+		if err = s.ClearJobOnlinePause(ctx, job.ID); err != nil {
+			return err
+		}
+		if (job.State == model.StatusBlocked || job.State == model.StatusPaused) && j.ErrorCode == "canceled" {
+			if err = s.ResumeJob(ctx, job.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return s.ResumeStoppedNamespaces(ctx)
 }

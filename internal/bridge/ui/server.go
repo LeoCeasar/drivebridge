@@ -132,7 +132,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		h.openControl(w, r)
 		return
 	}
-	if r.Method == http.MethodGet && (p == "/" || p == "/conversion-rules.js" || p == "/history-view.js" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
+	if r.Method == http.MethodGet && (p == "/" || p == "/conversion-rules.js" || p == "/history-view.js" || p == "/app.js" || p == "/auth-view.js" || p == "/diff-view.js" || p == "/recovery-view.js" || p == "/online-view.js" || p == "/batch-view.js" || p == "/discovery-view.js" || p == "/style.css") {
 		name := "assets" + p
 		if p == "/" {
 			name = "assets/index.html"
@@ -145,7 +145,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 		switch p {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case "/conversion-rules.js", "/history-view.js", "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/batch-view.js", "/discovery-view.js":
+		case "/conversion-rules.js", "/history-view.js", "/app.js", "/auth-view.js", "/diff-view.js", "/recovery-view.js", "/online-view.js", "/batch-view.js", "/discovery-view.js":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -319,16 +319,18 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var in struct {
-			Action             string       `json:"action"`
-			ExpectedGeneration uint64       `json:"expected_generation"`
-			ExpectedLocal      model.BlobID `json:"expected_local"`
-			ConfirmRecreate    bool         `json:"confirm_recreate"`
+			Action                  string       `json:"action"`
+			ExpectedGeneration      uint64       `json:"expected_generation"`
+			ExpectedLocal           model.BlobID `json:"expected_local"`
+			ExpectedDiagnosticCycle string       `json:"expected_diagnostic_cycle"`
+			ExpectedPolicyVersion   int          `json:"expected_policy_version"`
+			ConfirmRecreate         bool         `json:"confirm_recreate"`
 		}
 		if r.URL.RawQuery != "" || decode(w, r, &in) != nil {
 			respondError(w, 400, "invalid_request")
 			return
 		}
-		req := model.CreateRecoveryRequest{JobID: model.JobID(parts[4]), Action: in.Action, ExpectedGeneration: in.ExpectedGeneration, ExpectedLocal: in.ExpectedLocal, ConfirmRecreate: in.ConfirmRecreate}
+		req := model.CreateRecoveryRequest{JobID: model.JobID(parts[4]), Action: in.Action, ExpectedGeneration: in.ExpectedGeneration, ExpectedLocal: in.ExpectedLocal, ExpectedDiagnosticCycle: in.ExpectedDiagnosticCycle, ExpectedPolicyVersion: in.ExpectedPolicyVersion, ConfirmRecreate: in.ConfirmRecreate}
 		if manager.ValidateCreateRecoveryRequest(req) != nil {
 			respondError(w, 400, "invalid_request")
 			return

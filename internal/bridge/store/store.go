@@ -47,23 +47,24 @@ type Scope struct {
 	FolderToken  string          `json:"folder_token"`
 }
 type Metadata struct {
-	HistorySnapshot   model.SnapshotID `json:"history_snapshot,omitempty"`
-	HistoryMediaBody  model.BlobID     `json:"history_media_body,omitempty"`
-	LastBodyAccess    time.Time        `json:"last_body_access,omitempty"`
-	DirectoryCachedAt time.Time        `json:"directory_cached_at,omitempty"`
-	FuseSoftRemove    string           `json:"fuse_soft_remove,omitempty"`
-	SafeSavePending   string           `json:"safe_save_pending,omitempty"`
-	SafeSaveParked    bool             `json:"safe_save_parked,omitempty"`
-	SafeSaveOriginal  model.EntryID    `json:"safe_save_original,omitempty"`
-	FirstObserved     time.Time        `json:"first_observed"`
-	ModTime           time.Time        `json:"mod_time"`
-	SourceURL         string           `json:"source_url,omitempty"`
-	SourceURLToken    string           `json:"source_url_token,omitempty"`
-	CachedLinkURL     string           `json:"cached_link_url,omitempty"`
-	CachedLinkToken   string           `json:"cached_link_token,omitempty"`
-	CachedLinkKind    string           `json:"cached_link_kind,omitempty"`
-	VirtualType       string           `json:"virtual_type,omitempty"`
-	Tombstone         bool             `json:"tombstone,omitempty"`
+	DirectoryOnline   *model.OnlineRecord `json:"directory_online,omitempty"`
+	HistorySnapshot   model.SnapshotID    `json:"history_snapshot,omitempty"`
+	HistoryMediaBody  model.BlobID        `json:"history_media_body,omitempty"`
+	LastBodyAccess    time.Time           `json:"last_body_access,omitempty"`
+	DirectoryCachedAt time.Time           `json:"directory_cached_at,omitempty"`
+	FuseSoftRemove    string              `json:"fuse_soft_remove,omitempty"`
+	SafeSavePending   string              `json:"safe_save_pending,omitempty"`
+	SafeSaveParked    bool                `json:"safe_save_parked,omitempty"`
+	SafeSaveOriginal  model.EntryID       `json:"safe_save_original,omitempty"`
+	FirstObserved     time.Time           `json:"first_observed"`
+	ModTime           time.Time           `json:"mod_time"`
+	SourceURL         string              `json:"source_url,omitempty"`
+	SourceURLToken    string              `json:"source_url_token,omitempty"`
+	CachedLinkURL     string              `json:"cached_link_url,omitempty"`
+	CachedLinkToken   string              `json:"cached_link_token,omitempty"`
+	CachedLinkKind    string              `json:"cached_link_kind,omitempty"`
+	VirtualType       string              `json:"virtual_type,omitempty"`
+	Tombstone         bool                `json:"tombstone,omitempty"`
 }
 type Observation struct {
 	Remote                      string

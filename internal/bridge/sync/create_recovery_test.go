@@ -47,8 +47,13 @@ func unknownCreateFixture(t *testing.T) (*store.Store, *Engine, *fixtureCloud, m
 func TestMissingCreationStopsAfterVerificationBudget(t *testing.T) {
 	s, e, source, en, job, op := unknownCreateFixture(t)
 	source.items = nil
-	e.opt.Now = func() time.Time { return time.Now().Add(16 * time.Minute) }
-	err := e.SyncEntry(bg, en.ID)
+	now := time.Now().Add(16 * time.Minute)
+	e.opt.Now = func() time.Time { return now }
+	var err error
+	for range 3 {
+		err = e.SyncEntry(bg, en.ID)
+		now = now.Add(5 * time.Minute)
+	}
 	got, _ := s.Job(bg, job.ID)
 	current, _ := s.CreateForJob(bg, job.ID)
 	if got.State != model.StatusBlocked || !current.NeedsAttention || current.CheckReason != "not_found" {
@@ -71,8 +76,12 @@ func recoveryRequest(en model.Entry, job model.Job, action string) model.CreateR
 func requireAttention(t *testing.T, s *store.Store, e *Engine, source *fixtureCloud, en model.Entry, job model.Job) {
 	t.Helper()
 	source.items = nil
-	e.opt.Now = func() time.Time { return time.Now().Add(16 * time.Minute) }
-	_ = e.SyncEntry(bg, en.ID)
+	now := time.Now().Add(16 * time.Minute)
+	e.opt.Now = func() time.Time { return now }
+	for range 3 {
+		_ = e.SyncEntry(bg, en.ID)
+		now = now.Add(5 * time.Minute)
+	}
 	op, _ := s.CreateForJob(bg, job.ID)
 	if !op.NeedsAttention {
 		t.Fatal("not attention")
@@ -157,6 +166,13 @@ func TestRecheckDoesNotReuploadAndCanRecoverFoundObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, _ := s.Entry(bg, en.ID)
+	if current.Token != "" {
+		t.Fatal("recheck adopted resource before normal admission")
+	}
+	if err = e.SyncEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = s.Entry(bg, en.ID)
 	if current.Status != model.StatusSynced || source.writes != 1 {
 		t.Fatal("recheck replayed creation")
 	}
@@ -262,7 +278,10 @@ func TestCanceledCreationBindingRetainsReturnedCandidate(t *testing.T) {
 	e.source = source
 	if err = e.SyncEntry(bg, en.ID); err != nil {
 		t.Fatal(err)
-	}
+	} // observation only
+	if err = e.Retry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	} // explicit continuation
 	current, _ := s.Entry(bg, en.ID)
 	if current.Status != model.StatusSynced || source.writes != 1 {
 		t.Fatal("creation repeated rather than reconciled")

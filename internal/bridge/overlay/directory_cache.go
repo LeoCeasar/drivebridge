@@ -3,6 +3,8 @@ package overlay
 import (
 	"context"
 	"errors"
+	"github.com/rclone/rclone/internal/bridge/online"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 )
@@ -15,7 +17,10 @@ type directoryRefresh struct {
 
 // DirectoryCacheStatus describes metadata availability, not file-body downloads
 // or an exhaustive inventory of every accessible cloud resource.
-type DirectoryCacheStatus struct{ Known, Cached, Refreshing, Failed int }
+type DirectoryCacheStatus struct {
+	Known, Cached, Refreshing, Failed int
+	Online                            *model.OnlineRecord
+}
 
 func (f *Fs) DirectoryStatus(ctx context.Context) (DirectoryCacheStatus, error) {
 	var status DirectoryCacheStatus
@@ -24,12 +29,16 @@ func (f *Fs) DirectoryStatus(ctx context.Context) (DirectoryCacheStatus, error) 
 		return status, err
 	}
 	status.Known = len(entries)
-	known := make(map[model.EntryID]bool, len(entries))
 	for _, e := range entries {
-		known[e.ID] = true
 		metadata, err := f.store.Metadata(ctx, e.ID)
 		if err != nil {
 			return status, err
+		}
+		if metadata.DirectoryOnline != nil && !metadata.DirectoryOnline.Resolved {
+			status.Failed++
+			if status.Online == nil || (metadata.DirectoryOnline.Last != nil && (status.Online.Last == nil || metadata.DirectoryOnline.Last.At.After(status.Online.Last.At))) {
+				status.Online = metadata.DirectoryOnline
+			}
 		}
 		if !metadata.DirectoryCachedAt.IsZero() {
 			status.Cached++
@@ -37,11 +46,7 @@ func (f *Fs) DirectoryStatus(ctx context.Context) (DirectoryCacheStatus, error) 
 	}
 	f.refreshMu.Lock()
 	status.Refreshing = len(f.refreshing)
-	for id, failed := range f.directoryFailures {
-		if failed && known[id] {
-			status.Failed++
-		}
-	}
+
 	f.refreshMu.Unlock()
 	return status, nil
 }
@@ -81,7 +86,7 @@ func (f *Fs) RefreshDirectory(ctx context.Context, dir string) error {
 	return f.refreshDirectory(ctx, dir, false)
 }
 
-func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) error {
+func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) (err error) {
 	if allowed, err := f.SyncPathAllowed(ctx, dir); err != nil || !allowed {
 		return err
 	}
@@ -130,6 +135,13 @@ func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) er
 	f.refreshMu.Unlock()
 	f.listMu.Unlock()
 	defer func() {
+		var failure *model.OnlineFailure
+		if err != nil {
+			captured := online.Capture(ctx, err, "directory_refresh", "local_commit", "not_dispatched", time.Now())
+			failure = &captured
+		}
+		persistErr := f.store.RecordDirectoryOnline(context.WithoutCancel(ctx), parent, failure)
+		err = errors.Join(err, persistErr)
 		f.refreshMu.Lock()
 		pending.err = err
 		f.directoryFailures[parent.ID] = err != nil
@@ -141,7 +153,7 @@ func (f *Fs) refreshDirectory(ctx context.Context, dir string, coldOnly bool) er
 	if parent.Token != "" {
 		items, sourceErr := f.source.List(ctx, parent.Token)
 		if sourceErr != nil {
-			err = errors.Join(catalogErr, sourceErr)
+			err = errors.Join(catalogErr, online.AtPhaseIfUnset(sourceErr, "directory_refresh", "list_parent"))
 			return err
 		}
 		f.listMu.Lock()

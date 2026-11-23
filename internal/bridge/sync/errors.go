@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
-	"strings"
-	"syscall"
 
 	"github.com/rclone/rclone/internal/bridge/history"
 	"github.com/rclone/rclone/internal/bridge/markdown"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/store"
-	"github.com/rclone/rclone/lib/larkcli"
 )
 
 var errRemoteDrift = errors.New("remote_drift")
@@ -30,48 +27,29 @@ func classify(err error) string {
 		return "history_git_unavailable"
 	case errors.Is(err, history.ErrIntegrity) || errors.Is(err, history.ErrLimit):
 		return "unsupported_content"
-	case errors.Is(err, model.ErrIdentityChanged):
-		return "identity_changed"
 	case errors.Is(err, model.ErrUnknownResult):
 		return "unknown_result"
 	case errors.Is(err, errParentPending):
 		return "parent_pending"
-	case errors.Is(err, larkcli.ErrAuthRequired):
-		return "auth_required"
-	case errors.Is(err, larkcli.ErrCredentialStorage):
-		return "credential_unavailable"
-	case errors.Is(err, larkcli.ErrVerification):
-		return "network_or_protocol"
-	case errors.Is(err, model.ErrUnsupportedContent):
-		return "unsupported_content"
-	case errors.Is(err, store.ErrSpace) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT):
+	case errors.Is(err, store.ErrSpace):
 		return "insufficient_space"
-	case errors.Is(err, syscall.EIO):
-		return "io_error"
-	case errors.Is(err, os.ErrPermission):
+	}
+	// Compatibility codes remain for the old state-machine/API contract. The
+	// durable Online record carries the precise shared cause independently.
+	switch cause := online.Cause(err); cause {
+	case "verification_unavailable", "connection_error", "transport_error", "dns_error":
+		return "network_or_protocol"
+	case "scope_missing":
 		return "permission_denied"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "request_timeout"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
+	default:
+		return cause
 	}
-	var api *larkcli.Error
-	if errors.As(err, &api) {
-		c := strings.ToLower(api.Code + " " + api.Type + " " + api.Subtype)
-		if strings.Contains(c, "permission") || strings.Contains(c, "scope") || strings.Contains(c, "auth") {
-			return "permission_denied"
-		}
-		if strings.Contains(c, "rate") || api.RetryAfter > 0 {
-			return "rate_limited"
-		}
-	}
-	return "network_or_protocol"
 }
 func (e *Engine) pause(ctx context.Context, j model.Job, err error) error {
-	e.deferRetry(j.ID, err)
-	code := classify(err)
+	e.deferRetry(ctx, j.ID, err)
+	code := pauseCode(ctx, err)
 	state := model.StatusPaused
-	if code == "unsupported_content" || code == "permission_denied" || code == "auth_required" || code == "credential_unavailable" || code == "identity_changed" || code == "history_git_unavailable" {
+	if code == "unsupported_content" || code == "permission_denied" || code == "auth_required" || code == "credential_unavailable" || code == "identity_changed" || code == "history_git_unavailable" || code == "unclassified_error" || code == "protocol_error" || code == "api_error_unknown" || code == "tls_error" || code == "quota_exceeded" || code == "canceled" {
 		state = model.StatusBlocked
 	}
 	diagnostic := &model.SyncDiagnostic{Kind: code, Message: diagnosticMessage(code)}
@@ -91,7 +69,26 @@ func (e *Engine) pause(ctx context.Context, j model.Job, err error) error {
 		}
 	}
 	saveErr := e.store.PauseJobWithDiagnostic(context.WithoutCancel(ctx), j.ID, state, code, diagnostic)
-	return errors.Join(err, saveErr)
+	phase := "unknown"
+	if code == "unsupported_content" {
+		phase = "conversion"
+	}
+	return online.AtPhaseIfUnset(errors.Join(err, saveErr), "update", phase)
+}
+
+func pauseCode(ctx context.Context, err error) string {
+	code := classify(err)
+	if code == "canceled" {
+		switch online.CancellationOrigin(ctx, err) {
+		case "runtime_shutdown":
+			return "runtime_interrupted"
+		case "caller_gone":
+			return "caller_interrupted"
+		case "phase_deadline", "parent_deadline":
+			return "request_timeout"
+		}
+	}
+	return code
 }
 func (e *Engine) conflict(ctx context.Context, j model.Job, remote model.Snapshot, reason string) error {
 	current, err := e.store.Entry(ctx, j.EntryID)
@@ -141,7 +138,11 @@ func diagnosticMessage(code string) string {
 		return "云端请求等待超时，修改已保留，后台将稍后重试。"
 	case "canceled":
 		return "同步请求已取消，修改保留在本机。"
+	case "runtime_interrupted":
+		return "应用退出或运行环境中断，保留原操作以便恢复后安全核验。"
+	case "caller_interrupted":
+		return "交互请求已结束，已保存的任务保留在后台。"
 	default:
-		return "网络连接或服务响应未通过核验，后台将重试。"
+		return online.Message(code)
 	}
 }

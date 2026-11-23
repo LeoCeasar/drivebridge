@@ -384,7 +384,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return
 	}, recoverCreation: engine.RecoverCreation, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
-		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed}, err
+		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed, Online: stats.Online}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
 		if err := overlayFS.RefreshCatalog(ctx); err != nil {
 			return err
@@ -413,11 +413,12 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return err
 	}, retry: func(ctx context.Context) error {
 		localErr := v.RetryManagedLocalSaves(ctx)
+		namespaceErr := s.ClearNamespaceOnlinePauses(ctx)
 		jobs, err := s.Pending(ctx)
 		if err != nil {
-			return errors.Join(localErr, err)
+			return errors.Join(localErr, namespaceErr, err)
 		}
-		return errors.Join(localErr, retryPendingEntries(ctx, jobs, engine.Retry))
+		return errors.Join(localErr, namespaceErr, retryPendingEntries(ctx, jobs, engine.Retry))
 	}}, nil
 }
 

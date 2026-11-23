@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/config"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/platform"
 	"github.com/rclone/rclone/internal/bridge/store"
 	syncer "github.com/rclone/rclone/internal/bridge/sync"
@@ -116,8 +118,24 @@ func errorFromCode(code string) error {
 	}
 }
 func ErrorInfo(err error) *Error {
+	if existing, ok := err.(*Error); ok {
+		return existing
+	}
 	code := errorCode(err)
 	message := code
+	var facts *model.OnlineFailure
+	if code != "" {
+		switch code {
+		case "operation_failed", "network", "unauthorized", "credential_unavailable", "identity_changed", "version_changed", "unknown_result", "link_lookup_timeout":
+			f := online.Capture(context.Background(), err, "unknown", "unknown", "unknown", time.Now())
+			if f.Cause == "unclassified_error" && code == "unauthorized" {
+				f.Cause = "auth_required"
+				f.Action = "wait_auth"
+			}
+			facts = &f
+			message = online.Message(f.Cause)
+		}
+	}
 	switch code {
 	case "link_unsupported":
 		message = "此项目不属于可分享的飞书文件或文件夹。"
@@ -134,7 +152,7 @@ func ErrorInfo(err error) *Error {
 	case "cleanup_pending":
 		message = "挂载已删除，缓存清理待完成；后台将自动重试。"
 	}
-	return &Error{Code: code, Message: message, Retryable: code == "link_lookup_timeout" || code == "network" || code == "credential_unavailable" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
+	return &Error{Online: facts, Code: code, Message: message, Retryable: code == "link_lookup_timeout" || code == "network" || code == "credential_unavailable" || code == "worker_unavailable" || code == "history_pending" || code == "cleanup_pending"}
 }
 func ExitCode(err error) int {
 	switch errorCode(err) {
@@ -190,7 +208,7 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 			if err != nil {
 				return out, err
 			}
-			issue := model.SyncIssue{Diagnostic: journal.Diagnostic, JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
+			issue := model.SyncIssue{Online: journal.Online, Diagnostic: journal.Diagnostic, JobID: j.ID, EntryID: j.EntryID, Name: en.Remote, Code: journal.ErrorCode, State: j.State, NewDocument: en.Kind == model.KindDocx && en.Token == ""}
 			if j.State == model.StatusAwaitingVerification && issue.Code == "" {
 				issue.Code = "unknown_result"
 			}
@@ -206,11 +224,11 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 				if reason == "" {
 					reason = "unknown_result"
 				}
-				issue.CreateRecovery = &model.CreateRecoveryInfo{CanRecreate: creation.NeedsAttention && (creation.State == "prepared" || creation.State == "unknown") && creation.Token == "" && creation.CandidateToken == "" && en.Token == "" && en.RemoteCheckpoint == "" && en.LocalCheckpoint == "", CurrentGeneration: en.Generation, CurrentLocal: en.Local, Attempts: creation.CheckAttempts, Reason: reason}
+				issue.CreateRecovery = &model.CreateRecoveryInfo{CanRecreate: creation.NeedsAttention && (creation.State == "prepared" || creation.State == "unknown") && creation.Token == "" && creation.CandidateToken == "" && en.Token == "" && en.RemoteCheckpoint == "" && en.LocalCheckpoint == "", CurrentGeneration: en.Generation, CurrentLocal: en.Local, Attempts: creation.CheckAttempts, Reason: reason, EffectiveChecks: creation.EffectiveChecks, RequestFailures: creation.RequestFailures, LegacyAttempts: creation.LegacyCheckAttempts, PolicyVersion: creation.RecoveryVersion, DiagnosticCycle: creation.DiagnosticCycle}
 				if issue.Diagnostic == nil {
 					failure := map[string]string{"request_timeout": "首次创建请求超时", "permission_denied": "首次创建请求权限不足", "auth_required": "首次创建请求需要重新授权", "unauthorized": "首次创建请求未获授权", "identity_changed": "首次创建请求的账号身份发生变化", "network_or_protocol": "首次创建请求网络或服务响应未获确认", "offline": "首次创建请求无法连接飞书", "rate_limited": "首次创建请求受到频率限制", "canceled": "首次创建请求被中断"}[creation.FailureCode]
 					if creation.FailureCode == "" || creation.FailureCode == "unknown_result" {
-						failure = "旧记录未保留首次错误原因"
+						failure = "首次错误原因未记录"
 					} else if failure == "" {
 						failure = "首次创建请求未获确认"
 					}
@@ -279,12 +297,33 @@ func storeStatus(ctx context.Context, id model.MountID, s *store.Store) (model.M
 				code = "delete_result_unconfirmed"
 				message = "本地删除已记录，云端结果尚未确认；后台会按原文件标识核验，不会重复发起删除。"
 			}
-			out.Issues = append(out.Issues, model.SyncIssue{NamespaceID: op.ID, Name: name, Code: code, State: model.StatusAwaitingVerification, Diagnostic: &model.SyncDiagnostic{Kind: code, Message: message}})
+			out.Issues = append(out.Issues, model.SyncIssue{Online: journal.Online, NamespaceID: op.ID, Name: name, Code: code, State: model.StatusAwaitingVerification, Diagnostic: &model.SyncDiagnostic{Kind: code, Message: message}})
 			if out.LastError == "" {
 				out.LastError = code
 			}
 		} else {
 			out.Queued++
+			if journal.Online != nil && !journal.Online.Resolved && journal.Online.Last != nil {
+				failure := journal.Online.Last
+				name := op.Src
+				if op.Kind == "mkdir" {
+					name = op.Dst
+				}
+				code, state := failure.Cause, model.StatusBlocked
+				if code == "" || code == "unknown" {
+					code = "operation_failed"
+				}
+				if strings.HasPrefix(journal.Online.PausedReason, "cancel_") {
+					state = model.StatusPaused
+				}
+				out.Issues = append(out.Issues, model.SyncIssue{Online: journal.Online, NamespaceID: op.ID, Name: name, Code: code, State: state, Diagnostic: &model.SyncDiagnostic{Kind: code, Message: online.Message(failure.Cause)}})
+				if out.LastError == "" {
+					out.LastError = code
+				}
+				if out.CloudState != "blocked" {
+					out.CloudState = string(state)
+				}
+			}
 		}
 	}
 	if out.Conflicts > 0 {

@@ -43,9 +43,10 @@ type envelope struct {
 	Error      *Error          `json:"error,omitempty"`
 }
 type Error struct {
-	Code      string `json:"code"`
-	Retryable bool   `json:"retryable"`
-	Message   string `json:"message"`
+	Online    *model.OnlineFailure `json:"online,omitempty"`
+	Code      string               `json:"code"`
+	Retryable bool                 `json:"retryable"`
+	Message   string               `json:"message"`
 }
 
 func (e *Error) Error() string     { return e.Code }
@@ -221,8 +222,7 @@ func (m *Manager) serveWorker(w *worker) (func(), error) {
 			value, err = w.dispatch(r)
 		}
 		if err != nil {
-			code := errorCode(err)
-			out.Error = &Error{Code: code, Retryable: code == "network" || code == "worker_unavailable", Message: code}
+			out.Error = ErrorInfo(err)
 		} else {
 			out.Data, _ = json.Marshal(value)
 		}
@@ -357,13 +357,17 @@ func (w *worker) dispatch(r *http.Request) (any, error) {
 		return struct{}{}, s.refreshDirectories(ctx)
 	case "/stop", "/recovery/stop":
 		var input struct {
-			Wait int64 `json:"wait_ns"`
+			Wait         int64  `json:"wait_ns"`
+			CancelOrigin string `json:"cancel_origin,omitempty"`
 		}
 		if err := decodeInput(r, &input); err != nil {
 			return nil, err
 		}
 		if input.Wait < 0 || time.Duration(input.Wait) > 24*time.Hour {
 			return nil, ErrConfig
+		}
+		if input.CancelOrigin != "" {
+			return struct{}{}, w.stopPolicyOrigin(ctx, time.Duration(input.Wait), r.URL.Path == "/recovery/stop", input.CancelOrigin)
 		}
 		return struct{}{}, w.stopPolicy(ctx, time.Duration(input.Wait), r.URL.Path == "/recovery/stop")
 	case "/upload-recover":

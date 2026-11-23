@@ -20,8 +20,8 @@ func (e *Engine) now() time.Time {
 	}
 	return time.Now()
 }
-func (e *Engine) deferRetry(id model.JobID, err error) {
-	code := classify(err)
+func (e *Engine) deferRetry(ctx context.Context, id model.JobID, err error) {
+	code := pauseCode(ctx, err)
 	if !transient(code) {
 		return
 	}
@@ -50,7 +50,7 @@ func (e *Engine) retryReady(id model.JobID) bool {
 	return !exists || !e.now().Before(state.Due)
 }
 func transient(code string) bool {
-	return code == "parent_pending" || code == "request_timeout" || code == "network_or_protocol" || code == "rate_limited" || code == "canceled" || code == "remote_drift"
+	return code == "parent_pending" || code == "request_timeout" || code == "network_or_protocol" || code == "rate_limited" || code == "service_unavailable" || code == "remote_drift" || code == "runtime_interrupted" || code == "caller_interrupted"
 }
 
 // Retry reconciles unknown work; it never changes an unknown mutation to queued.
@@ -73,6 +73,9 @@ func (e *Engine) Retry(ctx context.Context, id model.EntryID) error {
 		if j.EntryID == id {
 			if op, err := e.store.CreateForJob(ctx, j.ID); err == nil && op.NeedsAttention {
 				return nil
+			}
+			if err = e.store.ClearJobOnlinePause(ctx, j.ID); err != nil {
+				return err
 			}
 			if j.State == model.StatusBlocked || j.State == model.StatusPaused {
 				if err = e.store.ResumeJob(ctx, j.ID); err != nil {

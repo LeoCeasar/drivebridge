@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/cloud"
 	"github.com/rclone/rclone/internal/bridge/model"
@@ -130,6 +131,8 @@ func TestCanceledUndispatchedWritePersistsEvidenceAndNewGeneration(t *testing.T)
 					t.Fatal("new save overwritten by rejection", current)
 				}
 				for range 3 {
+					now := time.Now().Add(time.Hour)
+					e.opt.Now = func() time.Time { return now }
 					if err := e.Retry(bg, en.ID); err != nil && !errors.Is(err, model.ErrGenerationChanged) {
 						t.Fatalf("safe retry blocked: %v", err)
 					}
@@ -176,8 +179,15 @@ func TestCanceledUndispatchedCreateAndRenameRemainRetryable(t *testing.T) {
 			} else if len(creates) != 0 {
 				t.Fatal("rejected creation remains unknown", creates)
 			}
+			now := time.Now().Add(time.Hour)
+			e.opt.Now = func() time.Time { return now }
 			if err = e.Retry(bg, en.ID); err != nil {
 				t.Fatal("safe creation retry blocked", err)
+			}
+			if reject == "rename" {
+				if err = e.SyncEntry(bg, en.ID); err != nil {
+					t.Fatal(err)
+				}
 			}
 			current, _ := s.Entry(bg, en.ID)
 			if current.Status != model.StatusSynced || f.creates > 1 || f.writes > 1 {

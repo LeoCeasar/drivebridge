@@ -157,8 +157,7 @@ func (m *Manager) DesktopRegister(ctx context.Context, open func(context.Context
 			}
 		}
 		if callErr != nil {
-			code := errorCode(callErr)
-			out.Error = &Error{Code: code, Message: code}
+			out.Error = ErrorInfo(callErr)
 		}
 		_ = json.NewEncoder(rw).Encode(out)
 	})

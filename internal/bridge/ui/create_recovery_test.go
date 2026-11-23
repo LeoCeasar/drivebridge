@@ -113,3 +113,28 @@ func TestCreateRecoveryStatusSanitizesReasonWithoutMutatingSnapshot(t *testing.T
 		t.Fatal("snapshot mutated")
 	}
 }
+
+func TestCreateRecoveryRouteCarriesObservedDiagnosticCycle(t *testing.T) {
+	h, b, c, csrf, _ := fixture(t)
+	extra := &createRecoveryBackend{fakeBackend: b}
+	h.backend = extra
+	cycle := uuid.NewString()
+	route := "/api/mounts/" + uuid.NewString() + "/uploads/" + uuid.NewString() + "/recover"
+	in := map[string]any{"action": "recheck", "expected_generation": uint64(4), "expected_local": strings.Repeat("a", 64), "expected_diagnostic_cycle": cycle, "expected_policy_version": 1}
+	res := request(t, c, h, "POST", route, in, csrf, h.URL())
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("recovery CAS rejected: %s", res.Status)
+	}
+	raw, err := json.Marshal(extra.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err = json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["expected_diagnostic_cycle"] != cycle || got["expected_policy_version"] != float64(1) {
+		t.Fatalf("CAS was lost: %s", raw)
+	}
+}

@@ -48,12 +48,34 @@ type ManagedOptions struct {
 	Coordinator                   Coordinator
 }
 type Runner struct {
+	beforeRequest                 func(context.Context) error
+	afterRequest                  func(context.Context, error) error
 	executable, authRef, authRoot string
 	identity                      Identity
 	expectedIdentity              Identity
 	coordinator                   Coordinator
 	managed                       bool
 }
+
+// WithRequestHooks returns an immutable runner copy. Hooks exchange only error
+// facts, never arguments, bodies, or credentials. A rejected preflight cannot
+// turn into an uncertain write because no child has been started.
+func (r *Runner) WithRequestHooks(before func(context.Context) error, after func(context.Context, error) error) *Runner {
+	copy := *r
+	copy.beforeRequest = before
+	copy.afterRequest = after
+	return &copy
+}
+
+var errRequestBudget = errors.New("CLI request budget elapsed")
+
+type requestCancellation struct {
+	error
+	origin string
+}
+
+func (e *requestCancellation) Unwrap() error              { return e.error }
+func (e *requestCancellation) CancellationOrigin() string { return e.origin }
 
 func validCoordinator(c Coordinator) bool {
 	if c == nil {
@@ -158,7 +180,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (resp Response, err error
 	if timeout <= 0 {
 		timeout = businessTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, errRequestBudget)
 	defer cancel()
 	if r.managed && (r.identity.AppID == "" || r.identity.UserOpenID == "") {
 		return resp, errors.Join(ErrNotDispatched, ErrIdentity)
@@ -169,6 +191,11 @@ func (r *Runner) Run(ctx context.Context, req Request) (resp Response, err error
 	}
 	started := false
 	err = r.locked(ctx, false, func() error {
+		if r.beforeRequest != nil {
+			if err := r.beforeRequest(ctx); err != nil {
+				return err
+			}
+		}
 		cmd := r.command(ctx, args, req.Dir)
 		cmd.Stdin = bytes.NewReader(req.Stdin)
 		var stdout, stderr bytes.Buffer
@@ -178,7 +205,18 @@ func (r *Runner) Run(ctx context.Context, req Request) (resp Response, err error
 		started, runErr = runBusinessCommand(cmd)
 		resp, err = decodeResponse(stdout.Bytes(), stderr.Bytes(), runErr)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			origin := "unspecified_cancel"
+			if errors.Is(context.Cause(ctx), errRequestBudget) {
+				origin = "phase_deadline"
+			} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				origin = "parent_deadline"
+			}
+			err = &requestCancellation{error: ctx.Err(), origin: origin}
+		}
+		if started && r.afterRequest != nil {
+			persistCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			err = errors.Join(err, r.afterRequest(persistCtx, err))
+			stop()
 		}
 		return err
 	})
@@ -215,6 +253,9 @@ func singleJSON(data []byte, out any) error {
 	return nil
 }
 func (e *wireError) safe() *Error {
+	if e.RetryAfter < 0 || e.RetryAfter > int64((1<<63-1)/int64(time.Second)) {
+		return &Error{Type: "protocol", Subtype: "invalid_retry_after", Cause: ErrProtocol}
+	}
 	code := string(e.Code)
 	if len(code) > 64 {
 		code = ""

@@ -1,0 +1,60 @@
+{
+  "kind": "gate",
+  "work_id": "online-recovery",
+  "stage": "design",
+  "checks": [
+    {
+      "id": "1",
+      "score": 10,
+      "evidence": "用户要求细分分类并给出统一在线处理方案；覆盖创建核验、读取、写回、命名空间、链接及恢复。"
+    },
+    {
+      "id": "2",
+      "score": 10,
+      "evidence": "已读 sync/errors.go、create_recovery.go、create.go、retry.go、dispatch.go、namespace.go、remote_deletion.go、store/create_recovery.go、model/types.go、larkcli/runner.go；本地 overlay 探针复现分类信息丢失。"
+    },
+    {
+      "id": "3",
+      "score": 10,
+      "evidence": "明确区分错误原因、失败阶段、操作结果、恢复动作，正文合并沿用现有算法及校验边界；可独立扩展。"
+    },
+    {
+      "id": "4",
+      "score": 10,
+      "evidence": "不盲重放未知写入、不丢本地保存、不按名称绑定、不将404/403当删除、不缓存过期身份链接。"
+    },
+    {
+      "id": "5",
+      "score": 10,
+      "evidence": "传输只给事实、策略只给建议、执行器及store持有写入权限、manager/UI负责呈现；跨worker协调只共用账户冷却。"
+    },
+    {
+      "id": "6",
+      "score": 10,
+      "evidence": "输入为错误链与既有journal上下文，输出安全原因/阶段/动作/证据；未知字段不臆测，接口不以retryable布尔放行写入。"
+    },
+    {
+      "id": "7",
+      "score": 10,
+      "evidence": "固定CLI 1.0.99 wireError提供type/subtype/code/retryable/retry_after_seconds；没有HTTP状态或request id。参考飞书通用错误码、99991672文档及RFC9110，只给已核实码做映射。"
+    },
+    {
+      "id": "8",
+      "score": 10,
+      "evidence": "新增诊断和调度元数据，不扩权限，不读取或持久化原始stderr/凭据；已有业务CAS、身份、未知结果保护保持授权主体。"
+    },
+    {
+      "id": "9",
+      "score": 10,
+      "evidence": "追加字段、旧缺失标记historical_not_recorded，不捏造首次原因；新行为分阶段接入并单独验证macOS和Windows。"
+    },
+    {
+      "id": "10",
+      "score": 10,
+      "evidence": "验收覆盖分类、调度时钟、取消、未知写入、完整分页、旧数据、并发保存及跨进程冷却；真实账号故障注入与离线测试分开。"
+    }
+  ],
+  "critical_unknowns": [],
+  "scope_assumption": "整合在线错误与恢复；正文三方合并的既有安全约束纳入方案，新的合并算法另行展开。",
+  "readiness_note": "设计内容为具体推荐方案，尚非实现完成或用户批准实现的证据；截图实际账号故障仍待Windows现场证据。"
+}

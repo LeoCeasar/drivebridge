@@ -100,3 +100,30 @@ func (s *Store) SeedDirectoryCache(ctx context.Context) error {
 		return nil
 	})
 }
+
+// RecordDirectoryOnline retains only safe diagnostic facts, with the same
+// stable identity check used by directory publication. nil resolves history.
+func (s *Store) RecordDirectoryOnline(ctx context.Context, expected model.Entry, failure *model.OnlineFailure) error {
+	return s.update(ctx, func(tx *bolt.Tx) error {
+		en, err := entryTx(tx, expected.ID)
+		if err != nil {
+			return err
+		}
+		if en.Kind != model.KindFolder || en.Token != expected.Token || en.Remote != expected.Remote {
+			return model.ErrIdentityChanged
+		}
+		var m Metadata
+		if err = get(tx, "metadata", string(en.ID), &m); err != nil {
+			return err
+		}
+		if m.Tombstone {
+			return ErrNotFound
+		}
+		if failure != nil {
+			m.DirectoryOnline = retainOnline(m.DirectoryOnline, *failure)
+		} else if m.DirectoryOnline != nil {
+			m.DirectoryOnline.Resolved = true
+		}
+		return put(tx, "metadata", string(en.ID), m)
+	})
+}

@@ -20,12 +20,15 @@ type dispatchQuantum struct {
 }
 
 type dispatchWork struct {
-	cutoff          uint64
-	epoch           uint64
-	running, queued bool
-	after           time.Time
+	observationFailures int
+	observeOnly         bool
+	cutoff              uint64
+	epoch               uint64
+	running, queued     bool
+	after               time.Time
 }
 type dispatchResult struct {
+	observeOnly   bool
 	id            model.EntryID
 	cutoff, epoch uint64
 	err           error
@@ -33,9 +36,10 @@ type dispatchResult struct {
 	metadata      bool
 }
 type dispatchRequest struct {
-	id       model.EntryID
-	cutoff   uint64
-	accepted chan struct{}
+	observeOnly bool
+	id          model.EntryID
+	cutoff      uint64
+	accepted    chan struct{}
 }
 
 // One dispatcher owns its queue. Network goroutines report results; they never
@@ -69,6 +73,7 @@ func (d *backgroundDispatcher) admit(id model.EntryID, cutoff uint64) {
 		d.entries[id] = w
 	}
 	w.cutoff = max(w.cutoff, cutoff)
+	w.observeOnly = false
 	w.epoch = d.epoch
 	if !w.running && !w.queued {
 		w.queued = true
@@ -76,7 +81,13 @@ func (d *backgroundDispatcher) admit(id model.EntryID, cutoff uint64) {
 	}
 }
 func (d *backgroundDispatcher) manual(ctx context.Context, id model.EntryID, cutoff uint64) error {
-	r := dispatchRequest{id: id, cutoff: cutoff, accepted: make(chan struct{})}
+	return d.request(ctx, id, cutoff, false)
+}
+func (d *backgroundDispatcher) observe(ctx context.Context, id model.EntryID, cutoff uint64) error {
+	return d.request(ctx, id, cutoff, true)
+}
+func (d *backgroundDispatcher) request(ctx context.Context, id model.EntryID, cutoff uint64, observation bool) error {
+	r := dispatchRequest{id: id, cutoff: cutoff, observeOnly: observation, accepted: make(chan struct{})}
 	select {
 	case d.requests <- r:
 	case <-ctx.Done():
@@ -94,8 +105,16 @@ func (d *backgroundDispatcher) manual(ctx context.Context, id model.EntryID, cut
 	}
 }
 func (d *backgroundDispatcher) accept(r dispatchRequest) {
-	d.epoch++
-	d.admit(r.id, r.cutoff)
+	if r.observeOnly {
+		// Merge into existing work without creating any writable admission or epoch.
+		if _, exists := d.entries[r.id]; !exists {
+			d.entries[r.id] = &dispatchWork{cutoff: r.cutoff, epoch: d.epoch, queued: true, observeOnly: true}
+			d.queue = append(d.queue, r.id)
+		}
+	} else {
+		d.epoch++
+		d.admit(r.id, r.cutoff)
+	}
 	close(r.accepted)
 }
 func (d *backgroundDispatcher) completed(r dispatchResult) {
@@ -110,6 +129,26 @@ func (d *backgroundDispatcher) completed(r dispatchResult) {
 		return
 	}
 	w.running = false
+	if r.observeOnly && w.epoch <= r.epoch {
+		if r.err != nil && d.ctx.Err() == nil {
+			// A failed local store/read must not create a completion/tick loop
+			// even when its persistent next_due could not be recorded.
+			w.observationFailures++
+			delay := 2 * time.Second
+			for i := 1; i < w.observationFailures && delay < 5*time.Minute; i++ {
+				delay *= 2
+			}
+			if delay > 5*time.Minute {
+				delay = 5 * time.Minute
+			}
+			w.after = time.Now().Add(delay)
+			w.queued = true
+			d.queue = append(d.queue, r.id)
+			return
+		}
+		delete(d.entries, r.id)
+		return
+	}
 	again := errors.Is(r.err, errDispatchYield) || errors.Is(r.err, errEntryBusy) || w.epoch > r.epoch
 	if r.err == nil {
 		again = again || d.hasAdmittedWork(r.id, w.cutoff, r.before)
@@ -188,6 +227,7 @@ func (d *backgroundDispatcher) tick() error {
 	}
 drained:
 	now := d.e.now()
+	d.admitDueObservations(now)
 	if !now.Before(d.next) {
 		d.next = d.next.Add((now.Sub(d.next)/BackgroundSyncInterval + 1) * BackgroundSyncInterval)
 		jobs, err := d.e.store.Pending(d.ctx)
@@ -236,7 +276,7 @@ func (d *backgroundDispatcher) pump() {
 		w.queued = false
 		w.running = true
 		d.active++
-		cutoff, epoch := w.cutoff, w.epoch
+		cutoff, epoch, observeOnly := w.cutoff, w.epoch, w.observeOnly
 		d.wg.Add(1)
 		go func() {
 			defer d.wg.Done()
@@ -249,8 +289,13 @@ func (d *backgroundDispatcher) pump() {
 					}
 				}
 			}
-			err := d.pass(id, cutoff)
-			d.results <- dispatchResult{id: id, cutoff: cutoff, epoch: epoch, err: err, before: before}
+			var err error
+			if observeOnly {
+				err = d.observePass(id)
+			} else {
+				err = d.pass(id, cutoff)
+			}
+			d.results <- dispatchResult{observeOnly: observeOnly, id: id, cutoff: cutoff, epoch: epoch, err: err, before: before}
 		}()
 	}
 	if d.metadataWanted && !d.metadataActive {

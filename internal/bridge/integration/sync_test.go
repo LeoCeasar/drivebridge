@@ -416,6 +416,14 @@ func TestUnknownOrdinaryCreationReconcilesUniqueTemporaryResourceAfterRestart(t 
 	if err = h.engine.SyncEntry(h.ctx, entry.ID); err != nil {
 		t.Fatal(err)
 	}
+	observed := h.entry("new-file.bin")
+	if observed.Token != "" {
+		t.Fatal("read-only observation bound resource")
+	}
+	// A later normal admission revalidates and completes the original rename.
+	if err = h.engine.SyncEntry(h.ctx, entry.ID); err != nil {
+		t.Fatal(err)
+	}
 	created := h.entry("new-file.bin")
 	if created.Token == "" || created.Status != model.StatusSynced || h.read("new-file.bin") != body {
 		t.Fatal(created)

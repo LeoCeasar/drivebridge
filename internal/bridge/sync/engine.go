@@ -114,7 +114,7 @@ func New(d Dependencies, o Options) (*Engine, error) {
 	gate <- struct{}{}
 	namespaceGate := make(chan struct{}, 1)
 	namespaceGate <- struct{}{}
-	return &Engine{namespaceGate: namespaceGate, cycleGate: gate, store: d.Store, source: d.Source, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
+	return &Engine{namespaceGate: namespaceGate, cycleGate: gate, store: d.Store, source: phasedSource{d.Source}, publisher: d.Publisher, deps: d, opt: o, retries: map[model.JobID]retryState{}}, nil
 }
 func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error) {
 	candidate := make(chan struct{}, 1)
@@ -131,8 +131,9 @@ func (e *Engine) entryLock(ctx context.Context, id model.EntryID) (func(), error
 func (e *Engine) SyncEntry(ctx context.Context, id model.EntryID) error {
 	return e.syncEntry(ctx, id, nil, false)
 }
-func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration *uint64, skipWriteBack bool) error {
+func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration *uint64, skipWriteBack bool) (retErr error) {
 	if err := e.check(ctx); err != nil {
+		e.recordEntryOnline(ctx, id, err, "identity_check")
 		return err
 	}
 	var unlock func()
@@ -182,6 +183,21 @@ func (e *Engine) syncEntry(ctx context.Context, id model.EntryID, maxGeneration 
 	}
 	if maxGeneration != nil && job.Generation > *maxGeneration {
 		return nil
+	}
+	priorDiagnosticID := ""
+	if prior, err := e.store.Journal(ctx, job.ID); err == nil && prior.Online != nil && prior.Online.Last != nil {
+		priorDiagnosticID = prior.Online.Last.ID
+	}
+	defer func() {
+		if retErr != nil && !errors.Is(retErr, errDispatchYield) && !errors.Is(retErr, errEntryBusy) {
+			e.retainJobFailure(ctx, job.ID, retErr, priorDiagnosticID)
+		}
+	}()
+	if handled, err := e.creationObservationDue(ctx, *job); handled || err != nil {
+		return err
+	}
+	if ready, err := e.store.JobOnlineDue(ctx, job.ID, e.now()); err != nil || !ready {
+		return err
 	}
 	if !e.retryReady(job.ID) {
 		return nil

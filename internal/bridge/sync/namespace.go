@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 )
@@ -121,7 +122,33 @@ func listedToken(items []larkcli.DriveItem, token string) (larkcli.DriveItem, bo
 	}
 	return larkcli.DriveItem{}, false
 }
-func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) error {
+func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) (retErr error) {
+	defer func() {
+		if retErr == nil || errors.Is(retErr, store.ErrBusy) || errors.Is(retErr, store.ErrSafeSavePending) || errors.Is(retErr, store.ErrFrozen) || errors.Is(retErr, store.ErrNamespaceWritePaused) {
+			return
+		}
+		// The action may have dispatched a mutation since its scheduling snapshot.
+		// Only the current durable journal can describe that uncertainty.
+		work, err := e.store.NamespaceJournal(context.WithoutCancel(ctx), op.ID)
+		if err != nil {
+			return
+		}
+		outcome := "unknown"
+		if work.Dispatched {
+			outcome = "dispatched_unconfirmed"
+		} else if len(work.Completed) == 0 {
+			outcome = "not_dispatched"
+		}
+		operation := op.Kind
+		if operation == "replace" {
+			operation = "delete"
+		}
+		failure := online.Capture(ctx, retErr, operation, "unknown", outcome, e.now())
+		if errors.Is(retErr, errParentPending) {
+			failure.Cause, failure.Action = "parent_pending", "wait_dependency"
+		}
+		_ = e.store.RecordNamespaceOnlineFailure(context.WithoutCancel(ctx), op.ID, failure)
+	}()
 	id := op.SrcID
 	if op.Kind == "mkdir" || op.Kind == "replace" {
 		id = op.ResultID
@@ -135,12 +162,21 @@ func (e *Engine) namespaceAction(ctx context.Context, op model.NamespaceOp) erro
 	if err != nil {
 		return err
 	}
+	// A cancellation pause does not authorize another write. Dispatched work may
+	// still follow its read-only reconciliation branch; the store dispatch gate
+	// also prevents any remaining step after that observation succeeds.
+	if work.Online != nil && (work.Online.PausedReason == "cancel_" || work.Online.PausedReason == "cancel_user_stop" || work.Online.PausedReason == "cancel_unspecified_cancel" || work.Online.PausedReason == "cancel_caller_gone") && !work.Dispatched {
+		return nil
+	}
 	if work.SafeSaveBackup {
 		if work.SafeSaveCompleted {
 			return nil
 		}
 		fs.Debugf(nil, "safe_save_pending: backup rename awaits durable replacement")
 		return store.ErrSafeSavePending
+	}
+	if err = e.check(ctx); err != nil {
+		return online.AtPhase(err, op.Kind, "identity_check")
 	}
 	en, err := e.store.Entry(ctx, id)
 	if err != nil {

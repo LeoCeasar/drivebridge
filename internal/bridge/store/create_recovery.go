@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rclone/rclone/internal/bridge/model"
 	bolt "go.etcd.io/bbolt"
 )
@@ -219,8 +220,9 @@ func recoveryCreateTx(tx *bolt.Tx, req model.CreateRecoveryRequest) (en model.En
 	return
 }
 
-// RecheckCreate grants observation only. It preserves both budget and mutation
-// phase so an unsuccessful manual check can immediately require attention again.
+// RecheckCreate grants observation only and preserves mutation phase and valid
+// check budgets. Restarting a protocol pause consumes the caller's observed
+// cycle/policy version, independently of an unchanged local document.
 func (s *Store) RecheckCreate(ctx context.Context, req model.CreateRecoveryRequest) (out model.Entry, err error) {
 	if req.Action != "recheck" {
 		return out, ErrInvalidState
@@ -230,7 +232,43 @@ func (s *Store) RecheckCreate(ctx context.Context, req model.CreateRecoveryReque
 		if er != nil {
 			return er
 		}
+		if businessPause(op.CheckReason) && !businessPause(op.PausedReason) {
+			op.PausedReason = op.CheckReason
+		}
+		// Supplied evidence must remain current even if another request already
+		// restarted this cycle. Old clients can still request ordinary observation,
+		// but cannot release a modern protocol pause without its exact snapshot.
+		if req.ExpectedDiagnosticCycle != "" || req.ExpectedPolicyVersion != 0 {
+			if req.ExpectedDiagnosticCycle != op.DiagnosticCycle || req.ExpectedPolicyVersion != op.RecoveryVersion {
+				return model.ErrVersionChanged
+			}
+		}
+		protocolPaused := protocolObservation(op.PausedReason)
+		if protocolPaused && op.DiagnosticCycle != "" && (req.ExpectedDiagnosticCycle == "" || req.ExpectedPolicyVersion != op.RecoveryVersion) {
+			return model.ErrVersionChanged
+		}
+		// Give legacy no-cycle journals a single modern identity before accepting
+		// observation. A duplicate legacy request cannot later restart that cycle.
+		if op.RecoveryVersion == 0 {
+			op.RecoveryVersion = 1
+			op.LegacyCheckAttempts = op.CheckAttempts
+		}
+		if op.DiagnosticCycle == "" || protocolPaused {
+			op.DiagnosticCycle = uuid.NewString()
+		}
 		op.NeedsAttention = false
+		op.ObservationOnly = true
+		op.ObservationReady = false
+		if protocolPaused {
+			op.UnclassifiedProbes = 0
+			op.PausedReason = ""
+		}
+		if j.Online != nil {
+			j.Online.CycleID = op.DiagnosticCycle
+			if protocolPaused && protocolObservation(j.Online.PausedReason) {
+				j.Online.PausedReason = ""
+			}
+		}
 		if er = put(tx, "createops", op.ID, op); er != nil {
 			return er
 		}

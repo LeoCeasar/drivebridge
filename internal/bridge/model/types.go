@@ -169,22 +169,25 @@ type Conflict struct {
 }
 
 type NamespaceOp struct {
-	ID          string  `json:"id"`
-	Kind        string  `json:"kind"`
-	Src         string  `json:"src"`
-	Dst         string  `json:"dst"`
-	State       string  `json:"state"`
-	SrcID       EntryID `json:"src_id"`
-	DstID       EntryID `json:"dst_id"`
-	ResultID    EntryID `json:"result_id"`
-	ExpectedSrc uint64  `json:"expected_src"`
-	ExpectedDst uint64  `json:"expected_dst"`
-	DstExists   bool    `json:"dst_exists"`
-	Input       BlobID  `json:"input"`
-	Previous    BlobID  `json:"previous"`
+	Online      *OnlineRecord `json:"online,omitempty"`
+	ID          string        `json:"id"`
+	Kind        string        `json:"kind"`
+	Src         string        `json:"src"`
+	Dst         string        `json:"dst"`
+	State       string        `json:"state"`
+	SrcID       EntryID       `json:"src_id"`
+	DstID       EntryID       `json:"dst_id"`
+	ResultID    EntryID       `json:"result_id"`
+	ExpectedSrc uint64        `json:"expected_src"`
+	ExpectedDst uint64        `json:"expected_dst"`
+	DstExists   bool          `json:"dst_exists"`
+	Input       BlobID        `json:"input"`
+	Previous    BlobID        `json:"previous"`
 }
 
 type CreateRecoveryRequest struct {
+	ExpectedDiagnosticCycle string `json:"expected_diagnostic_cycle,omitempty"`
+	ExpectedPolicyVersion   int    `json:"expected_policy_version,omitempty"`
 	// Internal CAS evidence captured before cloud verification, never supplied by clients.
 	ExpectedRemote      string `json:"-"`
 	ExpectedParentToken string `json:"-"`
@@ -204,6 +207,11 @@ type CreateRecoveryResult struct {
 }
 
 type CreateRecoveryInfo struct {
+	DiagnosticCycle   string `json:"diagnostic_cycle,omitempty"`
+	EffectiveChecks   int    `json:"effective_checks,omitempty"`
+	RequestFailures   int    `json:"request_failures,omitempty"`
+	LegacyAttempts    int    `json:"legacy_attempts,omitempty"`
+	PolicyVersion     int    `json:"policy_version,omitempty"`
 	CanRecreate       bool   `json:"can_recreate"`
 	CurrentGeneration uint64 `json:"current_generation"`
 	CurrentLocal      BlobID `json:"current_local"`
@@ -212,27 +220,37 @@ type CreateRecoveryInfo struct {
 }
 
 type CreateOp struct {
-	NeedsAttention    bool      `json:"needs_attention,omitempty"`
-	CheckAttempts     int       `json:"check_attempts,omitempty"`
-	FirstUncertainAt  time.Time `json:"first_uncertain_at,omitempty"`
-	LastCheckedAt     time.Time `json:"last_checked_at,omitempty"`
-	FailureCode       string    `json:"failure_code,omitempty"`
-	CheckReason       string    `json:"check_reason,omitempty"`
-	CandidateToken    string    `json:"candidate_token,omitempty"`
-	CandidateRevision string    `json:"candidate_revision,omitempty"`
-	ReplacedBy        JobID     `json:"replaced_by,omitempty"`
-	ID                string    `json:"id"`
-	JobID             JobID     `json:"job_id"`
-	EntryID           EntryID   `json:"entry_id"`
-	Generation        uint64    `json:"generation"`
-	Kind              Kind      `json:"kind"`
-	ParentToken       string    `json:"parent_token"`
-	TemporaryName     string    `json:"temporary_name"`
-	FinalName         string    `json:"final_name"`
-	Token             string    `json:"token"`
-	Revision          string    `json:"revision"`
-	Input             BlobID    `json:"input"`
-	State             string    `json:"state"`
+	RecoveryVersion     int       `json:"recovery_version,omitempty"`
+	EffectiveChecks     int       `json:"effective_checks,omitempty"`
+	RequestFailures     int       `json:"request_failures,omitempty"`
+	LegacyCheckAttempts int       `json:"legacy_check_attempts,omitempty"`
+	UnclassifiedProbes  int       `json:"unclassified_probes,omitempty"`
+	NextCheckAt         time.Time `json:"next_check_at,omitempty"`
+	DiagnosticCycle     string    `json:"diagnostic_cycle,omitempty"`
+	PausedReason        string    `json:"paused_reason,omitempty"`
+	ObservationOnly     bool      `json:"observation_only,omitempty"`
+	ObservationReady    bool      `json:"observation_ready,omitempty"`
+	NeedsAttention      bool      `json:"needs_attention,omitempty"`
+	CheckAttempts       int       `json:"check_attempts,omitempty"`
+	FirstUncertainAt    time.Time `json:"first_uncertain_at,omitempty"`
+	LastCheckedAt       time.Time `json:"last_checked_at,omitempty"`
+	FailureCode         string    `json:"failure_code,omitempty"`
+	CheckReason         string    `json:"check_reason,omitempty"`
+	CandidateToken      string    `json:"candidate_token,omitempty"`
+	CandidateRevision   string    `json:"candidate_revision,omitempty"`
+	ReplacedBy          JobID     `json:"replaced_by,omitempty"`
+	ID                  string    `json:"id"`
+	JobID               JobID     `json:"job_id"`
+	EntryID             EntryID   `json:"entry_id"`
+	Generation          uint64    `json:"generation"`
+	Kind                Kind      `json:"kind"`
+	ParentToken         string    `json:"parent_token"`
+	TemporaryName       string    `json:"temporary_name"`
+	FinalName           string    `json:"final_name"`
+	Token               string    `json:"token"`
+	Revision            string    `json:"revision"`
+	Input               BlobID    `json:"input"`
+	State               string    `json:"state"`
 }
 
 // Operation.ID is a local journal ID, never a server idempotency key.
@@ -333,10 +351,11 @@ type ResolveRequest struct {
 // DirectoryIndexStatus reports metadata coverage, independently of file bodies
 // and upload confirmation. Known is not an exhaustive cloud inventory.
 type DirectoryIndexStatus struct {
-	Known      int `json:"known"`
-	Cached     int `json:"cached"`
-	Refreshing int `json:"refreshing"`
-	Failed     int `json:"failed"`
+	Online     *OnlineRecord `json:"online,omitempty"`
+	Known      int           `json:"known"`
+	Cached     int           `json:"cached"`
+	Refreshing int           `json:"refreshing"`
+	Failed     int           `json:"failed"`
 }
 
 // SyncDiagnostic describes a captured failure. Source lines are one-based and
@@ -364,6 +383,7 @@ type SyncDiagnostic struct {
 
 // SyncIssue is a durable failed upload, distinct from a version conflict.
 type SyncIssue struct {
+	Online         *OnlineRecord       `json:"online,omitempty"`
 	NamespaceID    string              `json:"namespace_id,omitempty"`
 	CreateRecovery *CreateRecoveryInfo `json:"create_recovery,omitempty"`
 	Diagnostic     *SyncDiagnostic     `json:"diagnostic,omitempty"`

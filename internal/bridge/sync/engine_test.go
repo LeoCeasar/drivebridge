@@ -359,6 +359,12 @@ func TestCreateUnknownNoDuplicate(t *testing.T) {
 	if err = e.SyncEntry(bg, entry.ID); err != nil {
 		t.Fatal(err)
 	}
+	if observed, _ := s.Entry(bg, entry.ID); observed.Token != "" {
+		t.Fatal("observation bound resource before normal continuation")
+	}
+	if err = e.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := s.Entry(bg, entry.ID)
 	if got.Token != "created" || got.Status != model.StatusSynced || c.creates != 1 {
 		t.Fatalf("%+v creates%d", got, c.creates)
@@ -439,7 +445,7 @@ func TestTransientReadBackoffAndExplicitRetry(t *testing.T) {
 	entry = stageContent(t, s, entry, "alpha changed\n\nbeta two\n")
 	clock := time.Unix(100, 0)
 	e.opt.Now = func() time.Time { return clock }
-	c.readErr = errors.New("offline")
+	c.readErr = &larkcli.Error{Type: "network"}
 	if err := e.SyncEntry(bg, entry.ID); err == nil {
 		t.Fatal("read error lost")
 	}
@@ -549,8 +555,12 @@ func TestNamespaceUnknownDeleteDoesNotRepeat(t *testing.T) {
 	if err = s.FinishNamespace(bg, op.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = e.syncNamespace(bg); !errors.Is(err, model.ErrUnknownResult) {t.Fatal(err)}
-	if err = e.syncNamespace(bg); err != nil {t.Fatal("readback must reconcile absence",err)}
+	if err = e.syncNamespace(bg); !errors.Is(err, model.ErrUnknownResult) {
+		t.Fatal(err)
+	}
+	if err = e.syncNamespace(bg); err != nil {
+		t.Fatal("readback must reconcile absence", err)
+	}
 	if c.deletes != 1 {
 		t.Fatal(c.deletes)
 	}
@@ -647,6 +657,12 @@ func TestPartialPatchRestartReconcilesPersistedOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = restored.SyncEntry(bg, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c.writes != 1 {
+		t.Fatal("unspecified cancellation auto-resumed writes", c.writes)
+	}
+	if err = restored.Retry(bg, entry.ID); err != nil {
 		t.Fatal(err)
 	}
 	if c.writes != 2 {

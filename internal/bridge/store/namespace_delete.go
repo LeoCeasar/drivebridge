@@ -171,6 +171,9 @@ func (s *Store) ConfirmNamespaceDeleteAbsence(ctx context.Context, proof DeleteA
 		}
 		r.Dispatched = false
 		r.ActionPending = false
+		if r.Op.Online != nil {
+			r.Op.Online.Resolved = true
+		}
 		if r.CompletedSteps == nil {
 			r.CompletedSteps = map[string]bool{}
 		}

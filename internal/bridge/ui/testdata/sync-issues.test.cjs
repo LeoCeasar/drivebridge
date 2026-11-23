@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-class Element{constructor(){this.children=[];this.listeners={};this.hidden=true;this.value='';this.textContent='';this.classList={toggle(){}};}append(...x){this.children.push(...x);}replaceChildren(...x){this.children=x;}addEventListener(k,f){this.listeners[k]=f;}setAttribute(){}querySelector(){return {disabled:false};}}
+class Element{constructor(){this.children=[];this.listeners={};this.hidden=true;this.value='';this.textContent='';this.classList={toggle(){}};}append(...x){this.children.push(...x);}replaceChildren(...x){this.children=x;}addEventListener(k,f){this.listeners[k]=f;}setAttribute(){}querySelector(){return {disabled:false};}contains(item){return item===this || this.children.some(child=>child.contains?.(item));}}
 const html=fs.readFileSync(path.join(__dirname,'../assets/index.html'),'utf8');
 for(const id of ['sync-issues','sync-issue-list','sync-issue-count','sync-attention'])assert.ok(html.includes('id="'+id+'"'),'missing live page element '+id);
 const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
@@ -38,7 +38,7 @@ assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent===markup),'captured 
 assert.ok(!walk(el('sync-issue-list')).some(e=>e.innerHTML?.includes(markup)),'diagnostic text never enters HTML');
 console.log('captured diagnostic type, source lines and text are visible safely');
 
-const recovering={...issue,code:'creation_needs_attention',create_recovery:{can_recreate:true,current_generation:9,current_local:'a'.repeat(64),attempts:3,reason:'location_changed'}};
+const recovering={...issue,code:'creation_needs_attention',create_recovery:{can_recreate:true,current_generation:9,current_local:'a'.repeat(64),diagnostic_cycle:'71dd5921-bc92-4acd-8a79-bc647e6a99d1',policy_version:1,attempts:3,reason:'location_changed'}};
 context.renderIssues([{id:'mount',state:{running:true,issues:[recovering]}}],true,true);
 assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent==='重新核验'));
 assert.ok(walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'));
@@ -50,6 +50,17 @@ context.renderIssues([{id:'mount',state:{running:true,issues:[{...recovering,cre
 assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'));
 
 (async()=>{
+ context.renderIssues([{id:'mount',state:{running:true,issues:[recovering]}}],true,true);
+ const focusedCheck=walk(el('sync-issue-list')).find(e=>e.textContent==='重新核验');
+ context.document.activeElement=focusedCheck;
+ const laterCycle={...recovering,create_recovery:{...recovering.create_recovery,diagnostic_cycle:'032ed631-44f7-4e57-9637-5af2ae3ade61'}};
+ context.renderIssues([{id:'mount',state:{running:true,issues:[laterCycle]}}],true,true);
+ const currentCheck=walk(el('sync-issue-list')).find(e=>e.textContent==='重新核验');
+ assert.notEqual(currentCheck,focusedCheck,'new diagnostic cycle must retire a focused control carrying stale CAS');
+ context.document.activeElement=currentCheck;
+ context.renderIssues([{id:'mount',state:{running:true,issues:[{...laterCycle,create_recovery:{...laterCycle.create_recovery,policy_version:2}}]}}],true,true);
+ assert.notEqual(walk(el('sync-issue-list')).find(e=>e.textContent==='重新核验'),currentCheck,'new policy version must retire stale recovery controls');
+ context.document.activeElement=null;
  context.renderIssues([{id:'mount',state:{running:true,issues:[recovering,{...recovering,job_id:'other-job',name:'其他.md'}]}}],true,true);
  let buttons=walk(el('sync-issue-list')).filter(e=>e.textContent==='重新创建…');
  let requests=[],release;
@@ -61,7 +72,7 @@ assert.ok(!walk(el('sync-issue-list')).some(e=>e.textContent==='重新创建…'
  assert.match(prompt,/旧副本.*移动/);assert.match(prompt,/最新本地版本/);
  assert.equal(buttons[0].disabled,true);assert.equal(Boolean(buttons[1].disabled),false,'other files remain actionable');
  assert.equal(requests[0].route,'/api/mounts/mount/uploads/job/recover');
- assert.deepEqual(JSON.parse(requests[0].options.body),{action:'recreate',expected_generation:9,expected_local:'a'.repeat(64),confirm_recreate:true});
+ assert.deepEqual(JSON.parse(requests[0].options.body),{action:'recreate',expected_generation:9,expected_local:'a'.repeat(64),expected_diagnostic_cycle:'71dd5921-bc92-4acd-8a79-bc647e6a99d1',expected_policy_version:1,confirm_recreate:true});
  release();await pending;
  context.renderIssues([{id:'mount',state:{running:true,issues:[recovering]}}],true,true);
  context.fetch=async(route)=>route==='/api/status'?{ok:true,json:async()=>({mounts:[],conflicts:[]})}:{ok:false,status:409,json:async()=>({code:'creation_unconfirmed',message:'创建结果尚未确认，请重新核验。'})};

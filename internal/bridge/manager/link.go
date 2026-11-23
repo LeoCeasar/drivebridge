@@ -10,6 +10,7 @@ import (
 
 	"github.com/rclone/rclone/internal/bridge/auth"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 	"golang.org/x/text/cases"
@@ -246,9 +247,9 @@ func (m *Manager) link(ctx context.Context, absolutePath string, lookup func(con
 		link, err = lookup(ctx, spec, target)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return out, errors.Join(ErrLinkLookupTimeout, err)
+				return out, online.AtPhase(errors.Join(ErrLinkLookupTimeout, err), "link", "link_lookup")
 			}
-			return out, err
+			return out, online.AtPhase(err, "link", "link_lookup")
 		}
 		link = larkcli.SafeResourceURL(link)
 		if link == "" {

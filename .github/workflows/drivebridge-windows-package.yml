@@ -5,7 +5,7 @@ on:
       version:
         description: Installer version X.Y.Z (unsigned test build)
         required: true
-        default: '0.2.30'
+        default: '0.2.31'
         type: string
       tests_only:
         description: Run native Windows save gates without building installers

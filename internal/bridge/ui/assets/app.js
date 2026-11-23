@@ -3,6 +3,7 @@
   const $ = id => document.getElementById(id);
   const diff = window.DriveBridgeDiff;
   const recovery = window.DriveBridgeRecovery;
+  const online = window.DriveBridgeOnline;
   const queue = window.DriveBridgeBatch.createQueue();
   let activeHunk = null, openSeq = 0, activeView = 'workspace';
   let csrf = '', current = null, choices = new Map(), manual = false, mergeOpen = false;
@@ -145,6 +146,7 @@
     else if (budget > 0) meta.append(make('span',`正文缓存上限 ${recovery.formatBytes(budget)}（软上限）${retention ? '，' + retention : ''}`,'mount-path'));
     if (state.cloud_sync_interval) meta.append(make('span','云端每5分钟同步最新保存版本；所有保存仍保留修改历史。','mount-path'));
     const index = state.directory_index;
+    if (index?.online && online) { const detail=online.present({online:index.online});meta.append(make('p',`${detail.phase}：${detail.cause}`,'muted')); }
     if (index && index.known > 0) meta.append(meter(`目录清单 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,index.failed ? '部分更新失败，保留旧清单' : index.refreshing ? '后台更新中' : ''));
     return meta;
   }
@@ -307,6 +309,10 @@
     $('global-status').textContent = text; $('global-status').className = `chip global-status ${tone}`;
   }
   function issueAdvice(issue) {
+    if (issue.online && online) {
+      const detail=online.present(issue);
+      return {title:'在线操作需要处理',reason:detail.cause,settings:detail.settings,steps:['按下方记录检查原操作结果。','保留本地修改和操作记录，需要时下载本地副本。']};
+    }
     if (issue.code==='unsupported_content' && issue.diagnostic?.kind==='ambiguous_mapping') {
       const located=recovery.diagnosticLocationsView(issue).length>0;
       return {title:'内容块定位失败',reason:'文本合并已完成，但当前定位算法无法确定应修改哪个飞书内容块。',steps:located?['对照下方章节和文字，可查看哪些独立内容块需要区分。','行号来自当次失败的内容快照，可能与当前编辑器不同；本地修改和历史仍保留。']:['暂无法可靠定位具体片段；段落移动或多处连续修改也可能导致对应关系不明确。','本地修改和历史仍保留，需核对结构变化或改善内容块定位规则。']};
@@ -354,12 +360,19 @@
       const state = mount.state || {}, stale = Boolean(mount.status_warning);
       const issues = state.issues?.length ? state.issues : mountAuthorization(mount) ? [] : ['blocked','paused'].includes(state.cloud_state) || state.last_error ? [{code:state.last_error || state.cloud_state,name:mount.name}] : [];
       for (const issue of issues) {
+        if (issue.online?.resolved === true) continue;
         items.push({id:`${mount.id}:${issue.job_id || issue.namespace_id || issue.name || issue.code}`,name:issue.name || mount.name,mount,issue,stale});
       }
     }
     reconcileRows('sync-issue-list',items,({mount,issue,stale}) => {
         const state = mount.state || {}, advice = issueAdvice(issue), card = make('article',undefined,'sync-issue');
         card.append(make('h3',issue.name || mount.name),make('strong',advice.title),make('p',advice.reason));
+        if (online && (issue.online || issue.create_recovery)) {
+          const detail=online.present(issue), section=make('section',undefined,'issue-diagnostic');
+          for (const text of [`云端：${detail.outcome}`,`当前步骤：${detail.phase}`,`最近原因：${detail.cause}`,`首次原因：${detail.firstCause}`,detail.counts,`建议下一步：${detail.next}`,detail.api]) section.append(make('p',text));
+          if(detail.id)section.append(make('p',`诊断编号：${detail.id}`,'quiet'));
+          card.append(section);
+        }
         const diagnostic = recovery.diagnosticView(issue);
         const locations = recovery.diagnosticLocationsView(issue);
         if (diagnostic.message || diagnostic.location || locations.length) {
@@ -383,7 +396,7 @@
           card.append(detail);
         }
         if (mount.archived) card.append(make('p','此任务属于以前移除的挂载。先恢复并启动同步，处理完未同步内容后可彻底删除挂载与缓存。','quiet'));
-        card.append(make('p',issue.namespace_id ? '操作记录与已有恢复资料保留，云端结果仍在核验' : issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
+        card.append(make('p',issue.online && online ? (issue.local_saved ? '本地修改已持久保存' : '请保留本地文件，并核对本机保存状态') : issue.namespace_id ? '操作记录与已有恢复资料保留，云端结果仍在核验' : issue.local_saved ? '本地修改已持久保存 · 云端尚未确认此次修改' : '请保留本地文件，并核对同步状态','issue-preservation'));
         if (stale) card.append(make('p','这是上次记录，当前状态更新尚未完成；请先刷新。','quiet'));
         const steps = make('ol'); for (const step of advice.steps) steps.append(make('li',step)); card.append(steps);
         const actions = make('div',undefined,'merge-actions');
@@ -394,14 +407,17 @@
         }
         if (issue.create_recovery) {
           const info=issue.create_recovery;
-          const reasons={location_changed:'先前创建的文件名称或位置已变化',not_found:'尚未找到先前创建的文件',multiple_candidates:'找到多个候选文件',multiple_matches:'找到多个候选文件',request_timeout:'核验请求超时',rename_unconfirmed:'云端改名结果尚未确认',content_mismatch:'候选文件内容与原提交不同',network_or_protocol:'网络或服务响应未能完成核验',permission_denied:'账号权限不足',unknown_result:'旧版本未记录首次错误原因'};
-          card.append(make('p',`已核验 ${info.attempts || 0} 次 · ${reasons[info.reason] || '结果仍需核验'}`,'quiet'));
+          const reasons={location_changed:'先前创建的文件名称或位置已变化',not_found:'尚未找到先前创建的文件',multiple_candidates:'找到多个候选文件',multiple_matches:'找到多个候选文件',request_timeout:'核验请求超时',rename_unconfirmed:'云端改名结果尚未确认',content_mismatch:'候选文件内容与原提交不同',network_or_protocol:'原因未区分网络或协议',permission_denied:'账号权限不足',unknown_result:'首次错误原因未记录'};
+          if (!online) {
+            const attempts=Number.isSafeInteger(info.attempts)&&info.attempts>=0?info.attempts:0;
+            card.append(make('p',`首次错误原因未记录 · 历史累计：${attempts} 次（未区分核验与请求失败） · ${reasons[info.reason] || '结果仍需核验'}`,'quiet'));
+          }
           card.append(make('p','下载副本保留原任务提交内容；重新创建使用最新本地版本。','quiet'));
           if (canRecoverUpload && issue.job_id && !mount.archived) {
             const recover=async(action,button)=>{
               if (action==='recreate' && !window.confirm(`确认使用“${issue.name || mount.name}”的最新本地版本重新创建？\n先前创建的旧副本可能已被移动到其他位置，重新创建后可能出现两份文件。原任务正文及历史会保留。`)) return;
               button.disabled=true;
-              try {await api(`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/recover`,'POST',{action,expected_generation:info.current_generation,expected_local:info.current_local,confirm_recreate:action==='recreate'});message(action==='recreate'?'已接受使用最新本地版本重新创建，仍需等待云端确认。':'已请求重新核验先前创建的结果。');await refresh();}
+              try {await api(`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/recover`,'POST',{action,expected_generation:info.current_generation,expected_local:info.current_local,expected_diagnostic_cycle:info.diagnostic_cycle || '',expected_policy_version:info.policy_version || 0,confirm_recreate:action==='recreate'});message(action==='recreate'?'已接受使用最新本地版本重新创建，仍需等待云端确认。':'已请求重新核验先前创建的结果。');await refresh();}
               catch(error){message(error.code==='version_changed'?'文件或云端状态已变化，请刷新后重新核对。':error.message,true);if(error.status===409)await refresh();}
               finally {button.disabled=stale||!state.running;}
             };
@@ -412,6 +428,18 @@
         if (issue.can_download && issue.job_id && !stale) { const copy=make('a','下载本地副本','button small'); copy.href=`/api/mounts/${encodeURIComponent(mount.id)}/uploads/${encodeURIComponent(issue.job_id)}/local`; copy.download=issue.name?.split('/').pop() || 'local-copy'; copy.title='下载此次提交的原始内容；图片资源仍保留在挂载目录中'; actions.append(copy); }
         if (advice.settings) {const settings=make('button','检查账号与权限','button small');settings.addEventListener('click',()=>view('settings'));actions.append(settings);}
         if (advice.retry && !issue.create_recovery && canRetry && !mount.archived) {const retry=make('button','重试同步','button small');retry.disabled=stale || !state.running;retry.addEventListener('click',async()=>{retry.disabled=true;try{await api(`/api/mounts/${encodeURIComponent(mount.id)}/retry`,'POST',{});message('已请求重试，完成后需要云端确认。');await refresh();}catch(error){message(error.message,true);}finally{retry.disabled=stale||!state.running;}});actions.append(retry);}
+        if (online && (issue.online || issue.create_recovery)) {
+          const copy=make('button','复制诊断信息','button small');
+          copy.addEventListener('click',async()=>{
+            copy.disabled=true;
+            try {
+              await navigator.clipboard.writeText(JSON.stringify(online.exportDiagnostic(issue),null,2));
+              message('诊断信息已复制。');
+            } catch (_) { message('无法复制诊断信息，请允许浏览器访问剪贴板后重试。',true); }
+            finally { copy.disabled=false; }
+          });
+          actions.append(copy);
+        }
         card.append(actions);
         const details=make('details'),summary=make('summary','诊断信息');details.append(summary,make('p',`错误标识：${issue.code || 'operation_failed'}`,'quiet'));
         if (issue.name) {
@@ -421,7 +449,7 @@
         if (issue.job_id && issue.local_saved && !issue.can_download) details.append(make('p','此文件超过页面直接下载上限，请从上述本机位置复制到挂载盘之外保存副本。','quiet'));
         if (issue.job_id) details.append(make('p',`任务：${issue.job_id}`,'quiet'));
         card.append(details); return card;
-    },item => JSON.stringify([item.issue,item.stale,item.mount.archived,item.mount.state?.running,canRetry,currentPlatform]));
+    },item => JSON.stringify([item.issue,item.stale,item.mount.archived,item.mount.state?.running,canRetry,canRecoverUpload,currentPlatform]),item => JSON.stringify([item.stale,item.mount.archived,item.mount.state?.running,canRecoverUpload,item.issue.create_recovery?.can_recreate,item.issue.create_recovery?.current_generation,item.issue.create_recovery?.current_local,item.issue.create_recovery?.diagnostic_cycle,item.issue.create_recovery?.policy_version]));
     const count = items.length;
     $('sync-issues').hidden=activeView === 'conflicts' || !count;$('sync-issue-count').textContent=`需要处理（${count}）`;$('sync-attention').hidden=!count;$('sync-attention').textContent=`需要处理（${count}）`;
   }

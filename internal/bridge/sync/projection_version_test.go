@@ -324,3 +324,16 @@ func TestBackgroundBackfillCachesExistingImagesWithoutChangingEntry(t *testing.T
 		t.Fatal("second pass re-downloaded image")
 	}
 }
+
+func TestNewEnginePreservesUncachedImageSource(t *testing.T) {
+	s, original, source, _ := setup(t, model.KindDocx)
+	media := &imageFixtureCloud{fixtureCloud: source}
+	e, err := New(Dependencies{Store: s, Source: media, Publisher: original.publisher}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sn, _, err := e.saveDoc(bg, cloud.Document{Token: "uncached-image-doc", Revision: "1", XML: []byte(`<title id="doc">Image</title><img id="image" src="image-token" mime="image/png" name="test.png"/>`)})
+	if err != nil || len(sn.DocMedia) != 1 || media.imageReads != 1 {
+		t.Fatal("uncached image capability lost", sn, media.imageReads, err)
+	}
+}

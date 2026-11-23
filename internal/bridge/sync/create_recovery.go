@@ -6,6 +6,7 @@ import (
 
 	"github.com/rclone/rclone/internal/bridge/history"
 	"github.com/rclone/rclone/internal/bridge/model"
+	"github.com/rclone/rclone/internal/bridge/online"
 	"github.com/rclone/rclone/internal/bridge/store"
 	"github.com/rclone/rclone/lib/larkcli"
 )
@@ -13,7 +14,9 @@ import (
 // Uncertainty is not a reason to replay a mutation. Record bounded observations
 // using a durable context, including when the request that failed was canceled.
 func (e *Engine) failedCreateCheck(ctx context.Context, op model.CreateOp, reason string, cause error) error {
-	updated, err := e.store.RecordCreateCheck(context.WithoutCancel(ctx), op.ID, reason, creationFailureCode(cause), e.now())
+	failure := createObservationFailure(ctx, cause, reason, e.now())
+	effective := reason == "not_found" || reason == "multiple_matches" || reason == "content_mismatch" || reason == "location_changed"
+	updated, err := e.store.RecordCreateObservation(context.WithoutCancel(ctx), op.ID, reason, failure, effective)
 	if err != nil {
 		return errors.Join(cause, err)
 	}
@@ -48,11 +51,7 @@ func creationCheckReason(err error) string {
 	if errors.Is(err, errCreationContentMismatch) {
 		return "content_mismatch"
 	}
-	switch creationFailureCode(err) {
-	case "permission_denied", "request_timeout":
-		return creationFailureCode(err)
-	}
-	return "network_or_protocol"
+	return online.Cause(err)
 }
 
 // RecoverCreation accepts one explicit recovery for one captured local version.
@@ -106,7 +105,7 @@ func (e *Engine) RecoverCreation(ctx context.Context, req model.CreateRecoveryRe
 		}
 		unlock()
 		locked = false
-		if err = e.enqueueCreationRecovery(ctx, en); err != nil {
+		if err = e.enqueueCreationRecovery(ctx, en, true); err != nil {
 			return out, err
 		}
 		return model.CreateRecoveryResult{EntryID: en.ID, JobID: req.JobID, Generation: en.Generation, Accepted: true}, nil
@@ -150,7 +149,7 @@ func (e *Engine) RecoverCreation(ctx context.Context, req model.CreateRecoveryRe
 	}
 	unlock()
 	locked = false
-	if err = e.enqueueCreationRecovery(ctx, en); err != nil {
+	if err = e.enqueueCreationRecovery(ctx, en, false); err != nil {
 		return out, err
 	}
 	return model.CreateRecoveryResult{EntryID: en.ID, JobID: job.ID, Generation: en.Generation, Recreated: true, Accepted: true}, nil
@@ -161,11 +160,14 @@ func recoveryVersionError(err error) error {
 	}
 	return err
 }
-func (e *Engine) enqueueCreationRecovery(ctx context.Context, en model.Entry) error {
+func (e *Engine) enqueueCreationRecovery(ctx context.Context, en model.Entry, observeOnly bool) error {
 	e.dispatchMu.RLock()
 	d := e.dispatcher
 	e.dispatchMu.RUnlock()
 	if d != nil {
+		if observeOnly {
+			return d.observe(ctx, en.ID, en.Generation)
+		}
 		return d.manual(ctx, en.ID, en.Generation)
 	}
 	// A standalone engine does not own a service lifetime. Durable queued work is

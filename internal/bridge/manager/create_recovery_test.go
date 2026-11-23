@@ -25,7 +25,7 @@ func TestRecoverUploadRequiresActiveWorkerAndValidatedInput(t *testing.T) {
 }
 func TestRecoveryIPCUsesControlAndRejectsInvalidInput(t *testing.T) {
 	calls := 0
-	w := &worker{ready: true, controls: map[uint64]context.CancelFunc{}, services: &workerServices{recoverCreation: func(_ context.Context, in model.CreateRecoveryRequest) (model.CreateRecoveryResult, error) {
+	w := &worker{ready: true, controls: map[uint64]context.CancelCauseFunc{}, services: &workerServices{recoverCreation: func(_ context.Context, in model.CreateRecoveryRequest) (model.CreateRecoveryResult, error) {
 		calls++
 		return model.CreateRecoveryResult{JobID: in.JobID, Accepted: true}, nil
 	}}}

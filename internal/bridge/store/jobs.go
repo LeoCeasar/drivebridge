@@ -15,6 +15,7 @@ import (
 )
 
 type jobRecord struct {
+	Online             *model.OnlineRecord     `json:"online,omitempty"`
 	Diagnostic         *model.SyncDiagnostic   `json:"diagnostic,omitempty"`
 	LocalReceipt       bool                    `json:"local_receipt,omitempty"`
 	StagedAt           time.Time               `json:"staged_at,omitempty"`
@@ -34,7 +35,12 @@ func jobTx(tx *bolt.Tx, id model.JobID) (j jobRecord, err error) {
 	err = get(tx, "jobs", string(id), &j)
 	return
 }
-func saveJob(tx *bolt.Tx, j jobRecord) error { return put(tx, "jobs", string(j.Job.ID), j) }
+func saveJob(tx *bolt.Tx, j jobRecord) error {
+	if j.Job.State == model.StatusSynced && j.Online != nil {
+		j.Online.Resolved = true
+	}
+	return put(tx, "jobs", string(j.Job.ID), j)
+}
 func active(st model.Status) bool {
 	return st == model.StatusMerging || st == model.StatusUploading || st == model.StatusAwaitingVerification
 }
@@ -416,6 +422,7 @@ func (s *Store) Job(ctx context.Context, id model.JobID) (j model.Job, err error
 }
 
 type JobJournal struct {
+	Online             *model.OnlineRecord
 	Diagnostic         *model.SyncDiagnostic
 	LocalReceipt       bool
 	StagedAt           time.Time
@@ -432,7 +439,7 @@ type JobJournal struct {
 func (s *Store) Journal(ctx context.Context, id model.JobID) (j JobJournal, err error) {
 	err = s.view(ctx, func(tx *bolt.Tx) error {
 		r, er := jobTx(tx, id)
-		j = JobJournal{Diagnostic: r.Diagnostic, LocalReceipt: r.LocalReceipt, StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
+		j = JobJournal{Online: r.Online, Diagnostic: r.Diagnostic, LocalReceipt: r.LocalReceipt, StagedAt: r.StagedAt, PreparationRestart: r.PreparationRestart, HumanResolution: r.HumanResolution, ErrorCode: r.ErrorCode, Job: r.Job, Operations: r.Operations, Results: r.Results, Desired: r.Desired}
 		return er
 	})
 	return

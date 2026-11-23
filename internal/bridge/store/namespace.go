@@ -731,6 +731,9 @@ func (s *Store) AcknowledgeNamespaceAction(ctx context.Context, id string) error
 			}
 		}
 		r.ActionPending = false
+		if r.Op.Online != nil {
+			r.Op.Online.Resolved = true
+		}
 		return put(tx, "namespace", id, r)
 	})
 }

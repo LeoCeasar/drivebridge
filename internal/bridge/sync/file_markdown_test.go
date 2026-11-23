@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/rclone/rclone/internal/bridge/model"
 	"github.com/rclone/rclone/internal/bridge/store"
@@ -173,6 +174,16 @@ func TestPlainMarkdownMergedUploadRecoveryUsesDesired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Restart retains the recorded timeout backoff.
+	if err = resumed.SyncEntry(bg, en.ID); err != nil {
+		t.Fatal(err)
+	}
+	waiting, _ := reopened.Entry(bg, en.ID)
+	if waiting.Status == model.StatusSynced {
+		t.Fatal("restart bypassed persistent waiting bound")
+	}
+	now := time.Now().Add(time.Minute)
+	resumed.opt.Now = func() time.Time { return now }
 	if err = resumed.SyncEntry(bg, en.ID); err != nil {
 		t.Fatal(err)
 	}

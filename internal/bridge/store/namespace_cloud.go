@@ -9,6 +9,7 @@ import (
 )
 
 type NamespaceWork struct {
+	Online            *model.OnlineRecord
 	Ordinal           uint64
 	Ready             bool
 	Bindings          []model.Entry
@@ -32,7 +33,7 @@ func (s *Store) NamespaceJournal(ctx context.Context, id string) (out NamespaceW
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
 		}
-		out = NamespaceWork{Ordinal: r.Ordinal, ActionPending: r.ActionPending, SafeSaveBackup: r.SafeSaveBackup, SafeSaveCompleted: r.SafeSaveCompleted, LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
+		out = NamespaceWork{Online: r.Op.Online, Ordinal: r.Ordinal, ActionPending: r.ActionPending, SafeSaveBackup: r.SafeSaveBackup, SafeSaveCompleted: r.SafeSaveCompleted, LocalReceipt: r.LocalReceipt, LocalCancel: r.LocalCancel, TemporaryName: r.TemporaryName, Op: r.Op, Before: r.Before, Step: r.CloudStep, Dispatched: r.Dispatched, Completed: r.CompletedSteps}
 		return nil
 	})
 	return
@@ -47,6 +48,9 @@ func (s *Store) BeginNamespaceDispatch(ctx context.Context, id, step string) err
 		var r namespaceRecord
 		if err := get(tx, "namespace", id, &r); err != nil {
 			return err
+		}
+		if namespaceWritePaused(r.Op.Online) {
+			return ErrNamespaceWritePaused
 		}
 		if r.SafeSaveBackup || r.FuseSoftRemove {
 			return ErrSafeSavePending
