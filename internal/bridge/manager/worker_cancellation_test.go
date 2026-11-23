@@ -104,52 +104,57 @@ func TestWorkerStartResumesOnlyExplicitUserStopAndKeepsUnknownWrite(t *testing.T
 	m, id, _, _ := fixture(t, nil)
 	original := m.factory
 	jobs := map[string]model.JobID{}
-	prepared := make(chan struct{})
-	m.factory = func(ctx context.Context, spec mountSpec) (*workerServices, error) {
-		s, err := original(ctx, spec)
-		if err != nil {
-			return nil, err
+	// Seed durable jobs before the startup readiness clock. Slow filesystem
+	// flushes in fixture construction are not a startup/cancellation assertion.
+	ctx := context.Background()
+	spec, err := m.spec(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := original(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.store.Close()
+	for _, kind := range []string{"user_stop", "unknown_write", "unspecified_cancel"} {
+		en, er := s.store.EnsureEntry(ctx, kind, model.KindFile)
+		if er != nil {
+			t.Fatal(er)
 		}
-		for _, kind := range []string{"user_stop", "unknown_write", "unspecified_cancel"} {
-			en, er := s.store.EnsureEntry(ctx, kind, model.KindFile)
-			if er != nil {
-				return nil, er
-			}
-			_, job, er := s.store.Stage(ctx, en.ID, nil, strings.NewReader("saved body"))
-			if er != nil {
-				return nil, er
-			}
-			if _, _, er = s.store.Prepare(ctx, job.ID); er != nil {
-				return nil, er
-			}
-			origin := "user_stop"
-			outcome := "not_dispatched"
-			if kind == "unknown_write" {
-				er = s.store.MarkUnknown(ctx, job.ID)
-				outcome = "dispatched_unconfirmed"
-			} else {
-				er = s.store.PauseJob(ctx, job.ID, model.StatusBlocked, "canceled")
-			}
-			if er != nil {
-				return nil, er
-			}
-			if kind == "unspecified_cancel" {
-				origin = kind
-			}
-			cancelCtx, cancel := context.WithCancel(online.WithCancelOrigin(ctx, origin))
-			cancel()
-			if er = s.store.RecordJobOnlineFailure(ctx, job.ID, online.Capture(cancelCtx, cancelCtx.Err(), "sync", "readback", outcome, time.Now())); er != nil {
-				return nil, er
-			}
-			jobs[kind] = job.ID
+		_, job, er := s.store.Stage(ctx, en.ID, nil, strings.NewReader("saved body"))
+		if er != nil {
+			t.Fatal(er)
 		}
-		close(prepared)
-		return s, nil
+		if _, _, er = s.store.Prepare(ctx, job.ID); er != nil {
+			t.Fatal(er)
+		}
+		origin := "user_stop"
+		outcome := "not_dispatched"
+		if kind == "unknown_write" {
+			er = s.store.MarkUnknown(ctx, job.ID)
+			outcome = "dispatched_unconfirmed"
+		} else {
+			er = s.store.PauseJob(ctx, job.ID, model.StatusBlocked, "canceled")
+		}
+		if er != nil {
+			t.Fatal(er)
+		}
+		if kind == "unspecified_cancel" {
+			origin = kind
+		}
+		cancelCtx, cancel := context.WithCancel(online.WithCancelOrigin(ctx, origin))
+		cancel()
+		if er = s.store.RecordJobOnlineFailure(ctx, job.ID, online.Capture(cancelCtx, cancelCtx.Err(), "sync", "readback", outcome, time.Now())); er != nil {
+			t.Fatal(er)
+		}
+		jobs[kind] = job.ID
+	}
+	if err = s.store.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := m.Start(context.Background(), id, true); err != nil {
 		t.Fatal(err)
 	}
-	<-prepared
 	w := m.localWorker(id)
 	for kind, jobID := range jobs {
 		j, err := w.services.store.Journal(context.Background(), jobID)

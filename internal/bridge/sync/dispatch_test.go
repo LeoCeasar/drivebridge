@@ -125,6 +125,10 @@ func TestDispatcherReleasesThreeTimedOutSlotsForHealthyFile(t *testing.T) {
 			t.Fatal("slow file not started")
 		}
 	}
+	// All slow passes have already captured their two-second contexts (the
+	// started sends above synchronize that read). The healthy pass must test slot
+	// availability, not expire on slow Windows durable I/O of its own.
+	e.opt.TransferTimeout = time.Minute
 	healthy = stageContent(t, s, healthy, "healthy latest")
 	d.admit(healthy.ID, healthy.Generation)
 	deadline := time.After(5 * time.Second)
@@ -134,7 +138,8 @@ func TestDispatcherReleasesThreeTimedOutSlotsForHealthyFile(t *testing.T) {
 			d.completed(result)
 			d.pump()
 		case <-deadline:
-			t.Fatal("timed-out files retained all slots")
+			current, _ := s.Entry(bg, healthy.ID)
+			t.Fatalf("timed-out files retained all slots: healthy=%s active=%d pending=%d", current.Status, d.active, len(d.entries))
 		}
 		current, _ := s.Entry(bg, healthy.ID)
 		if current.Status == model.StatusSynced {
