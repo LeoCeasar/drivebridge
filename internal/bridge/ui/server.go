@@ -212,6 +212,7 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 			v.Mounts[i].StatusWarning = safeCode(v.Mounts[i].StatusWarning)
 		}
 		_, v.CanRetry = h.backend.(SyncRetrier)
+		_, v.CanRefreshDirectories = h.backend.(DirectoryRefreshBackend)
 		_, v.CanRecoverUpload = h.backend.(UploadRecoverer)
 		v.Platform, v.OpenFolderLabel = hostGOOS, FolderOpenLabel(hostGOOS)
 		_, v.CanOpenFolder = h.backend.(FolderOpener)
@@ -381,6 +382,30 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "conflicts" && validID(parts[2]) {
 		h.conflict(w, r, parts[2], parts[3:])
+		return
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && parts[3] == "refresh-directory" {
+		if r.Method != "POST" {
+			method(w, "POST")
+			return
+		}
+		var in struct {
+			Remote *string `json:"remote"`
+		}
+		if r.URL.RawQuery != "" || decode(w, r, &in) != nil || in.Remote == nil || !model.ValidDirectoryRemote(*in.Remote) {
+			respondError(w, 400, "invalid_request")
+			return
+		}
+		backend, ok := h.backend.(DirectoryRefreshBackend)
+		if !ok {
+			respondError(w, 503, "unavailable")
+			return
+		}
+		if err := backend.RefreshDirectory(r.Context(), model.MountID(parts[2]), *in.Remote); err != nil {
+			apiError(w, err)
+			return
+		}
+		respond(w, 200, map[string]bool{"accepted": true})
 		return
 	}
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "mounts" && validID(parts[2]) && (parts[3] == "start" || parts[3] == "stop" || parts[3] == "retry" || parts[3] == "archive" || parts[3] == "restore" || parts[3] == "delete" || parts[3] == "restore_start" || parts[3] == "open") {

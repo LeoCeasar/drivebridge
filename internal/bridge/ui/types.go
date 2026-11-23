@@ -58,15 +58,16 @@ type ConflictSummary struct {
 	MountID        model.MountID    `json:"mount_id"`
 }
 type StatusView struct {
-	Platform         string            `json:"platform,omitempty"`
-	OpenFolderLabel  string            `json:"open_folder_label,omitempty"`
-	CanOpenFolder    bool              `json:"can_open_folder"`
-	Partial          bool              `json:"partial,omitempty"`
-	SchemaVersion    int               `json:"schema_version"`
-	CanRecoverUpload bool              `json:"can_recover_upload"`
-	CanRetry         bool              `json:"can_retry"`
-	Mounts           []MountView       `json:"mounts"`
-	Conflicts        []ConflictSummary `json:"conflicts"`
+	CanRefreshDirectories bool              `json:"can_refresh_directories"`
+	Platform              string            `json:"platform,omitempty"`
+	OpenFolderLabel       string            `json:"open_folder_label,omitempty"`
+	CanOpenFolder         bool              `json:"can_open_folder"`
+	Partial               bool              `json:"partial,omitempty"`
+	SchemaVersion         int               `json:"schema_version"`
+	CanRecoverUpload      bool              `json:"can_recover_upload"`
+	CanRetry              bool              `json:"can_retry"`
+	Mounts                []MountView       `json:"mounts"`
+	Conflicts             []ConflictSummary `json:"conflicts"`
 }
 type ConfigRequest struct {
 	MountID                          model.MountID   `json:"mount_id,omitempty"`
@@ -131,6 +132,9 @@ type ConflictView struct {
 }
 
 // Optional capabilities keep fixture/offline hosts honest about available actions.
+type DirectoryRefreshBackend interface {
+	RefreshDirectory(context.Context, model.MountID, string) error
+}
 type SyncRetrier interface {
 	Retry(context.Context, model.MountID) error
 }

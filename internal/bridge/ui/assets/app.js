@@ -10,7 +10,8 @@
   let draftTimer = null, authFlow = '', authProfile = '', authAutomatic = false, authConfigFlow = '', authRetry = null;
   let messageOwner = '', statusFlight = null, statusDelay = 5000, statusPartial = false, sessionLost = false, networkFailures = 0;
   // The page never guesses the platform: the backend names its own file manager.
-  let openLabel = '在文件管理器中打开', canOpen = false;
+  let openLabel = '在文件管理器中打开', canOpen = false, canRefreshDirectories = false;
+  const directoryRefreshFlights = new Set();
   const fileManagerLabels = {windows:'在资源管理器中打开',darwin:'在 Finder 中打开'};
   const titles = {workspace:'文件与同步',conflicts:'冲突与合并',settings:'账号与目录',history:'修改历史'};
   let currentPlatform = '';
@@ -147,7 +148,20 @@
     if (state.cloud_sync_interval) meta.append(make('span','云端每5分钟同步最新保存版本；所有保存仍保留修改历史。','mount-path'));
     const index = state.directory_index;
     if (index?.online && online) { const detail=online.present({online:index.online});meta.append(make('p',`${detail.phase}：${detail.cause}`,'muted')); }
-    if (index && index.known > 0) meta.append(meter(`目录清单 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,index.failed ? '部分更新失败，保留旧清单' : index.refreshing ? '后台更新中' : ''));
+    if (index && index.known > 0) {
+      const hints = [`较旧 ${index.stale || 0}，待刷新 ${index.pending || 0}`];
+      if (index.failed) hints.push('部分更新失败，保留旧清单');
+      if (index.refreshing) hints.push('后台更新中');
+      meta.append(meter(`目录缓存覆盖 ${index.cached || 0} / ${index.known}`,index.cached || 0,index.known,hints.join('；')));
+      const stamp = value => { const ms = Date.parse(value || ''); return Number.isFinite(ms) && ms > 0 ? new Date(ms).toLocaleString() : '尚未取得'; };
+      meta.append(make('small',`最近一次目录刷新：${stamp(index.last_refreshed)}；缓存覆盖不代表目录已更新。`,'mount-path'));
+      const recent = make('details',undefined,'directory-refresh-details'); recent.append(make('summary','目录刷新详情'));
+      for (const item of (index.recent || []).slice(0,8)) {
+        const state = {queued:'已排队',refreshing:'正在刷新',waiting:'等待重试',failed:'刷新未完成',cached:'已缓存'}[item.state] || '待核对';
+        recent.append(make('small',`${item.remote || '挂载根目录'}：${state}；清单时间 ${stamp(item.cached_at)}${item.state === 'waiting' ? '；下次尝试不早于 ' + stamp(item.next_attempt_at) : ''}`,'mount-path'));
+      }
+      if (index.recent?.length) meta.append(recent);
+    }
     return meta;
   }
   function mountAuthorization(mount) {
@@ -222,7 +236,26 @@
     remove.addEventListener('click',() => { confirm.hidden = false; remove.hidden = true; });
     no.addEventListener('click',() => { confirm.hidden = true; remove.hidden = false; });
     yes.addEventListener('click',async () => { yes.disabled = true; try { await api(`/api/mounts/${encodeURIComponent(mount.id)}/delete`,'POST',{}); message('挂载配置与本地缓存已删除；飞书文件和 Git 历史仍保留。'); await loadConfig(); await refresh(); } catch(error) { removalHelp(error,mount); confirm.hidden = true; remove.hidden = false; if(error.code==='cleanup_pending'){await loadConfig();await refresh();} } finally { yes.disabled = false; } });
-    panel.append(copyPath,copyID,remove,confirm); menu.append(make('summary','更多'),panel);
+    panel.append(copyPath,copyID);
+    if (canRefreshDirectories && !mount.archived) {
+      const form = make('form',undefined,'directory-refresh-form'), input = make('input'), submit = make('button','刷新云端目录清单','button small');
+      const label = make('label','挂载内相对目录'); input.type = 'text'; input.placeholder = '个人目录/开发项目文档'; input.maxLength = 32768;
+      label.append(input); submit.type = 'submit';
+      const allowed = () => !stale && Boolean(mount.state?.running);
+      input.disabled = !allowed(); submit.disabled = !allowed() || directoryRefreshFlights.has(mount.id);
+      form.append(label,make('small','使用 / 分隔；留空刷新挂载根目录。只更新此目录的云端清单，子目录继续在后台发现。','mount-path'),submit);
+      form.addEventListener('submit',async event => {
+        event.preventDefault(); if (!allowed() || directoryRefreshFlights.has(mount.id)) return;
+        directoryRefreshFlights.add(mount.id); submit.disabled = true;
+        try {
+          await api(`/api/mounts/${encodeURIComponent(mount.id)}/refresh-directory`,'POST',{remote:input.value});
+          message('已请求刷新云端目录清单，后台处理；遇到服务限流时仍会等待。');
+        } catch (error) { message(error.message,true); }
+        finally { directoryRefreshFlights.delete(mount.id); submit.disabled = !allowed(); }
+      });
+      panel.append(form);
+    }
+    panel.append(remove,confirm); menu.append(make('summary','更多'),panel);
     return menu;
   }
   const rowCaches = new Map();
@@ -295,8 +328,8 @@
       for (const [cell,label] of [[local,'本机保存'],[cloud,mount.archived ? '状态' : '云端状态'],[counters,mount.archived ? '保留数据' : '待处理']]) cell.setAttribute('data-label',label);
       row.append(name, local, cloud, counters, action); return row;
     };
-    const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry,mountAuthorization(mount)?.label,Boolean(mount.authorization?.state === 'waiting_authorization' && Date.now() - Date.parse(mount.authorization.started_at || '') >= 30000)]);
-    const transition = mount => { const auth = mountAuthorization(mount); return JSON.stringify([auth?.progress.flow_id,auth?.progress.state,auth?.label,auth?.url,auth?.reauthorize]); };
+    const signature = mount => JSON.stringify([{...mount,status_updated_at:mount.status_warning ? mount.status_updated_at : undefined},canRetry,canRefreshDirectories,mountAuthorization(mount)?.label,Boolean(mount.authorization?.state === 'waiting_authorization' && Date.now() - Date.parse(mount.authorization.started_at || '') >= 30000)]);
+    const transition = mount => { const auth = mountAuthorization(mount); return JSON.stringify([Boolean(mount.state?.running),Boolean(mount.status_warning),canRefreshDirectories,auth?.progress.flow_id,auth?.progress.state,auth?.label,auth?.url,auth?.reauthorize]); };
     reconcileRows('mount-rows',mounts.filter(m => !m.archived),renderMount,signature,transition);
     reconcileRows('archived-mount-rows',mounts.filter(m => m.archived),renderMount,signature);
   }
@@ -534,7 +567,7 @@
     statusFlight = (async () => {
       try {
         const status = await api('/api/status');
-        networkFailures = 0; statusPartial = Boolean(status.partial);
+        networkFailures = 0; statusPartial = Boolean(status.partial); canRefreshDirectories = status.can_refresh_directories === true;
         if (status.open_folder_label) { openLabel = status.open_folder_label; canOpen = status.can_open_folder === true; }
         renderMounts(status.mounts,status.can_retry); renderIssues(status.mounts,status.can_retry,status.can_recover_upload); renderConflicts(status.conflicts,status.partial); prefetchConflicts(status.conflicts,status.partial); renderGlobalStatus(status); if (current) recoveryControls();
         statusDelay = 5000;

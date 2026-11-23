@@ -25,7 +25,7 @@ console.log('recovery controls preserve offline editing and gate unavailable act
   assert.equal(hasRetryWork({running:true,cloud_state:'synced',queued:0,inflight:0}),false,'a fully confirmed mount has nothing to retry');
   for (const state of [{cloud_state:'synced',queued:2},{cloud_state:'synced',inflight:1},{cloud_state:'awaiting_verification'},{cloud_state:'queued'},{cloud_state:'unknown'},{cloud_state:'offline'},{cloud_state:'synced',last_error:'offline'}]) assert.equal(hasRetryWork(state),true,JSON.stringify(state));
   assert.equal(hasRetryWork({cloud_state:'conflict'}),false,'conflicts are resolved in the merge page, not by retry');
-  assert.deepEqual(cloudChip({cloud_state:'synced'},true),['已确认','ok']);
+  assert.deepEqual(cloudChip({cloud_state:'synced'},true),['上传已确认','ok']);
   assert.deepEqual(cloudChip({cloud_state:'blocked'},true),['已阻塞','error']);
   assert.deepEqual(cloudChip({},false),['挂载未启动','stopped']);
   assert.equal(formatBytes(5368709120),'5 GiB'); assert.equal(formatBytes(3650000000),'3.4 GiB'); assert.equal(formatBytes(612000000),'584 MiB'); assert.equal(formatBytes(-1),'');

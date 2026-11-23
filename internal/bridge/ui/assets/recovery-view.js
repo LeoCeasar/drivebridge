@@ -38,7 +38,7 @@
   }
   function cloudChip(state, running) {
     if(state?.cloud_state==='queued' && state.waiting_for_parent>0)return ['等待上级文件夹','pending'];
-    const labels = {synced:['已确认','ok'],queued:['等待同步','pending'],uploading:['正在上传','pending'],merging:['正在合并','pending'],awaiting_verification:['等待回读核验','pending'],conflict:['需要合并','pending'],blocked:['已阻塞','error'],paused:['已暂停','stopped'],offline:['离线','error']};
+    const labels = {synced:['上传已确认','ok'],queued:['等待同步','pending'],uploading:['正在上传','pending'],merging:['正在合并','pending'],awaiting_verification:['等待回读核验','pending'],conflict:['需要合并','pending'],blocked:['已阻塞','error'],paused:['已暂停','stopped'],offline:['离线','error']};
     return labels[state?.cloud_state] || (running ? ['等待确认','info'] : ['挂载未启动','stopped']);
   }
   function formatBytes(value) {

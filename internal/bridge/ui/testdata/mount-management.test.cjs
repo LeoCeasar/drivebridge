@@ -34,7 +34,7 @@ vm.runInNewContext(source.replace('  start();','  globalThis.view=view;globalThi
  assert.match(text(active.children[0]),/DriveBridge — 工作飞书/,'friendly name, not the internal account-disk id');
  assert.equal(active.children[0].children[0].children[1].children[0].title,'内部名称：账号盘-c143343f-4a52-4999-b7b0-27d4f7fc625b','raw name stays available as a tooltip');
  assert.match(text(active.children[0]),/正文缓存 1.5 GiB \/ 5 GiB.*7 天未使用后释放/,'cache use against the soft budget and retention');
- assert.match(text(active.children[0]),/目录清单 96 \/ 128.*后台更新中/);
+ assert.match(text(active.children[0]),/目录缓存覆盖 96 \/ 128.*后台更新中/);
  assert.deepEqual(actions.children.map(c=>c.textContent),['暂停同步','在 Finder 中打开','重试同步',undefined],'open uses the host label; retry shown while work is queued');
  await actions.children[1].listeners.click();assert.ok(calls.some(c=>c.route==='/api/mounts/mount/open'&&c.method==='POST'));
  const panel=actions.children.at(-1).children[1];

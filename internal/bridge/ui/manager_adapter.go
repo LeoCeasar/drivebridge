@@ -122,6 +122,9 @@ func (b *ManagerBackend) ConflictForResolve(ctx context.Context, id model.Confli
 	v, err := b.manager.ConflictForResolve(ctx, id)
 	return ConflictInputs{Conflict: v.Conflict, Entry: v.Entry, Base: v.Base, Local: v.Local, Remote: v.Remote, Draft: v.Draft, Text: v.Text, SourceURL: v.SourceURL, Stale: v.Stale, RefreshWarning: v.RefreshWarning}, err
 }
+func (b *ManagerBackend) RefreshDirectory(ctx context.Context, id model.MountID, remote string) error {
+	return b.manager.RefreshDirectory(ctx, id, remote)
+}
 func (b *ManagerBackend) Retry(ctx context.Context, id model.MountID) error {
 	return b.manager.Retry(ctx, id)
 }

@@ -63,7 +63,7 @@ vm.runInNewContext(source.replace('  start();','  globalThis.refreshStatus = ref
   mounts = [{id:'mount',name:'cached mount',status_warning:'pending',status_updated_at:'2026-11-11T08:00:00Z',state:{running:true,local_saved:true,cloud_state:'synced',queued:3}}];
   await context.refreshStatus();
   const row = element('mount-rows').children[0];
-  assert.equal(row.children[2].children[0].textContent,'上次：已确认');
+  assert.equal(row.children[2].children[0].textContent,'上次：上传已确认');
   assert.equal(row.children[4].children[0].children[0].disabled,true,'stale state must not drive start/stop actions');
   assert.match(element('connection').textContent,/部分状态/);
   assert.equal(element('conflict-count').textContent,'待更新','incomplete observations cannot promise zero conflicts');

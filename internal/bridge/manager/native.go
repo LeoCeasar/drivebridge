@@ -384,7 +384,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		return
 	}, recoverCreation: engine.RecoverCreation, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
-		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed, Online: stats.Online}, err
+		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed, Online: stats.Online, Pending: stats.Pending, Stale: stats.Stale, LastRefreshed: stats.LastRefreshed, Recent: stats.Recent}, err
 	}, refreshConflict: engine.RefreshConflict, refreshDirectory: overlayFS.RequestDirectoryRefresh, refreshDirectories: func(ctx context.Context) error {
 		if err := overlayFS.RequestVisitedDirectoryRefresh(ctx); err != nil {
 			return err
