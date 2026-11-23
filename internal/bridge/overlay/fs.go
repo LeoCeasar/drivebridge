@@ -69,6 +69,7 @@ type Dependencies struct {
 	Account        *AccountOptions
 }
 type Fs struct {
+	directorySchedule directorySchedule
 	deletionCommit    func(context.Context, model.Entry, func() (bool, error)) error
 	store             *store.Store
 	source            Source
@@ -306,6 +307,9 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 				return nil, err
 			}
 		}
+	}
+	if !metadata.DirectoryCachedAt.IsZero() {
+		_ = f.queueDirectoryRefresh(parent, metadata, false)
 	}
 	return f.cachedDirectory(ctx, parent)
 }

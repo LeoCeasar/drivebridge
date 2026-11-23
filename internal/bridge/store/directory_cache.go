@@ -120,9 +120,32 @@ func (s *Store) RecordDirectoryOnline(ctx context.Context, expected model.Entry,
 			return ErrNotFound
 		}
 		if failure != nil {
+			// Canceling a read did not observe an online failure. Allow the next
+			// worker lifetime to resume without a synthetic waiting penalty.
+			if failure.Cause == "canceled" {
+				return nil
+			}
 			m.DirectoryOnline = retainOnline(m.DirectoryOnline, *failure)
+			r := m.DirectoryOnline
+			r.RequestFailures = nextOnlineCount(r.RequestFailures)
+			delay := 30 * time.Second
+			for i := 1; i < r.RequestFailures && delay < 5*time.Minute; i++ {
+				delay *= 2
+			}
+			if delay > 5*time.Minute {
+				delay = 5 * time.Minute
+			}
+			if server := onlineWait(failure.RetryAfterSeconds); server > delay {
+				delay = server
+			}
+			next := failure.At.Add(retryJitter(delay, r.RequestFailures)).UTC()
+			if r.NotBefore.Before(next) {
+				r.NotBefore = next
+			}
 		} else if m.DirectoryOnline != nil {
 			m.DirectoryOnline.Resolved = true
+			m.DirectoryOnline.RequestFailures = 0
+			m.DirectoryOnline.NotBefore = time.Time{}
 		}
 		return put(tx, "metadata", string(en.ID), m)
 	})

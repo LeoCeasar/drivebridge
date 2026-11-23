@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans inline. TDD each behavioral change; one fresh whole-branch reviewer at the end.
 
-**Goal:** 修复Windows/Linux云端新增目录长期未在挂载中出现的问题，完成当前目录优先刷新、定向刷新与准确状态。
+**Goal:** 修复macOS/Windows云端新增目录长期未在挂载中出现的问题，完成当前目录优先刷新、定向刷新与准确状态。
 **Architecture:** overlay拥有去重优先队列与旧缓存读取；已有元数据工作线程消费优先/常规任务；store保留完整清单与退避；manager/CLI/UI提供安全定向请求和状态。
-**Tech Stack:** Go、bbolt、现有VFS通知、JS/Node、GitHub原生Windows/Linux门禁。
+**Tech Stack:** Go、bbolt、现有VFS通知、JS/Node、GitHub原生Windows及本地macOS门禁。
 **Spec:** docs/superpowers/specs/2026-11-23-directory-freshness-design.md
 
 ## Global Constraints
@@ -13,7 +13,7 @@
 - 目录读取不进行云端mutation，不把失败/部分分页当作空目录。
 - 维护ID/token/路径身份；保留未上传本地输入与历史、已有五分钟上传节奏和服务等待下限。
 - 新请求与停止均由已有worker生命周期管理；不在List内创建无生命周期后台网络协程。
-- Windows/Linux共享业务实现，原生验证与交叉编译分开说明；不自动更新本机Mac或任意未指定终端。
+- macOS/Windows共享业务实现，原生验证与交叉编译分开说明；本地Mac更新使用既有安装协调器，保留真实内容；不更新未指定终端。
 
 ## Review Focus
 
@@ -49,8 +49,8 @@
 
 ### Task 4: 平台门禁、完整回归与独立审查
 
-**Files:** Windows/Linux现有工作流适量补充新回归，docs/testing验证记录。
+**Files:** Windows现有工作流与macOS本地门禁适量补充新回归，docs/testing验证记录。
 - [ ] 运行完整桥接/CLI/VFS Go套件，相关race、Node及打包测试。
-- [ ] 构建Windows/Linux CLI；执行原生Windows WinFsp、Linux mount2/共享套件，不能用跳过代替必需门禁。
+- [ ] 构建macOS/Windows CLI；执行本地macOS和原生Windows WinFsp/共享套件，不能用跳过代替必需门禁。
 - [ ] 新上下文审查全分支；Important/Critical一次修正，以RED/GREEN及完整套件验证，不重复广泛审查。
-- [ ] 记录源提交、测试和未执行边界。发布/部署不是本轮默认动作；用户另有终端更新指示时依其授权处理。
+- [ ] 记录源提交、测试和未执行边界。用户已澄清现场Mac需处理，完成后经安全流程更新；不默认发布GitHub新版本或部署其他机器。

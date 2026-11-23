@@ -350,12 +350,23 @@ type ResolveRequest struct {
 
 // DirectoryIndexStatus reports metadata coverage, independently of file bodies
 // and upload confirmation. Known is not an exhaustive cloud inventory.
+type DirectoryRefreshStatus struct {
+	Remote        string    `json:"remote"`
+	CachedAt      time.Time `json:"cached_at,omitempty"`
+	State         string    `json:"state"`
+	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
+}
+
 type DirectoryIndexStatus struct {
-	Online     *OnlineRecord `json:"online,omitempty"`
-	Known      int           `json:"known"`
-	Cached     int           `json:"cached"`
-	Refreshing int           `json:"refreshing"`
-	Failed     int           `json:"failed"`
+	Pending       int                      `json:"pending"`
+	Stale         int                      `json:"stale"`
+	LastRefreshed time.Time                `json:"last_refreshed,omitempty"`
+	Recent        []DirectoryRefreshStatus `json:"recent,omitempty"`
+	Online        *OnlineRecord            `json:"online,omitempty"`
+	Known         int                      `json:"known"`
+	Cached        int                      `json:"cached"`
+	Refreshing    int                      `json:"refreshing"`
+	Failed        int                      `json:"failed"`
 }
 
 // SyncDiagnostic describes a captured failure. Source lines are one-based and

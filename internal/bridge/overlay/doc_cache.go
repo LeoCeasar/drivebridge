@@ -145,6 +145,9 @@ func (f *Fs) backfillDocImages(ctx context.Context) {
 // Shutdown cancels and joins the lazy bounded media backfill worker before its
 // durable store is closed. Repeated calls are safe.
 func (f *Fs) Shutdown(ctx context.Context) error {
+	if err := f.stopDirectoryReads(ctx); err != nil {
+		return err
+	}
 	f.docMediaMu.Lock()
 	f.docMediaClosed = true
 	if f.docMediaCancel != nil {
