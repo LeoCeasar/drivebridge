@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -62,6 +63,9 @@ func (f *Fs) DirectoryRefreshWake() <-chan struct{} {
 func (f *Fs) RequestDirectoryRefresh(ctx context.Context, remote string) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if !model.ValidDirectoryRemote(remote) {
+		return errors.New("invalid mount-relative directory")
 	}
 	if err := validPath(remote, true); err != nil {
 		return err
@@ -232,4 +236,45 @@ func (f *Fs) stopDirectoryReads(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// RequestVisitedDirectoryRefresh is a local admission pass. It never performs
+// network I/O and never lets a catalog update jump ahead of every opened parent.
+func (f *Fs) RequestVisitedDirectoryRefresh(ctx context.Context) error {
+	if err := f.RefreshCatalog(ctx); err != nil {
+		return err
+	}
+	f.activityMu.Lock()
+	ids := make([]model.EntryID, 0, len(f.listed))
+	for id, visited := range f.listed {
+		if visited {
+			ids = append(ids, id)
+		}
+	}
+	f.activityMu.Unlock()
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		en, err := f.store.Entry(ctx, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		m, err := f.store.Metadata(ctx, id)
+		if err != nil {
+			return err
+		}
+		if m.Tombstone {
+			continue
+		}
+		if err = f.queueDirectoryRefresh(en, m, true); errors.Is(err, store.ErrBusy) {
+			break
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
 }

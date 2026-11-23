@@ -277,6 +277,21 @@ func installCommands(root *cobra.Command, o CommandOptions) {
 		})
 		mount.AddCommand(c)
 	}
+	refreshDirectory := &cobra.Command{Use: "refresh NAME --path RELATIVE", Short: "Refresh one cloud directory listing (empty path selects mount root)", Args: exactArgs(1)}
+	refreshDirectory.Flags().String("path", "", "Mount-relative directory using / separators")
+	_ = refreshDirectory.MarkFlagRequired("path")
+	refreshDirectory.RunE = commandRun(o, func(ctx context.Context, m *manager.Manager, args []string) (any, error) {
+		v, err := m.ResolveMount(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
+		remote := flagString(refreshDirectory, "path")
+		if err = m.RefreshDirectory(ctx, v.ID, remote); err != nil {
+			return nil, err
+		}
+		return map[string]any{"queued": true, "remote": remote}, nil
+	})
+	mount.AddCommand(refreshDirectory)
 	root.AddCommand(mount)
 	upload := &cobra.Command{Use: "upload", Short: "Inspect queued cloud writes or request a background retry"}
 	for _, action := range []string{"status", "retry"} {

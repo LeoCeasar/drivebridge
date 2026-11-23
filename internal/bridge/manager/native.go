@@ -348,7 +348,7 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 		native.Unmount()
 		return nil, err
 	}
-	indexWake := make(chan struct{}, 1)
+	indexWake := overlayFS.DirectoryRefreshWake()
 	indexedRun := metadataIndexedRun(engine.Run, func(ctx context.Context) error {
 		return overlayFS.WarmDirectoriesWithNotify(ctx, v.NotifyManagedDirectoryChanged)
 	}, dirs, indexWake)
@@ -385,13 +385,9 @@ func (m *Manager) buildWorker(ctx context.Context, spec mountSpec) (*workerServi
 	}, recoverCreation: engine.RecoverCreation, store: s, runtime: native, run: backgroundRun, syncNow: engine.SyncNow, cacheBytes: func() (int64, bool) { n := cacheObserved.Load(); return n, n >= 0 }, directoryStatus: func(ctx context.Context) (model.DirectoryIndexStatus, error) {
 		stats, err := overlayFS.DirectoryStatus(ctx)
 		return model.DirectoryIndexStatus{Known: stats.Known, Cached: stats.Cached, Refreshing: stats.Refreshing, Failed: stats.Failed, Online: stats.Online}, err
-	}, refreshConflict: engine.RefreshConflict, refreshDirectories: func(ctx context.Context) error {
-		if err := overlayFS.RefreshCatalog(ctx); err != nil {
+	}, refreshConflict: engine.RefreshConflict, refreshDirectory: overlayFS.RequestDirectoryRefresh, refreshDirectories: func(ctx context.Context) error {
+		if err := overlayFS.RequestVisitedDirectoryRefresh(ctx); err != nil {
 			return err
-		}
-		select {
-		case indexWake <- struct{}{}:
-		default:
 		}
 		root, err := v.Root()
 		if err != nil {

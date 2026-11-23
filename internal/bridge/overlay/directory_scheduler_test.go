@@ -351,3 +351,36 @@ func TestPriorityCompletedRowsDoNotConsumeNormalFairnessTurn(t *testing.T) {
 		t.Fatal("completed priority row consumed the normal scan's turn")
 	}
 }
+
+func TestDirectoryRefreshScopeRejectsFilesAndUnsafePaths(t *testing.T) {
+	f, _, _, _ := cacheFixture(t, &metadataTreeSource{tree: map[string][]larkcli.DriveItem{"root": {{Token: "file", Name: "File", Type: "file"}}}})
+	if _, err := f.List(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, remote := range []string{"File", "../x", "/tmp", "C:/tmp", "C:tmp", "a\\b"} {
+		if err := f.RequestDirectoryRefresh(ctx, remote); err == nil {
+			t.Fatal("accepted invalid directory", remote)
+		}
+	}
+}
+
+func TestCatalogRefreshQueuesVisitedParentsWithoutNetwork(t *testing.T) {
+	source := &metadataTreeSource{tree: map[string][]larkcli.DriveItem{"root": {{Token: "target", Name: "Target", Type: "folder"}}}}
+	f, _, _, _ := cacheFixture(t, source)
+	if _, err := f.List(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.List(ctx, "Target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RequestVisitedDirectoryRefresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if source.count("root") != 1 || source.count("target") != 1 {
+		t.Fatal("catalog refresh blocked on network")
+	}
+	status, err := f.DirectoryStatus(ctx)
+	if err != nil || status.Pending != 2 {
+		t.Fatal(status, err)
+	}
+}

@@ -41,6 +41,7 @@ type workerServices struct {
 	retry              func(context.Context) error
 	refreshConflict    func(context.Context, model.ConflictID) (model.Conflict, error)
 	refreshDirectories func(context.Context) error
+	refreshDirectory   func(context.Context, string) error
 	resumeCredentials  func(context.Context) error
 }
 type worker struct {

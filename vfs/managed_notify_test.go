@@ -32,3 +32,23 @@ func TestManagedDirectoryNotificationExpiresLocalCacheAndReentersSafely(t *testi
 	v.NotifyManagedDirectoryChanged("")
 	require.Equal(t, 1, calls)
 }
+
+func TestManagedNestedDirectoryNotificationExposesNewCloudFolder(t *testing.T) {
+	v, _, r := newManagedFS(t, false)
+	require.NoError(t, r.Fremote.Mkdir(context.Background(), "Parent"))
+	node, err := v.Stat("Parent")
+	require.NoError(t, err)
+	parent := node.(*Dir)
+	before, err := parent.ReadDirAll()
+	require.NoError(t, err)
+	require.Empty(t, before)
+	require.NoError(t, r.Fremote.Mkdir(context.Background(), "Parent/Open平台渠道协议与分销功能"))
+	stillCached, err := parent.ReadDirAll()
+	require.NoError(t, err)
+	require.Empty(t, stillCached)
+	v.NotifyManagedDirectoryChanged("Parent")
+	after, err := parent.ReadDirAll()
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	require.Equal(t, "Open平台渠道协议与分销功能", after[0].Name())
+}

@@ -234,3 +234,17 @@ func TestUploadRecoverValidatedRequestRequiresRunningWorker(t *testing.T) {
 		t.Fatalf("valid recovery must call running worker: %v", err)
 	}
 }
+
+func TestDirectoryRefreshCLIRequiresAnExplicitScopedPath(t *testing.T) {
+	file := configFixture(t)
+	for _, args := range [][]string{{"mount", "refresh", "team"}, {"mount", "refresh", "team", "--path", "../outside"}, {"mount", "refresh", "team", "--path", "C:/Users"}} {
+		root := NewCommand(CommandOptions{})
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(append([]string{"--bridge-config", file}, args...))
+		err := root.Execute()
+		if err == nil || strings.Contains(err.Error(), "unknown command") {
+			t.Fatal("scoped command missing or invalid input accepted", args, err)
+		}
+	}
+}
